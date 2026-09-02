@@ -1,0 +1,32 @@
+<header class="shell-header">
+  <a class="brand" routerLink="/marketplace">CareMarketplace</a>
+
+  <nav class="shell-nav" aria-label="Main navigation">
+    @for (item of navItems(); track item.href) {
+      <a
+        [routerLink]="item.href"
+        routerLinkActive="active"
+        [routerLinkActiveOptions]="{ exact: item.exact }"
+      >
+        {{ item.label }}
+      </a>
+    }
+  </nav>
+
+  <div class="shell-account">
+    <button type="button" class="theme-toggle" (click)="toggleTheme()" [attr.aria-label]="theme() === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'">
+      {{ theme() === 'dark' ? '☀️' : '🌙' }}
+    </button>
+
+    @if (session.isLoggedIn()) {
+      <a routerLink="/profile" class="who">{{ session.displayName() }}</a>
+      <button type="button" (click)="logout()">Log out</button>
+    } @else {
+      <a routerLink="/login">Log in</a>
+    }
+  </div>
+</header>
+
+<main class="shell-main">
+  <router-outlet />
+</main>

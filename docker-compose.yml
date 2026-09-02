@@ -1,0 +1,20 @@
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: care-marketplace-db
+    environment:
+      POSTGRES_USER: care
+      POSTGRES_PASSWORD: care
+      POSTGRES_DB: care_marketplace
+    ports:
+      - '5432:5432'
+    volumes:
+      - care-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U care -d care_marketplace']
+      interval: 2s
+      timeout: 2s
+      retries: 20
+
+volumes:
+  care-db-data:
