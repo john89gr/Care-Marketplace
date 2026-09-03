@@ -51,10 +51,54 @@ interface DemoEscrow {
   providerId: string;
   clientId: string;
   amountCents: number;
-  status: 'held' | 'released' | 'refunded';
+  status: 'held' | 'released' | 'refunded' | 'frozen';
   createdAtMs: number;
   settledAtMs: number | null;
+  refundedCents: number | null;
 }
+
+type DisputeReason = 'not_delivered' | 'quality' | 'overcharged' | 'other';
+type DisputeState = 'open' | 'under_review' | 'resolved_client' | 'resolved_provider' | 'rejected';
+type DisputeResolution = 'release' | 'partial_refund' | 'full_refund';
+
+interface DemoDisputeEvidence {
+  id: string;
+  disputeId: string;
+  authorId: string;
+  authorName: string;
+  kind: 'message' | 'photo' | 'visit_gps';
+  body?: string;
+  url?: string;
+  createdAtMs: number;
+}
+
+interface DemoDispute {
+  id: string;
+  bookingId: string;
+  clientId: string;
+  clientName: string;
+  providerId: string;
+  providerName: string;
+  openedBy: string;
+  openedByName: string;
+  reason: DisputeReason;
+  description: string;
+  state: DisputeState;
+  resolution: DisputeResolution | null;
+  refundCents: number | null;
+  escrowTransactionId: string | null;
+  createdAtMs: number;
+  updatedAtMs: number;
+  evidence: DemoDisputeEvidence[];
+}
+
+const DISPUTE_TRANSITIONS: Record<DisputeState, DisputeState[]> = {
+  open: ['under_review', 'rejected'],
+  under_review: ['resolved_client', 'resolved_provider', 'rejected'],
+  resolved_client: [],
+  resolved_provider: [],
+  rejected: [],
+};
 
 interface DemoBooking {
   id: string;
@@ -196,6 +240,9 @@ interface DemoNotification {  id: string;
     | 'booking.cancelled'
     | 'booking.rescheduled'
     | 'booking.disputed'
+    | 'dispute.opened'
+    | 'dispute.resolved'
+    | 'dispute.rejected'
     | 'review.submitted'
     | 'vitals.alert'
     | 'vetting.decision'
@@ -274,6 +321,7 @@ const state: {
   submissions: DemoSubmission[];
   visits: DemoVisit[];
   escrow: DemoEscrow[];
+  disputes: DemoDispute[];
   clinicalLog: DemoClinicalEntry[];
   carePlans: DemoCarePlan[];
   vitals: DemoVitalReading[];
@@ -339,6 +387,49 @@ const state: {
       status: 'held',
       createdAtMs: now() - 3 * 24 * hour,
       settledAtMs: null,
+      refundedCents: null,
+    },
+    {
+      id: 'e-disputed',
+      bookingId: 'b-disputed',
+      providerId: 'u-nurse',
+      clientId: 'u-client',
+      amountCents: 4500,
+      status: 'frozen',
+      createdAtMs: now() - 3 * 24 * hour,
+      settledAtMs: null,
+      refundedCents: null,
+    },
+  ],
+  disputes: [
+    {
+      id: 'd-1',
+      bookingId: 'b-disputed',
+      clientId: 'u-client',
+      clientName: 'Maria Papadopoulou',
+      providerId: 'u-nurse',
+      providerName: 'Elena Papadaki',
+      openedBy: 'u-client',
+      openedByName: 'Maria Papadopoulou',
+      reason: 'quality',
+      description: 'Provider arrived 20 minutes late and the session was cut short.',
+      state: 'under_review',
+      resolution: null,
+      refundCents: null,
+      escrowTransactionId: 'e-disputed',
+      createdAtMs: now() - 24 * hour,
+      updatedAtMs: now() - 24 * hour,
+      evidence: [
+        {
+          id: 'ev-1',
+          disputeId: 'd-1',
+          authorId: 'u-client',
+          authorName: 'Maria Papadopoulou',
+          kind: 'message',
+          body: 'I waited outside for 20 minutes and the provider only stayed for 15 of the 60 minutes.',
+          createdAtMs: now() - 23 * hour,
+        },
+      ],
     },
   ],
   clinicalLog: [],
@@ -380,6 +471,19 @@ const state: {
       note: 'Wound dressing',
       status: 'completed',
       createdAtMs: now() - 11 * 24 * hour,
+      pendingReschedule: null,
+    },
+    {
+      id: 'b-disputed',
+      caregiverId: 'cg-1',
+      caregiverName: 'Elena Papadaki',
+      clientId: 'u-client',
+      clientName: 'Maria Papadopoulou',
+      providerUserId: 'u-nurse',
+      scheduledAtMs: now() - 30 * 24 * hour,
+      note: 'Wound dressing',
+      status: 'disputed',
+      createdAtMs: now() - 3 * 24 * hour,
       pendingReschedule: null,
     },
   ],
@@ -1615,11 +1719,27 @@ export const demoApi: HttpInterceptorFn = (req: HttpRequest<unknown>, next: Http
       if (conflict) return of(conflict);
       return json(booking);
     }
-    if (action === 'dispute') {
-        const conflict = transitionBooking(booking, 'disputed', 'Dispute opened', 'disputed');
-        if (conflict) return of(conflict);
-        return json(booking);
-      }
+     if (action === 'dispute') {
+         const conflict = transitionBooking(booking, 'disputed', 'Dispute opened', 'disputed');
+         if (conflict) return of(conflict);
+         const escrow = state.escrow.find(
+           (e) => e.bookingId === booking.id && e.status === 'held'
+         );
+         if (escrow) {
+           escrow.status = 'frozen';
+         }
+         state.notifications.unshift({
+           id: `ntf-${Math.random().toString(36).slice(2, 8)}`,
+           userId: booking.clientId,
+           kind: 'dispute.opened',
+           title: 'Dispute opened',
+           body: `A dispute has been opened for booking ${booking.id}. An administrator will review it.`,
+           link: '/disputes',
+           createdAtMs: now(),
+           readAtMs: null,
+         });
+         return json(booking);
+       }
     if (action === 'reschedule') {
       const body = req.body as { scheduledAtMs?: number; note?: string };
       if (typeof body.scheduledAtMs === 'number' && Number.isFinite(body.scheduledAtMs)) {
@@ -1889,23 +2009,253 @@ export const demoApi: HttpInterceptorFn = (req: HttpRequest<unknown>, next: Http
         status: 'held',
         createdAtMs: now(),
         settledAtMs: null,
+        refundedCents: null,
       };
       state.escrow.unshift(escrow);
       return json(escrow);
     }
-    if (method === 'POST' && parts.length === 4) {
-      const id = parts[2];
-      const escrow = state.escrow.find((e) => e.id === id);
-      if (!escrow) {
-        return of(new HttpResponse({ status: 404, body: { message: 'Transaction not found.' } }));
-      }
-      escrow.status = parts[3] === 'release' ? 'released' : 'refunded';
-      escrow.settledAtMs = now();
-      return json(escrow);
-    }
-  }
+     if (method === 'POST' && parts.length === 4) {
+       const id = parts[2];
+       const escrow = state.escrow.find((e) => e.id === id);
+       if (!escrow) {
+         return of(new HttpResponse({ status: 404, body: { message: 'Transaction not found.' } }));
+       }
+       if (parts[3] === 'release') {
+         escrow.status = 'released';
+         escrow.settledAtMs = now();
+       } else if (parts[3] === 'refund') {
+         escrow.status = 'refunded';
+         escrow.settledAtMs = now();
+       } else if (parts[3] === 'freeze') {
+         // Funds are held but cannot be released or refunded until the dispute resolves.
+         escrow.status = 'frozen';
+       } else if (parts[3] === 'partial-refund') {
+         const amount = (req.body as { amountCents?: number })?.amountCents ?? 0;
+         if (
+           !Number.isInteger(amount) ||
+           amount < 0 ||
+           amount > escrow.amountCents
+         ) {
+           return of(
+             new HttpResponse({ status: 422, body: { message: 'Refund amount must be a non-negative integer not exceeding the held amount (cents).' } })
+           );
+         }
+         escrow.refundedCents = amount;
+         escrow.status = 'released';
+         escrow.settledAtMs = now();
+       } else {
+         return of(new HttpResponse({ status: 404, body: { message: 'Unknown escrow action.' } }));
+       }
+       return json(escrow);
+     }
+   }
 
-  // Unknown /api route — let it hit the real network (404 from the dev server).
+   // ---- Disputes (FEATURE_PLAN.md §17) ----
+   // GET /me/disputes — current user's disputes (as client or provider).
+   if (parts[0] === 'me' && parts[1] === 'disputes' && method === 'GET') {
+     const me = state.session;
+     const userId = me?.userId ?? 'u-client';
+     return json(
+       state.disputes.filter((d) => d.clientId === userId || d.providerId === userId)
+     );
+   }
+
+   if (parts[0] === 'disputes') {
+     const dispute = parts.length >= 3 ? state.disputes.find((d) => d.id === parts[1]) : null;
+     if (parts.length >= 3 && !dispute) {
+       return of(new HttpResponse({ status: 404, body: { message: 'Dispute not found.' } }));
+     }
+
+     // GET /disputes — admin queue (all disputes, open ones first).
+     if (method === 'GET' && parts.length === 1) {
+       const me = state.session;
+       if (!me || !me.roles.includes('admin')) {
+         return of(new HttpResponse({ status: 403, body: { message: 'Admin access required.' } }));
+       }
+       return json(
+         [...state.disputes].sort((a, b) => {
+           const aOpen = a.state === 'open' || a.state === 'under_review';
+           const bOpen = b.state === 'open' || b.state === 'under_review';
+           if (aOpen && !bOpen) {
+             return -1;
+           }
+           if (!aOpen && bOpen) {
+             return 1;
+           }
+           return b.createdAtMs - a.createdAtMs;
+         })
+       );
+     }
+
+     // POST /disputes — open a new dispute (freezes the held escrow).
+     if (method === 'POST' && parts.length === 1) {
+       const body = req.body as { bookingId?: string; reason?: DisputeReason; description?: string };
+       const booking = state.bookings.find((b) => b.id === body.bookingId);
+       if (!booking) {
+         return of(new HttpResponse({ status: 404, body: { message: 'Booking not found.' } }));
+       }
+       if (
+         state.disputes.some(
+           (d) => d.bookingId === body.bookingId && (d.state === 'open' || d.state === 'under_review')
+         )
+       ) {
+         return of(
+           new HttpResponse({ status: 409, body: { message: 'A dispute is already open for this booking.' } })
+         );
+       }
+       const escrow = state.escrow.find(
+         (e) => e.bookingId === body.bookingId && e.status === 'held'
+       );
+       if (escrow) {
+         escrow.status = 'frozen';
+       }
+       const me = state.session;
+       const created: DemoDispute = {
+         id: `d-${Math.random().toString(36).slice(2, 8)}`,
+         bookingId: body.bookingId,
+         clientId: booking.clientId,
+         clientName: booking.clientName,
+         providerId: booking.providerUserId,
+         providerName: booking.caregiverName,
+         openedBy: me?.userId ?? booking.clientId,
+         openedByName: me?.displayName ?? booking.clientName,
+         reason: (body.reason ?? 'other') as DisputeReason,
+         description: String(body.description ?? '').slice(0, 1000),
+         state: 'open',
+         resolution: null,
+         refundCents: null,
+         escrowTransactionId: escrow?.id ?? null,
+         createdAtMs: now(),
+         updatedAtMs: now(),
+         evidence: [],
+       };
+       state.disputes.unshift(created);
+       // Notify the other party.
+       state.notifications.unshift({
+         id: `ntf-${Math.random().toString(36).slice(2, 8)}`,
+         userId: booking.providerUserId,
+         kind: 'dispute.opened',
+         title: 'Dispute opened',
+         body: `A dispute has been opened for booking ${body.bookingId}.`,
+         link: '/disputes',
+         createdAtMs: now(),
+         readAtMs: null,
+       });
+       return json(created);
+     }
+
+     // POST /disputes/:id/state — transition state + resolve escrow.
+     if (method === 'POST' && parts.length === 4 && parts[2] === 'state') {
+       const body = req.body as {
+         state?: DisputeState;
+         resolution?: DisputeResolution;
+         refundCents?: number;
+       };
+       const to = body.state;
+       if (!to || !(DISPUTE_TRANSITIONS[dispute!.state] ?? []).includes(to)) {
+         return of(
+           new HttpResponse({ status: 409, body: { message: `Illegal transition ${dispute!.state} → ${String(to ?? '?')}.` } })
+         );
+       }
+       dispute!.state = to;
+       dispute!.updatedAtMs = now();
+       if (body.resolution) {
+         dispute!.resolution = body.resolution;
+       }
+       if (body.resolution === 'partial_refund') {
+         const refundCents = body.refundCents ?? 0;
+         const escrowAmount = dispute!.escrowTransactionId
+           ? state.escrow.find((e) => e.id === dispute!.escrowTransactionId)?.amountCents ?? 0
+           : 0;
+         if (!Number.isInteger(refundCents) || refundCents < 0 || refundCents > escrowAmount) {
+           return of(
+             new HttpResponse({ status: 422, body: { message: 'Refund amount must be a non-negative integer not exceeding the held amount (cents).' } })
+           );
+         }
+         dispute!.refundCents = refundCents;
+       }
+       // Resolve the escrow transaction.
+       if (dispute!.escrowTransactionId) {
+         const escrow = state.escrow.find((e) => e.id === dispute!.escrowTransactionId);
+         if (escrow && escrow.status === 'frozen') {
+           if (dispute!.resolution === 'release') {
+             escrow.status = 'released';
+             escrow.settledAtMs = now();
+           } else if (dispute!.resolution === 'full_refund') {
+             escrow.status = 'refunded';
+             escrow.settledAtMs = now();
+           } else if (dispute!.resolution === 'partial_refund') {
+             escrow.refundedCents = dispute!.refundCents;
+             escrow.status = 'released';
+             escrow.settledAtMs = now();
+           }
+         }
+       }
+       // Notify both parties.
+       const title =
+         dispute!.state === 'resolved_client'
+           ? 'Dispute resolved in your favour'
+           : dispute!.state === 'resolved_provider'
+             ? 'Dispute resolved in favour of the provider'
+             : 'Dispute rejected';
+       const bodyText =
+         dispute!.resolution === 'partial_refund'
+           ? `Partial refund of ${(dispute!.refundCents ?? 0) / 100}€ processed.`
+           : dispute!.resolution === 'full_refund'
+             ? 'Full refund processed.'
+             : 'Escrow released to the provider.';
+       state.notifications.unshift({
+         id: `ntf-${Math.random().toString(36).slice(2, 8)}`,
+         userId: dispute!.clientId,
+         kind: dispute!.state === 'rejected' ? 'dispute.rejected' : 'dispute.resolved',
+         title,
+         body: bodyText,
+         link: '/disputes',
+         createdAtMs: now(),
+         readAtMs: null,
+       });
+       state.notifications.unshift({
+         id: `ntf-${Math.random().toString(36).slice(2, 8)}`,
+         userId: dispute!.providerId,
+         kind: dispute!.state === 'rejected' ? 'dispute.rejected' : 'dispute.resolved',
+         title,
+         body: bodyText,
+         link: '/disputes',
+         createdAtMs: now(),
+         readAtMs: null,
+       });
+       return json(dispute);
+     }
+
+     // POST /disputes/:id/evidence — stub upload of evidence.
+     if (method === 'POST' && parts.length === 3 && parts[2] === 'evidence') {
+       const me = state.session;
+       const body = req.body as { kind?: 'message' | 'photo' | 'visit_gps'; body?: string; url?: string };
+       const evidence: DemoDisputeEvidence = {
+         id: `ev-${Math.random().toString(36).slice(2, 8)}`,
+         disputeId: dispute!.id,
+         authorId: me?.userId ?? 'u-client',
+         authorName: me?.displayName ?? 'Client',
+         kind: body.kind ?? 'message',
+         body: body.body,
+         url: body.url,
+         createdAtMs: now(),
+       };
+       dispute!.evidence.push(evidence);
+       dispute!.updatedAtMs = now();
+       state.notifications.unshift({
+         id: `ntf-${Math.random().toString(36).slice(2, 8)}`,
+         userId: dispute!.state === 'open' ? dispute!.providerId : dispute!.openedBy,
+         kind: 'dispute.opened',
+         title: 'New evidence added',
+         body: `Evidence ${evidence.kind} added to dispute ${dispute!.id}.`,
+         link: '/disputes',
+         createdAtMs: now(),
+         readAtMs: null,
+       });
+       return json(evidence);
+     }
+   }
   return next(req);
 };
 

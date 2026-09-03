@@ -6,7 +6,7 @@ import { ApiClient } from '../../core/api/api.client';
  * Escrow payment state (PLAN.md §5 Phase 2 — Payments): funds are held when a
  * booking is created and released automatically when the visit completes.
  */
-export type EscrowStatus = 'held' | 'released' | 'refunded';
+export type EscrowStatus = 'held' | 'released' | 'refunded' | 'frozen';
 
 export interface EscrowTransaction {
   id: string;
@@ -17,6 +17,8 @@ export interface EscrowTransaction {
   status: EscrowStatus;
   createdAtMs: number;
   settledAtMs: number | null;
+  /** Cents returned to the client on a partial refund (null = full release/refund). */
+  refundedCents?: number | null;
 }
 
 export interface HoldRequest {
@@ -42,7 +44,14 @@ export class EscrowStore {
 
   readonly heldTotalCents = computed(() =>
     this._transactions()
-      .filter((t) => t.status === 'held')
+      .filter((t) => t.status === 'held' || t.status === 'frozen')
+      .reduce((sum, t) => sum + t.amountCents, 0)
+  );
+
+  /** Funds frozen by an open dispute — still held but not releasable. */
+  readonly frozenTotalCents = computed(() =>
+    this._transactions()
+      .filter((t) => t.status === 'frozen')
       .reduce((sum, t) => sum + t.amountCents, 0)
   );
 
@@ -75,19 +84,55 @@ export class EscrowStore {
     );
   }
 
-  /** Release a held transaction (automatic on completed visit). */
+  /** Release a held/frozen transaction (automatic on completed visit or provider win). */
   release(transactionId: string): Observable<boolean> {
     return this.settle(transactionId, '/release', 'released');
   }
 
-  /** Refund a held transaction (cancelled booking). */
+  /** Refund a held/frozen transaction (cancelled booking or client win). */
   refund(transactionId: string): Observable<boolean> {
     return this.settle(transactionId, '/refund', 'refunded');
   }
 
+  /** Freeze a held transaction when a dispute opens (§17). */
+  freeze(transactionId: string): Observable<boolean> {
+    return this.settle(transactionId, '/freeze', 'frozen');
+  }
+
+  /**
+   * Partially refund a frozen/held transaction: `refundCents` returns to the
+   * client, the remainder is released to the provider. Cents-safe — the
+   * backend enforces 0 ≤ refundCents ≤ amountCents.
+   */
+  partialRefund(transactionId: string, refundCents: number): Observable<boolean> {
+    this._actingId.set(transactionId);
+    this._error.set('');
+    return this.api
+      .post<EscrowTransaction>(`/payments/escrow/${transactionId}/partial-refund`, {
+        amountCents: refundCents,
+      })
+      .pipe(
+        map((transaction) => {
+          this._transactions.update((list) =>
+            list.map((t) => (t.id === transaction.id ? transaction : t))
+          );
+          this._actingId.set(null);
+          return true;
+        }),
+        catchError((error) => {
+          this._actingId.set(null);
+          this._error.set(
+            (error as { error?: { message?: string } })?.error?.message ??
+              'Could not process the partial refund.'
+          );
+          return of(false);
+        })
+      );
+  }
+
   private settle(
     transactionId: string,
-    path: '/release' | '/refund',
+    path: '/release' | '/refund' | '/freeze',
     status: EscrowStatus
   ): Observable<boolean> {
     this._actingId.set(transactionId);
