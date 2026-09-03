@@ -20,6 +20,9 @@ export type NotificationKind =
   | 'booking.cancelled'
   | 'booking.rescheduled'
   | 'booking.disputed'
+  | 'dispute.opened'
+  | 'dispute.resolved'
+  | 'dispute.rejected'
   | 'review.submitted'
   | 'vitals.alert'
   | 'vetting.decision'
@@ -71,7 +74,11 @@ export function routeForKind(kind: NotificationKind): string {
     case 'booking.cancelled':
     case 'booking.rescheduled':
     case 'booking.disputed':
+    case 'dispute.opened':
       return '/bookings';
+    case 'dispute.resolved':
+    case 'dispute.rejected':
+      return '/disputes';
     case 'review.submitted':
       return '/marketplace';
     case 'vitals.alert':
