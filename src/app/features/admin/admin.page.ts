@@ -1,5 +1,6 @@
 import { Component, computed, inject, OnInit } from '@angular/core';
 import { VettingStore, LicenceSubmission } from '../vetting/vetting.store';
+import { ReviewsStore, Review } from '../marketplace/reviews.store';
 
 function formatDate(ms: number): string {
   return new Date(ms).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
@@ -64,6 +65,32 @@ function formatDate(ms: number): string {
           }
         </ul>
       }
+      @if (reviewStore.flagged().length > 0) {
+        <h2>Flagged reviews</h2>
+        <ul class="results">
+          @for (review of reviewStore.flagged(); track review.id) {
+            <li class="card">
+              <div class="row">
+                <h3>{{ review.authorName }} · ★ {{ review.rating }}</h3>
+                <span class="chip">flagged</span>
+              </div>
+              <p class="meta">{{ review.comment }}</p>
+              <p class="actions">
+                <button type="button"
+                  [disabled]="reviewStore.actingId() === review.id"
+                  (click)="moderate(review, 'published')">
+                  Publish
+                </button>
+                <button type="button" class="secondary"
+                  [disabled]="reviewStore.actingId() === review.id"
+                  (click)="moderate(review, 'removed')">
+                  Remove
+                </button>
+              </p>
+            </li>
+          }
+        </ul>
+      }
     </section>
   `,
   styles: `
@@ -76,6 +103,7 @@ function formatDate(ms: number): string {
 })
 export class AdminPage implements OnInit {
   readonly store = inject(VettingStore);
+  readonly reviewStore = inject(ReviewsStore);
 
   readonly pending = computed(() => this.store.queue().filter((s) => s.status === 'pending'));
   readonly reviewed = computed(() =>
@@ -87,6 +115,11 @@ export class AdminPage implements OnInit {
 
   ngOnInit(): void {
     this.store.loadQueue();
+    this.reviewStore.loadAll();
+  }
+
+  moderate(review: Review, decision: 'published' | 'removed'): void {
+    this.reviewStore.moderate(review.id, decision).subscribe();
   }
 
   review(submission: LicenceSubmission, decision: 'approved' | 'rejected'): void {

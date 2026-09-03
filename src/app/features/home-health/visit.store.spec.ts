@@ -101,6 +101,24 @@ describe('VisitStore', () => {
     expect(store.visits()[0].status).toBe('in-progress');
   });
 
+  it('check-in moves the linked booking to in_progress (best-effort)', async () => {
+    const { store, api } = makeStore({
+      api: {
+        get: vi.fn(() => of([visit()])),
+        post: vi.fn((path: string) => {
+          if (String(path).endsWith('/start')) {
+            return of({ id: 'b-1', status: 'in_progress' });
+          }
+          return of(visit({ status: 'in-progress', checkIn: POINT }));
+        }),
+      },
+    });
+    store.load();
+    const ok = await new Promise<boolean>((resolve) => store.checkIn('visit-1').subscribe(resolve));
+    expect(ok).toBe(true);
+    expect(api.post).toHaveBeenCalledWith('/bookings/b-1/start', {});
+  });
+
   it('check-in fails gracefully when geolocation is unavailable', async () => {
     const { store } = makeStore({
       geo: { currentPosition: () => throwError(() => new Error('denied')) },

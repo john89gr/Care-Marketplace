@@ -4,6 +4,10 @@ import { ProfileStore } from './profile.store';
 import { SessionStore } from '../../core/auth/session';
 import { ROLES, isVisitProvider } from '../../core/auth/roles';
 import { amkaValidator, afmValidator, licenceNumberValidator } from '../../shared/validators/id.validators';
+import {
+  NotificationsService,
+  NotificationKind,
+} from '../../core/services/notifications/notifications.service';
 
 @Component({
   selector: 'app-profile',
@@ -41,6 +45,17 @@ import { amkaValidator, afmValidator, licenceNumberValidator } from '../../share
                   <span class="error" id="afm-hint">AFM must be 9 digits with a valid checksum.</span>
                 }
               </label>
+              <label>Date of birth (used for preventive-care reminders)
+                <input type="date" formControlName="dateOfBirth" />
+              </label>
+              <label>Recorded sex (used for preventive-care reminders)
+                <select formControlName="sex">
+                  <option value="">Prefer not to say</option>
+                  <option value="female">Female</option>
+                  <option value="male">Male</option>
+                  <option value="other">Other</option>
+                </select>
+              </label>
             </fieldset>
           }
 
@@ -72,6 +87,29 @@ import { amkaValidator, afmValidator, licenceNumberValidator } from '../../share
           }
         </form>
       }
+
+      <section class="notif-prefs" aria-labelledby="notif-prefs-h">
+        <h2 id="notif-prefs-h">Notification preferences</h2>
+        <p class="hint">Muted kinds stay in history but won't badge, toast or push.</p>
+        @for (kind of allKinds; track kind) {
+          <label class="mute-row">
+            <input
+              type="checkbox"
+              [checked]="notifications.isMuted(kind)"
+              (change)="notifications.toggleMute(kind)"
+            />
+            Mute {{ kind }}
+          </label>
+        }
+        <label class="mute-row">
+          <input
+            type="checkbox"
+            [checked]="pushGranted"
+            (change)="requestPush()"
+          />
+          Browser push notifications
+        </label>
+      </section>
     </section>
   `,
   styles: `
@@ -92,12 +130,45 @@ import { amkaValidator, afmValidator, licenceNumberValidator } from '../../share
       color: var(--success);
       margin: 0;
     }
+    .notif-prefs {
+      margin-top: 2rem;
+      display: grid;
+      gap: 0.4rem;
+    }
+    .notif-prefs .hint {
+      color: var(--text-muted);
+      font-size: 0.85rem;
+      margin: 0 0 0.4rem;
+    }
+    .mute-row {
+      display: flex;
+      gap: 0.5rem;
+      align-items: center;
+      font-size: 0.9rem;
+    }
   `,
 })
 export class ProfilePage implements OnInit {
   readonly store = inject(ProfileStore);
   private readonly session = inject(SessionStore);
   private readonly fb = inject(FormBuilder);
+  readonly notifications = inject(NotificationsService);
+  pushGranted = false;
+
+  readonly allKinds: NotificationKind[] = [
+    'booking.accepted',
+    'booking.started',
+    'booking.completed',
+    'booking.cancelled',
+    'booking.rescheduled',
+    'booking.disputed',
+    'review.submitted',
+    'vitals.alert',
+    'vetting.decision',
+    'screening.due',
+    'medication.missed',
+    'system',
+  ];
 
   readonly form = this.fb.nonNullable.group({
     displayName: ['', [Validators.required, Validators.minLength(2)]],
@@ -106,12 +177,17 @@ export class ProfilePage implements OnInit {
     afm: ['', [], [afmValidator()]],
     licenceNumber: ['', [], [licenceNumberValidator()]],
     hourlyRate: [null as number | null],
+    dateOfBirth: [''],
+    sex: ['' as '' | 'female' | 'male' | 'other'],
   });
 
   readonly isClient = computed(() => this.session.hasAnyRole([ROLES.CLIENT]));
   readonly isProvider = computed(() => isVisitProvider(this.session.roles()));
 
   ngOnInit(): void {
+    void this.notifications.pushEnabled().then((granted) => {
+      this.pushGranted = granted;
+    });
     this.store.load().subscribe(() => {
       const p = this.store.profile();
       this.form.patchValue({
@@ -121,6 +197,8 @@ export class ProfilePage implements OnInit {
         afm: p.afm,
         licenceNumber: p.licenceNumber,
         hourlyRate: p.hourlyRate,
+        dateOfBirth: p.dateOfBirth,
+        sex: p.sex,
       });
     });
   }
@@ -137,6 +215,13 @@ export class ProfilePage implements OnInit {
       afm: this.isClient() ? raw.afm : '',
       licenceNumber: this.isProvider() ? raw.licenceNumber : '',
       hourlyRate: this.isProvider() ? raw.hourlyRate : null,
+      dateOfBirth: this.isClient() ? raw.dateOfBirth : '',
+      sex: this.isClient() ? raw.sex : '',
     }).subscribe();
+  }
+
+  async requestPush(): Promise<void> {
+    const result = await this.notifications.enablePush();
+    this.pushGranted = result === 'granted';
   }
 }

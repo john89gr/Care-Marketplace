@@ -2,6 +2,7 @@ import '@angular/compiler'; // required for JIT partial declarations (HttpClient
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { of, throwError } from 'rxjs';
 import { ApiClient } from '../../core/api/api.client';
+import { NotificationsService, AppNotification } from '../../core/services/notifications/notifications.service';
 import { VitalsStore, VitalReading, isOutOfRange } from './vitals.store';
 
 function makeApi(overrides: Partial<Record<'get' | 'post', unknown>> = {}) {
@@ -12,6 +13,14 @@ function makeApi(overrides: Partial<Record<'get' | 'post', unknown>> = {}) {
     delete: vi.fn(() => of(null)),
     ...overrides,
   } as unknown as ApiClient;
+}
+
+function makeNotifications(): NotificationsService & { calls: unknown[][] } {
+  const calls: unknown[][] = [];
+  const service = {
+    notify: (...args: unknown[]) => calls.push(args),
+  };
+  return Object.assign(service as unknown as NotificationsService, { calls });
 }
 
 const bp = (value: number, value2: number | null, measuredAtMs: number): VitalReading => ({
@@ -49,6 +58,27 @@ describe('VitalsStore', () => {
     expect(store.readings()[0].type).toBe('heartRate');
     expect(store.readings()[0].source).toBe('manual');
     expect((api.post as ReturnType<typeof vi.fn>).mock.calls[0][0]).toBe('/vitals/me');
+  });
+
+  it('emits a vitals.alert notification for out-of-range readings', async () => {
+    const notifications = makeNotifications();
+    const store = new VitalsStore(makeApi({ post: vi.fn((_path, body) => of(body)) }), notifications);
+    await new Promise<boolean>((resolve) =>
+      store.add({ type: 'bloodPressure', value: 165, value2: 100, measuredAtMs: 2000 }).subscribe(resolve)
+    );
+    expect(notifications.calls).toHaveLength(1);
+    const [kind, title] = notifications.calls[0] as [AppNotification['kind'], string];
+    expect(kind).toBe('vitals.alert');
+    expect(title).toContain('Blood pressure');
+  });
+
+  it('emits no notification for in-range readings', async () => {
+    const notifications = makeNotifications();
+    const store = new VitalsStore(makeApi({ post: vi.fn((_path, body) => of(body)) }), notifications);
+    await new Promise<boolean>((resolve) =>
+      store.add({ type: 'bloodPressure', value: 120, value2: 80, measuredAtMs: 2000 }).subscribe(resolve)
+    );
+    expect(notifications.calls).toHaveLength(0);
   });
 
   it('surfaces an error message when the API rejects', async () => {

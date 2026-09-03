@@ -63,6 +63,34 @@ streaming to the family, clinical log with per-specialty forms + digital
 signature capture, the shared nurse ↔ physio care plan, and the escrow flow
 (hold on booking → automatic release on completed visit).
 
+Reviews & ratings (FEATURE_PLAN.md §1 — **complete**): completed bookings
+show a "Rate this visit" CTA, clients submit one 1–5-star review per
+completed booking, ratings with review counts show on marketplace cards
+(expandable review lists with report/moderation), and admins moderate
+flagged reviews from the admin console.
+
+Saved searches & favorites (FEATURE_PLAN.md §2 — **complete**): searches are
+deep-linkable (filters sync to URL params and are restored on reload), the
+current filters can be saved under an auto-generated or custom name and
+re-applied, renamed or deleted, and caregivers can be favorited with an
+optimistic heart toggle plus a session-scoped "Favorites only" filter.
+
+Booking lifecycle (FEATURE_PLAN.md §3 — **complete**): bookings follow a
+guarded state machine (`requested → accepted → in_progress → completed`,
+plus `cancelled`/`disputed`), enforced client-side (pure functions) and by
+the demo backend (409 on races). Providers accept/start/complete; clients
+cancel with a policy preview (free ≥24h before start, fee after) and
+reschedule; every transition appends to a per-booking event timeline,
+notifies the other party and settles escrow (release on completion, refund
+on cancellation).
+
+Notification center (FEATURE_PLAN.md §4 — **complete**): shell bell with a
+live unread badge, day-grouped panel ("load more" windowing), click-through
+that marks read and routes by notification kind, mark-all-read, per-kind
+mutes (persisted), browser-push opt-in stub, badge resync on window focus,
+and live pushes over the shared WebSocket (booking transitions, vitals
+threshold alerts, vetting decisions).
+
 Phase 3 — Personal Health Record (**in progress**): vitals logging with
 per-type reference ranges, threshold alerts, and trend views (manual + Web
 Bluetooth source flag). Screening alerts, medications and pharmacy remain —

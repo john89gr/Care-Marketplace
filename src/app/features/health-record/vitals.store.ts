@@ -1,6 +1,7 @@
 import { Injectable, inject, signal, computed } from '@angular/core';
 import { Observable, map, catchError, of } from 'rxjs';
 import { ApiClient } from '../../core/api/api.client';
+import { NotificationsService } from '../../core/services/notifications/notifications.service';
 
 /**
  * Personal health record vitals (PLAN.md §3.C / §5 Phase 3 — PHR).
@@ -60,9 +61,12 @@ const DIASTOLIC_RANGE: VitalRange = { min: 60, max: 90 };
 
 @Injectable({ providedIn: 'root' })
 export class VitalsStore {
-  // Default-parameter injection keeps `new VitalsStore(api)` possible in
-  // unit tests while remaining DI-friendly in the app.
-  constructor(private readonly api: ApiClient = inject(ApiClient)) {}
+  // Default-parameter injection keeps `new VitalsStore(api, notifications)`
+  // possible in unit tests while remaining DI-friendly in the app.
+  constructor(
+    private readonly api: ApiClient = inject(ApiClient),
+    private readonly notifications?: NotificationsService
+  ) {}
 
   private readonly _readings = signal<VitalReading[]>([]);
   private readonly _loading = signal(false);
@@ -97,6 +101,16 @@ export class VitalsStore {
         this._readings.update((list) => [saved, ...list]);
         this._saving.set(false);
         this._saved.set(true);
+        // Out-of-range readings raise a notification (FEATURE_PLAN.md §4
+        // subtask 9; the alert itself is the existing `alerts` computed).
+        if (this.notifications && isOutOfRange(saved)) {
+          this.notifications.notify(
+            'vitals.alert',
+            `${VITAL_LABELS[saved.type]} outside reference range`,
+            `Latest reading is outside the expected range — check the trends view.`,
+            '/vitals'
+          );
+        }
         return true;
       }),
       catchError((error) => {

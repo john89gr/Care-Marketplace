@@ -14,6 +14,10 @@ export interface UserProfile {
   afm: string;
   licenceNumber: string;
   hourlyRate: number | null;
+  /** ISO date of birth (yyyy-mm-dd); feeds the screening rule engine (Feature 6 §5). */
+  dateOfBirth: string;
+  /** Recorded sex; feeds the screening rule engine (Feature 6 §5). */
+  sex: 'female' | 'male' | 'other' | '';
 }
 
 const EMPTY_PROFILE: UserProfile = {
@@ -24,6 +28,8 @@ const EMPTY_PROFILE: UserProfile = {
   afm: '',
   licenceNumber: '',
   hourlyRate: null,
+  dateOfBirth: '',
+  sex: '',
 };
 
 @Injectable({ providedIn: 'root' })

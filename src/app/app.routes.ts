@@ -32,8 +32,13 @@ export const routes: Routes = [
   },
   {
     path: 'bookings',
-    canActivate: [roleGuard([ROLES.CLIENT])],
+    canActivate: [roleGuard([ROLES.CLIENT, ROLES.CAREGIVER, ROLES.NURSE, ROLES.PHYSIO])],
     loadComponent: () => import('./features/marketplace/booking.page').then((m) => m.BookingPage),
+  },
+  {
+    path: 'review',
+    canActivate: [roleGuard([ROLES.CLIENT])],
+    loadComponent: () => import('./features/marketplace/review.page').then((m) => m.ReviewPage),
   },
   {
     path: 'onboarding',
@@ -79,6 +84,45 @@ export const routes: Routes = [
     path: 'health-record',
     canActivate: [roleGuard([ROLES.CLIENT, ROLES.CAREGIVER, ROLES.NURSE])],
     loadComponent: () => import('./features/health-record/health-record.page').then((m) => m.HealthRecordPage),
+  },
+  {
+    path: 'screenings',
+    canActivate: [roleGuard([ROLES.CLIENT, ROLES.CAREGIVER, ROLES.NURSE])],
+    loadComponent: () => import('./features/health-record/screening.page').then((m) => m.ScreeningPage),
+  },
+  {
+    path: 'medications',
+    canActivate: [roleGuard([ROLES.CLIENT, ROLES.CAREGIVER, ROLES.NURSE])],
+    loadComponent: () => import('./features/health-record/medications.page').then((m) => m.MedicationsPage),
+  },
+  {
+    path: 'reminders',
+    canActivate: [roleGuard([ROLES.CLIENT, ROLES.CAREGIVER, ROLES.NURSE])],
+    loadComponent: () =>
+      import('./features/health-record/reminders-settings.component').then(
+        (m) => m.ReminderSettingsComponent
+      ),
+  },
+  {
+    path: 'health-summary',
+    canActivate: [roleGuard([ROLES.CLIENT, ROLES.CAREGIVER, ROLES.NURSE])],
+    loadComponent: () =>
+      import('./features/health-record/export.page').then((m) => m.HealthSummaryExportPage),
+  },
+  {
+    path: 'prescriptions',
+    canActivate: [roleGuard([ROLES.CLIENT, ROLES.CAREGIVER, ROLES.NURSE])],
+    loadComponent: () => import('./features/pharmacy/prescriptions.page').then((m) => m.PrescriptionsPage),
+  },
+  {
+    path: 'pharmacy-orders',
+    canActivate: [roleGuard([ROLES.CLIENT, ROLES.CAREGIVER, ROLES.NURSE, ROLES.PHARMACY])],
+    loadComponent: () => import('./features/pharmacy/orders.page').then((m) => m.OrdersPage),
+  },
+  {
+    path: 'pharmacy',
+    canActivate: [roleGuard([ROLES.PHARMACY])],
+    loadComponent: () => import('./features/pharmacy/pharmacy.page').then((m) => m.PharmacyPage),
   },
   {
     path: 'admin',

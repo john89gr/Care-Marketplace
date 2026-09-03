@@ -7,6 +7,11 @@ import { BehaviorSubject, Subject } from 'rxjs';
  *   client -> server: { type: 'chat.send', payload: { conversationId, text, clientMessageId } }
  *   server -> client: { type: 'chat.message', payload: { conversationId, authorId, text, sentAtMs } }
  *   server -> client: { type: 'chat.ack', payload: { clientMessageId } }
+ *
+ * Notifications (FEATURE_PLAN.md §4) reuse this shared client as a
+ * `notifications` channel:
+ *   client -> server: { type: 'notification.poll', payload: {} }
+ *   server -> client: { type: 'notification.push', payload: AppNotification }
  */
 export interface WsEnvelope {
   type: string;
@@ -40,8 +45,19 @@ export class WebSocketClient {
   constructor() {}
 
   connect(url: string): void {
-    if (this.socket && (this.socket.readyState === WebSocket.OPEN || this.socket.readyState === WebSocket.CONNECTING)) {
+    // Same URL already open/opening: nothing to do. A different URL (chat vs
+    // visits vs notifications channels share this client) reconnects.
+    if (
+      this.socket &&
+      this.url === url &&
+      (this.socket.readyState === WebSocket.OPEN || this.socket.readyState === WebSocket.CONNECTING)
+    ) {
       return;
+    }
+    if (this.socket) {
+      this.manualClose = true;
+      this.socket.close();
+      this.socket = null;
     }
     this.url = url;
     this.manualClose = false;

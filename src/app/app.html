@@ -14,6 +14,99 @@
   </nav>
 
   <div class="shell-account">
+    <div class="notif">
+      <button
+        type="button"
+        class="bell"
+        [attr.aria-label]="
+          notifications.unreadCount() > 0
+            ? 'Notifications, ' + notifications.unreadCount() + ' unread'
+            : 'Notifications'
+        "
+        [attr.aria-expanded]="panelOpen()"
+        (click)="togglePanel()"
+      >
+        🔔
+        @if (notifications.unreadCount() > 0) {
+          <span class="badge" aria-hidden="true">{{ notifications.unreadCount() }}</span>
+        }
+      </button>
+
+      @if (panelOpen()) {
+        <div class="panel" role="dialog" aria-label="Notifications" aria-modal="false" tabindex="-1">
+          <div class="panel-head">
+            <strong>Notifications</strong>
+            <span class="panel-actions">
+              <button type="button" class="link" (click)="markAllRead()">Mark all read</button>
+              <button
+                type="button"
+                class="link"
+                (click)="mutesOpen.set(!mutesOpen())"
+                [attr.aria-expanded]="mutesOpen()"
+              >
+                Mutes
+              </button>
+              <button type="button" class="link" (click)="closePanel()" aria-label="Close notifications">✕</button>
+            </span>
+          </div>
+
+          @if (mutesOpen()) {
+            <div class="mutes">
+              <p class="meta">Muted kinds won't appear in the panel, toasts or push.</p>
+              @for (kind of allKinds; track kind) {
+                <label class="mute-row">
+                  <input
+                    type="checkbox"
+                    [checked]="notifications.isMuted(kind)"
+                    (change)="notifications.toggleMute(kind)"
+                  />
+                  {{ kind }}
+                </label>
+              }
+              <label class="mute-row">
+                <input type="checkbox" [checked]="pushRequested()" (change)="requestPush()" />
+                Browser push notifications
+              </label>
+            </div>
+          }
+
+          <div class="panel-body">
+            @if (!notifications.loaded() && notifications.loading()) {
+              <p class="meta">Loading…</p>
+            } @else if (notifications.error() && notifications.panelItems().length === 0) {
+              <p class="meta" role="alert">{{ notifications.error() }}</p>
+              <button type="button" class="link more" (click)="retryLoad()">Retry</button>
+            } @else if (notifications.panelItems().length === 0) {
+              <p class="meta">You're all caught up 🎉</p>
+            } @else {
+              @for (group of groupByDay(notifications.panelItems()); track group.label) {
+                <p class="day">{{ group.label }}</p>
+                <ul>
+                  @for (item of group.items; track item.id) {
+                    <li>
+                      <button
+                        type="button"
+                        class="item"
+                        [class.unread]="item.readAtMs === null"
+                        (click)="open(item)"
+                      >
+                        <span class="item-title">{{ item.title }}</span>
+                        <span class="item-body">{{ item.body }}</span>
+                        <span class="item-time">{{ dayLabel(item.createdAtMs) }}</span>
+                      </button>
+                    </li>
+                  }
+                </ul>
+              }
+              @if (notifications.hasMore()) {
+                <button type="button" class="link more" (click)="loadMore()">Load more</button>
+              }
+            }
+          </div>
+        </div>
+      }
+    </div>
+
     <button type="button" class="theme-toggle" (click)="toggleTheme()" [attr.aria-label]="theme() === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'">
       {{ theme() === 'dark' ? '☀️' : '🌙' }}
     </button>
@@ -30,3 +123,9 @@
 <main class="shell-main">
   <router-outlet />
 </main>
+
+<div class="toast-stack" aria-live="polite">
+  @for (toast of notifications.toasts(); track toast.id) {
+    <p class="toast {{ toast.tone }}" role="status">{{ toast.text }}</p>
+  }
+</div>

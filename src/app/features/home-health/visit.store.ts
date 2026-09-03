@@ -104,7 +104,17 @@ export class VisitStore {
 
   /** Provider: stamp check-in with the current GPS position. */
   checkIn(visitId: string): Observable<boolean> {
-    return this.stamp(visitId, '/check-in');
+    return this.stamp(visitId, '/check-in').pipe(
+      map((ok) => {
+        // Booking lifecycle (FEATURE_PLAN.md §3 subtask 11): a GPS check-in
+        // moves the linked booking to `in_progress` (best-effort — the visit
+        // stamp itself already succeeded).
+        if (ok) {
+          this.startBookingForVisit(visitId);
+        }
+        return ok;
+      })
+    );
   }
 
   /** Provider: stamp check-out with the current GPS position. */
@@ -118,6 +128,20 @@ export class VisitStore {
         return ok;
       })
     );
+  }
+
+  /** Finds the visit's booking and moves it to `in_progress` (best-effort). */
+  private startBookingForVisit(visitId: string): void {
+    const visit = this._visits().find((v) => v.id === visitId);
+    if (!visit?.bookingId) {
+      return;
+    }
+    this.api.post(`/bookings/${visit.bookingId}/start`, {}).subscribe({
+      // The booking state machine answers 409 when the booking already moved
+      // on (e.g. provider tapped "Start visit" first) — either way the visit
+      // stamp stands, so both outcomes are swallowed deliberately.
+      error: () => undefined,
+    });
   }
 
   /** Finds the completed visit's booking and releases its escrow hold. */
