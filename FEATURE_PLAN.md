@@ -8,8 +8,9 @@
 **Status snapshot (Sept 2026):**
 - ✅ Phase 1 (marketplace loop) — complete
 - ✅ Phase 2 (home health + escrow) — complete
-- 🔶 Phase 3 (PHR) — vitals only; screening/medication/pharmacy/export missing
-- ⬜ Phase 4 (gov.gr, FHIR, audit console) — stubbed routes only
+- ✅ Phase 3 (PHR) — vitals, screening, medications, pharmacy, export complete
+- ✅ Phase 4 — all features merged: gov.gr OIDC/wallet, FHIR R4 export, audit trail + consent, dispute resolution, payment methods + payout, certification expiry, chat v2, PWA/offline/push, bluetooth pairing, web Bluetooth
+- ✅ Phase 4 test suite: 516 tests passing across 39 files
 
 Priority legend: 🔴 P0 = blocks core trust/loop · 🟡 P1 = completes planned phases · 🟢 P2 = growth & polish
 
