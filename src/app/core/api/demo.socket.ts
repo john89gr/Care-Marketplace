@@ -45,7 +45,13 @@ export class DemoWebSocket {
     if (type === 'chat.send' && payload) {
       const conversationId = String(payload['conversationId']);
       const clientMessageId = String(payload['clientMessageId']);
+      // Ack + delivered receipt so the sender's optimistic message flips to
+      // "sent" and the recipient (here: the echo) sees a delivered tick.
       this.deliver({ type: 'chat.ack', payload: { clientMessageId } });
+      this.deliver({
+        type: 'chat.delivered',
+        payload: { messageIds: [clientMessageId], deliveredAtMs: Date.now() },
+      });
       this.deliver({
         type: 'chat.message',
         payload: {
@@ -53,7 +59,33 @@ export class DemoWebSocket {
           authorId: conversationId,
           text: 'Bonjour ! Je suis disponible pour cette visite. On se confirme ?',
           sentAtMs: Date.now(),
+          reactions: {},
         },
+      });
+    } else if (type === 'chat.typing' && payload) {
+      // Echo presence back so typing indicators render (single-connection demo
+      // stand-in for a server broadcast to the other party).
+      this.deliver({
+        type: 'chat.typing',
+        payload: {
+          conversationId: String(payload['conversationId']),
+          userId: String(payload['conversationId']),
+          typing: payload['typing'] !== false,
+        },
+      });
+    } else if (type === 'chat.read' && payload) {
+      // Mirror the read ack; the store stamps readAtMs on the peer's messages.
+      this.deliver({
+        type: 'chat.read',
+        payload: {
+          conversationId: String(payload['conversationId']),
+          readAtMs: payload['readAtMs'] ?? Date.now(),
+        },
+      });
+    } else if (type === 'chat.reaction' && payload) {
+      this.deliver({
+        type: 'chat.reaction',
+        payload: { messageId: String(payload['messageId']), emoji: String(payload['emoji']) },
       });
     } else if (type === 'visit.position') {
       // Broadcast the position back so listeners (family view) receive it.

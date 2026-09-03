@@ -2,6 +2,7 @@ import { Injectable, inject, signal, computed } from '@angular/core';
 import { Observable, map, catchError, of } from 'rxjs';
 import { ApiClient } from '../../core/api/api.client';
 import { NotificationsService } from '../../core/services/notifications/notifications.service';
+import { AuditService } from '../../core/services/audit/audit.service';
 
 /**
  * Personal health record vitals (PLAN.md §3.C / §5 Phase 3 — PHR).
@@ -65,7 +66,8 @@ export class VitalsStore {
   // possible in unit tests while remaining DI-friendly in the app.
   constructor(
     private readonly api: ApiClient = inject(ApiClient),
-    private readonly notifications?: NotificationsService
+    private readonly notifications?: NotificationsService,
+    private readonly audit?: AuditService
   ) {}
 
   private readonly _readings = signal<VitalReading[]>([]);
@@ -80,12 +82,14 @@ export class VitalsStore {
   readonly error = this._error.asReadonly();
   readonly saved = this._saved.asReadonly();
 
-  load(): void {
+   load(): void {
     this._loading.set(true);
     this.api.get<VitalReading[]>('/vitals/me').subscribe({
       next: (readings) => {
         this._readings.set(readings);
         this._loading.set(false);
+        // Audit: log the read access (subtask 3: vitals view).
+        this.audit?.log('vitals.view', 'vital-reading', '', { count: readings.length });
       },
       error: () => this._loading.set(false),
     });
@@ -98,15 +102,21 @@ export class VitalsStore {
     const payload: VitalReading = { ...reading, id: crypto.randomUUID(), source: 'manual' };
     return this.api.post<VitalReading>('/vitals/me', payload).pipe(
       map((saved) => {
-        this._readings.update((list) => [saved, ...list]);
+        const entry: VitalReading = saved ?? payload;
+        this._readings.update((list) => [entry, ...list]);
         this._saving.set(false);
         this._saved.set(true);
+        // Audit: log the write with a correlation id (subtask 3 + 4).
+        this.audit?.log('vitals.create', 'vital-reading', entry.id, {
+          type: entry.type,
+          source: entry.source,
+        });
         // Out-of-range readings raise a notification (FEATURE_PLAN.md §4
         // subtask 9; the alert itself is the existing `alerts` computed).
-        if (this.notifications && isOutOfRange(saved)) {
+        if (this.notifications && isOutOfRange(entry)) {
           this.notifications.notify(
             'vitals.alert',
-            `${VITAL_LABELS[saved.type]} outside reference range`,
+            `${VITAL_LABELS[entry.type]} outside reference range`,
             `Latest reading is outside the expected range — check the trends view.`,
             '/vitals'
           );

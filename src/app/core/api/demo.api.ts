@@ -131,6 +131,23 @@ interface DemoFavorite {
   savedAtMs: number;
 }
 
+/** Per-purpose consent record (FEATURE_PLAN.md §16 subtask 6). */
+type ConsentPurpose = 'family_sharing' | 'sms_reminders' | 'bluetooth' | 'data_export';
+
+interface DemoConsentRecord {
+  purpose: ConsentPurpose;
+  granted: boolean;
+  documentVersion: string;
+  updatedAtMs: number;
+  updatedBy: string;
+}
+
+interface DemoConsentState {
+  userId: string;
+  consents: DemoConsentRecord[];
+  currentDocumentVersion: string;
+}
+
 interface DemoMedication {
   id: string;
   name: string;
@@ -260,6 +277,8 @@ interface DemoPharmacyOrder {
 const now = () => Date.now();
 const hour = 60 * 60 * 1000;
 const dayMs = 24 * 60 * 60 * 1000;
+/** 10 MB cap for chat uploads (FEATURE_PLAN.md §18 subtask 2). */
+const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
 
 /** Local yyyy-mm-dd key for a timestamp (medication dates + refill estimates). */
 function demoDateKey(ms: number): string {
@@ -292,6 +311,7 @@ const state: {
   prescriptions: DemoPrescription[];
   pharmacyOrders: DemoPharmacyOrder[];
   audit: { id: string; actorId: string; action: string; resourceType: string; resourceId: string; atMs: number; meta?: Record<string, unknown> }[];
+  consents: Record<string, DemoConsentState>;
   session: DemoUser | null;
 } = {
   users: [
@@ -516,6 +536,21 @@ const state: {
   ],
   // Append-only audit ledger (FEATURE_PLAN.md §10 subtask 11; viewer in §16).
   audit: [],
+  // Consent ledger per user (FEATURE_PLAN.md §16 subtask 6). The demo client
+  // has family_sharing + data_export pre-granted so nurse/caregiver vitals
+  // views succeed out of the box; bluetooth + sms start ungranted (opt-in).
+  consents: {
+    'u-client': {
+      userId: 'u-client',
+      consents: [
+        { purpose: 'family_sharing', granted: true, documentVersion: 'v1.0', updatedAtMs: now() - 5 * 24 * hour, updatedBy: 'u-client' },
+        { purpose: 'sms_reminders', granted: false, documentVersion: 'v1.0', updatedAtMs: now() - 5 * 24 * hour, updatedBy: 'u-client' },
+        { purpose: 'bluetooth', granted: false, documentVersion: 'v1.0', updatedAtMs: now() - 5 * 24 * hour, updatedBy: 'u-client' },
+        { purpose: 'data_export', granted: true, documentVersion: 'v1.0', updatedAtMs: now() - 5 * 24 * hour, updatedBy: 'u-client' },
+      ],
+      currentDocumentVersion: 'v1.0',
+    },
+  },
   // Smart-reminder channel prefs per user (FEATURE_PLAN.md §8 subtask 3).
   reminderPreferences: {},
   notifications: [
@@ -1168,7 +1203,56 @@ export const demoApi: HttpInterceptorFn = (req: HttpRequest<unknown>, next: Http
     }
   }
 
-  // ---- e-Prescriptions & pharmacy orders (FEATURE_PLAN.md §9) ----
+   // ---- Consents (FEATURE_PLAN.md §16 subtask 7) ----
+  if (parts[0] === 'me' && parts[1] === 'consents' && parts.length === 2) {
+    const me = state.session;
+    const userId = me?.userId ?? 'u-client';
+    const record = state.consents[userId] ?? {
+      userId,
+      consents: [] as DemoConsentRecord[],
+      currentDocumentVersion: 'v1.0',
+    };
+    if (method === 'GET') {
+      return json(record);
+    }
+    if (method === 'PUT') {
+      const body = (req.body ?? {}) as {
+        consents?: DemoConsentRecord[];
+        currentDocumentVersion?: string;
+      };
+      const updated: DemoConsentState = {
+        userId,
+        consents: Array.isArray(body.consents) ? body.consents : record.consents,
+        currentDocumentVersion: body.currentDocumentVersion ?? record.currentDocumentVersion,
+      };
+      state.consents[userId] = updated;
+      // Audit-log the consent change server-side (subtask 12: audit-trail source of truth).
+      for (const c of updated.consents) {
+        state.audit.push({
+          id: `audit-${Math.random().toString(36).slice(2, 8)}`,
+          actorId: userId,
+          action: c.granted ? 'consent.granted' : 'consent.withdrawn',
+          resourceType: 'consent',
+          resourceId: c.purpose,
+          atMs: now(),
+          meta: { documentVersion: c.documentVersion },
+        });
+      }
+      return json(updated);
+    }
+  }
+
+  // ---- Admin: list all users' consents (FEATURE_PLAN.md §16 admin oversight) ----
+  if (method === 'GET' && parts[0] === 'admin' && parts[1] === 'consents') {
+    const me = state.session;
+    if (!me || !me.roles.includes('admin')) {
+      return of(new HttpResponse({ status: 403, body: { message: 'Admin access required.' } }));
+    }
+    const all = Object.values(state.consents);
+    return json({ items: all, total: all.length });
+  }
+
+
   if (method === 'POST' && parts[0] === 'prescriptions' && parts[1] === 'scan') {
     const body = (req.body ?? {}) as {
       barcode?: string;
@@ -1303,6 +1387,35 @@ export const demoApi: HttpInterceptorFn = (req: HttpRequest<unknown>, next: Http
     };
     state.audit.push(entry);
     return json({ ok: true, id: entry.id });
+  }
+
+  // ---- Audit batch upload (subtask 19: buffered batch of 10) ----
+  if (method === 'POST' && parts[0] === 'audit' && parts[1] === 'batch') {
+    const body = (req.body ?? []) as Record<string, unknown>[];
+    if (Array.isArray(body)) {
+      for (const event of body) {
+        state.audit.push({
+          id: String(event['id'] ?? `audit-${Math.random().toString(36).slice(2, 8)}`),
+          actorId: String(event['actorId'] ?? state.session?.userId ?? 'me'),
+          action: String(event['action'] ?? 'unknown'),
+          resourceType: String(event['resourceType'] ?? ''),
+          resourceId: String(event['resourceId'] ?? ''),
+          atMs: typeof event['atMs'] === 'number' ? event['atMs'] : now(),
+          meta: event['meta'] as Record<string, unknown> | undefined,
+        });
+      }
+    }
+    return json({ ok: true, received: state.audit.length });
+  }
+
+  // ---- Audit viewer for admins (subtask 11: GET /audit/all, admin-only) ----
+  if (method === 'GET' && parts[0] === 'audit' && parts[1] === 'all') {
+    const me = state.session;
+    if (!me || !me.roles.includes('admin')) {
+      return of(new HttpResponse({ status: 403, body: { message: 'Admin access required.' } }));
+    }
+    const sorted = [...state.audit].sort((a, b) => b.atMs - a.atMs);
+    return json({ items: sorted, total: sorted.length, chainHash: stateAuditChainHash(state.audit) });
   }
 
   // ---- Notifications ----
@@ -1802,12 +1915,35 @@ export const demoApi: HttpInterceptorFn = (req: HttpRequest<unknown>, next: Http
         measuredAtMs: body.measuredAtMs ?? now(),
         source: body.source ?? 'manual',
       };
-      state.vitals.unshift(reading);
-      return json(reading);
-    }
-  }
+       state.vitals.unshift(reading);
+       return json(reading);
+     }
+   }
 
-  // ---- Clinical log ----
+   // ---- Vitals for a specific user (subtask 9: consent enforcement) ----
+   // A nurse/caregiver viewing another user's vitals requires the target user's
+   // family_sharing consent. The owner always sees their own /vitals/me (above).
+   if (parts[0] === 'vitals' && parts.length === 2 && parts[1] !== 'me') {
+     const targetUserId = parts[1];
+     const me = state.session;
+     const targetConsent = state.consents[targetUserId]?.consents ?? [];
+     const familySharing = targetConsent.find((c) => c.purpose === 'family_sharing');
+     const canShare = familySharing?.granted ?? false;
+     // Owner always sees their own data; non-owners need consent.
+     if (me?.userId !== targetUserId && !canShare) {
+       return of(
+         new HttpResponse({
+           status: 403,
+           body: { message: 'This person has not granted family-sharing consent.' },
+         })
+       );
+     }
+     if (method === 'GET') {
+       return json(state.vitals.filter((v) => v.source === 'manual' || v.source === 'bluetooth'));
+     }
+   }
+
+
   if (parts[0] === 'clinical-log') {
     if (method === 'GET') {
       return json(state.clinicalLog);
@@ -1905,6 +2041,44 @@ export const demoApi: HttpInterceptorFn = (req: HttpRequest<unknown>, next: Http
     }
   }
 
+  // ---- Uploads (FEATURE_PLAN.md §18 subtask 2) ----
+  // Multipart POST /uploads: validates type + size (10 MB cap) and answers with
+  // an object URL the browser can display immediately. Mirrors the store's
+  // allowlist so the demo and the client agree on what is accepted.
+  if (method === 'POST' && parts[0] === 'uploads') {
+    const form = req.body;
+    const kindFor: Record<string, string> = {
+      'image/png': 'image',
+      'image/jpeg': 'image',
+      'image/gif': 'image',
+      'image/webp': 'image',
+      'image/avif': 'image',
+      'application/pdf': 'pdf',
+      'audio/webm': 'voice',
+      'audio/webm;codecs=opus': 'voice',
+    };
+    if (!(form instanceof FormData)) {
+      return of(new HttpResponse({ status: 400, body: { message: 'Expected a multipart upload.' } }));
+    }
+    const file = form.get('file');
+    if (!file || !(file instanceof Blob)) {
+      return of(new HttpResponse({ status: 400, body: { message: 'No file provided.' } }));
+    }
+    const kind = kindFor[file.type];
+    if (!kind) {
+      return of(
+        new HttpResponse({ status: 415, body: { message: 'Unsupported file type. Allowed: images, PDF, voice.' } })
+      );
+    }
+    if (file.size > MAX_UPLOAD_BYTES) {
+      return of(
+        new HttpResponse({ status: 413, body: { message: 'File is larger than the 10 MB limit.' } })
+      );
+    }
+    const url = URL.createObjectURL(file);
+    return json({ url, name: file.name, sizeMs: file.size, kind });
+  }
+
   // Unknown /api route — let it hit the real network (404 from the dev server).
   return next(req);
 };
@@ -1916,4 +2090,13 @@ function sessionPayload(user: DemoUser) {
     roles: user.roles,
     expiresAtMs: now() + 12 * hour,
   };
+}
+
+/** Client-side chain hash over the append-only audit ledger (subtask 13). */
+function stateAuditChainHash(audit: { id: string; action: string; resourceType: string; resourceId: string; atMs: number }[]): string {
+  let hash = 'init';
+  for (const e of audit) {
+    hash = btoa(`${hash}|${e.id}|${e.action}|${e.resourceType}|${e.resourceId}|${e.atMs}`);
+  }
+  return hash;
 }

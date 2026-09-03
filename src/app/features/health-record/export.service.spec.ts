@@ -64,8 +64,9 @@ describe('HealthSummaryExportService', () => {
     expect(service.lastFilename()).toMatch(/^health-summary-\d{4}-\d{2}-\d{2}\.pdf$/);
     expect(service.lastExportAtMs()).toBeTypeOf('number');
     expect(URL.createObjectURL).toHaveBeenCalled();
-    expect(calls.length).toBe(1);
-    expect(calls[0][0]).toBe('health-summary.export');
+    const exportCalls = calls.filter((c) => c[0] === 'health-summary.export');
+    expect(exportCalls.length).toBe(1);
+    expect(exportCalls[0][0]).toBe('health-summary.export');
   });
 
   it('blocks export without consent (no silent generation)', async () => {
@@ -78,7 +79,8 @@ describe('HealthSummaryExportService', () => {
     expect(ok).toBe(false);
     expect(service.error()).toMatch(/consent/i);
     expect(service.lastFilename()).toBeNull();
-    expect(calls).toHaveLength(0);
+    const exportCalls = calls.filter((c) => c[0] === 'health-summary.export');
+    expect(exportCalls).toHaveLength(0);
   });
 
   it('surfaces generation failure and recovers via retry', async () => {
@@ -117,8 +119,9 @@ describe('HealthSummaryExportService', () => {
 
     expect(link.startsWith('health-summary-share://')).toBe(true);
     expect(service.shareLink()).toBe(link);
-    expect(calls.length).toBe(1);
-    expect(calls[0][0]).toBe('health-summary.share');
+    const shareCalls = calls.filter((c) => c[0] === 'health-summary.share');
+    expect(shareCalls.length).toBe(1);
+    expect(shareCalls[0][0]).toBe('health-summary.share');
   });
 
   it('persists export consent across instances', () => {

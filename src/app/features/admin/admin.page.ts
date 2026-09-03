@@ -1,4 +1,5 @@
 import { Component, computed, inject, OnInit } from '@angular/core';
+import { RouterLink, RouterLinkActive } from '@angular/router';
 import { VettingStore, LicenceSubmission } from '../vetting/vetting.store';
 import { ReviewsStore, Review } from '../marketplace/reviews.store';
 
@@ -9,10 +10,16 @@ function formatDate(ms: number): string {
 @Component({
   selector: 'app-admin',
   standalone: true,
-  imports: [],
+  imports: [RouterLink, RouterLinkActive],
   template: `
     <section class="admin">
       <h1>Admin & compliance</h1>
+
+      <nav class="admin-nav" aria-label="Admin sections">
+        <a routerLink="/admin" routerLinkActive="active" [routerLinkActiveOptions]="{ exact: true }">Queue</a>
+        <a routerLink="/admin/audit" routerLinkActive="active">Audit trail</a>
+        <a routerLink="/admin/consents" routerLinkActive="active">Consents</a>
+      </nav>
 
       <h2>Licence vetting queue</h2>
 
@@ -95,6 +102,9 @@ function formatDate(ms: number): string {
   `,
   styles: `
     h2 { margin: 1.5rem 0 0.75rem; font-size: 1.15rem; }
+    .admin-nav { display: flex; gap: 0.5rem; margin: 0.5rem 0 1rem; border-bottom: 1px solid var(--border, #d9dee7); }
+    .admin-nav a { padding: 0.4rem 0.8rem; border-radius: 0.3rem 0.3rem 0 0; text-decoration: none; font-size: 0.9rem; }
+    .admin-nav a.active { background: var(--accent, #4f7cff); color: #fff; }
     .row { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; }
     .chip.ok { background: var(--success); color: #fff; }
     .chip.bad { background: var(--danger); color: #fff; }

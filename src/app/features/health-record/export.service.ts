@@ -102,5 +102,12 @@ export class HealthSummaryExportService {
 
   setConsent(given: boolean): void {
     setExportConsent(given);
+    // Audit: consent grant/withdrawal for the data_export purpose (subtask 3 + 4).
+    this.audit.log(
+      given ? 'consent.granted' : 'consent.withdrawn',
+      'consent',
+      'data_export',
+      { purpose: 'data_export' }
+    );
   }
 }

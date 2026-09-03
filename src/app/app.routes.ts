@@ -126,8 +126,24 @@ export const routes: Routes = [
   },
   {
     path: 'admin',
+    pathMatch: 'full',
     canActivate: [roleGuard([ROLES.ADMIN])],
     loadComponent: () => import('./features/admin/admin.page').then((m) => m.AdminPage),
+  },
+  {
+    path: 'admin/audit',
+    canActivate: [roleGuard([ROLES.ADMIN])],
+    loadComponent: () => import('./features/admin/audit-viewer.component').then((m) => m.AuditViewerComponent),
+  },
+  {
+    path: 'admin/consents',
+    canActivate: [roleGuard([ROLES.ADMIN])],
+    loadComponent: () => import('./features/admin/consents-admin.component').then((m) => m.ConsentsAdminComponent),
+  },
+  {
+    path: 'consents',
+    canActivate: [roleGuard([ROLES.CLIENT, ROLES.CAREGIVER, ROLES.NURSE])],
+    loadComponent: () => import('./features/consents/consents.page').then((m) => m.ConsentsPage),
   },
   { path: '**', redirectTo: 'marketplace' },
 ];

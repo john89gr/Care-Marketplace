@@ -3,6 +3,7 @@ import { Observable, map, catchError, of } from 'rxjs';
 import { ApiClient } from '../../core/api/api.client';
 import { NotificationsService } from '../../core/services/notifications/notifications.service';
 import { WebSocketClient } from '../../core/services/ws/websocket.client';
+import { AuditService } from '../../core/services/audit/audit.service';
 import {
   Medication,
   AdherenceLog,
@@ -45,7 +46,8 @@ export class MedicationsStore {
   constructor(
     private readonly api: ApiClient = inject(ApiClient),
     private readonly notifications?: NotificationsService,
-    private readonly ws?: WebSocketClient
+    private readonly ws?: WebSocketClient,
+    private readonly audit?: AuditService
   ) {}
 
   private readonly _meds = signal<Medication[]>([]);
@@ -128,11 +130,15 @@ export class MedicationsStore {
     return this.api
       .get<{ medications: Medication[]; logs: AdherenceLog[] }>('/me/medications')
       .pipe(
-        map(({ medications, logs }) => {
+         map(({ medications, logs }) => {
           this._meds.set(medications ?? []);
           this._logs.set(logs ?? []);
           this._loading.set(false);
           this._loaded.set(true);
+          // Audit: log the read access (subtask 3: medication view).
+          this.audit?.log('medications.view', 'medication', '', {
+            count: medications?.length ?? 0,
+          });
           this.raiseCriticalMissAlerts();
           return true;
         }),
@@ -147,8 +153,12 @@ export class MedicationsStore {
   add(input: NewMedication): Observable<boolean> {
     this._error.set('');
     return this.api.post<Medication>('/me/medications', input).pipe(
-      map((created) => {
+       map((created) => {
         this._meds.update((meds) => [created, ...meds]);
+        // Audit: log the medication creation (subtask 3 + 4).
+        this.audit?.log('medications.create', 'medication', created.id, {
+          name: created.name,
+        });
         this.raiseCriticalMissAlerts();
         return true;
       }),
@@ -180,17 +190,23 @@ export class MedicationsStore {
         loggedBy,
       })
       .pipe(
-        map((entry) => {
-          this._logs.update((logs) => [
-            ...logs.filter(
-              (l) => !(l.medicationId === entry.medicationId && l.date === entry.date && l.timeMinutes === entry.timeMinutes)
-            ),
-            entry,
-          ]);
-          this._actingId.set(null);
-          this.raiseCriticalMissAlerts();
-          return true;
-        }),
+         map((entry) => {
+           this._logs.update((logs) => [
+             ...logs.filter(
+               (l) => !(l.medicationId === entry.medicationId && l.date === entry.date && l.timeMinutes === entry.timeMinutes)
+             ),
+             entry,
+           ]);
+           this._actingId.set(null);
+           // Audit: log the dose log (subtask 3 + 4).
+           this.audit?.log('medication.log', 'adherence-log', entry.id, {
+             medicationId: entry.medicationId,
+             action: entry.action,
+             loggedBy: entry.loggedBy,
+           });
+           this.raiseCriticalMissAlerts();
+           return true;
+         }),
         catchError((error) => {
           this._actingId.set(null);
           this._error.set(
@@ -208,11 +224,16 @@ export class MedicationsStore {
     return this.api
       .post<Medication>(`/medications/${encodeURIComponent(medicationId)}/archive`, {})
       .pipe(
-        map((updated) => {
-          this._meds.update((meds) => meds.map((m) => (m.id === updated.id ? updated : m)));
-          this._actingId.set(null);
-          return true;
-        }),
+         map((updated) => {
+           this._meds.update((meds) => meds.map((m) => (m.id === updated.id ? updated : m)));
+           this._actingId.set(null);
+           // Audit: log the archive (soft-delete, history preserved).
+           this.audit?.log('medication.archive', 'medication', updated.id, {
+             name: updated.name,
+             archived: true,
+           });
+           return true;
+         }),
         catchError((error) => {
           this._actingId.set(null);
           this._error.set(

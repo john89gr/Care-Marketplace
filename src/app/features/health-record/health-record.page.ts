@@ -27,6 +27,10 @@ import { ScreeningStore } from './screening.store';
           <span class="meta"> — PDF for your physician (30/90/365 days or all)</span>
         </li>
         <li>
+          <a routerLink="/consents">Consent settings</a>
+          <span class="meta"> — manage data-sharing and reminder consents</span>
+        </li>
+        <li>
           <a routerLink="/screenings">Preventive care</a>
           @if (screening.dueCount() > 0) {
             <span class="badge" [class.overdue]="screening.overdueCount() > 0">
