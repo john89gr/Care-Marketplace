@@ -13,6 +13,7 @@ import {
 } from './matching';
 import { AnalyticsService } from '../../core/services/analytics.service';
 import { GeoPoint } from '../../core/services/geo/geolocation.service';
+import { certificationStatus } from '../../core/services/integrations/certification-status';
 
 /**
  * Marketplace search state (Phase 1, PLAN.md §5). search() fetches candidate
@@ -39,6 +40,12 @@ export interface CaregiverCard {
   completedVisits?: number;
   /** Recent cancellations (v2 penalty). */
   recentCancellations?: number;
+  /**
+   * When the provider's licence/certificates expire (§14). A card whose most
+   * urgent expiry has already passed is filtered out of marketplace results so
+   * clients never book a provider with a lapsed licence.
+   */
+  expiresAtMs?: number | null;
 }
 
 export type SearchSort = SortOption;
@@ -55,6 +62,23 @@ export interface SearchFilters {
   maxHourlyRate: number | null;
   /** Session-scoped UI toggle: show only favorited caregivers. */
   favoritesOnly?: boolean;
+}
+
+/**
+ * §14: a caregiver is visible in search results unless their licence has
+ * already expired. A null/undefined expiry (legacy or lifetime) is treated as
+ * visible. Pure so it is covered by unit tests without DI (§16).
+ */
+export function isCaregiverVisible(card: CaregiverCard, nowMs: number = Date.now()): boolean {
+  return certificationStatus(card.expiresAtMs, nowMs) !== 'expired';
+}
+
+/**
+ * §14: a caregiver whose most-urgent expiry is within the warning window but
+ * not yet lapsed. Used to render the "expires soon" badge on result cards.
+ */
+export function isCaregiverExpiringSoon(card: CaregiverCard, nowMs: number = Date.now()): boolean {
+  return certificationStatus(card.expiresAtMs, nowMs) === 'expiring_soon';
 }
 
 const DEFAULT_FILTERS: SearchFilters = {
@@ -138,13 +162,15 @@ export class MarketplaceStore {
     candidates: CaregiverCard[],
     filters: SearchFilters
   ): CaregiverCard[] {
+    // §14: hide providers whose licence has already expired before scoring.
+    const active = candidates.filter((card) => isCaregiverVisible(card));
     const query: MatchQuery = {
       ...filters,
       sort: filters.sort,
       maxHourlyRate: filters.maxHourlyRate,
       origin: this._origin(),
     };
-    const scored = matchCandidatesWithScores(candidates, query, this.weights);
+    const scored = matchCandidatesWithScores(active, query, this.weights);
     this._breakdowns.set(
       Object.fromEntries(scored.map((entry) => [entry.card.id, entry.breakdown]))
     );

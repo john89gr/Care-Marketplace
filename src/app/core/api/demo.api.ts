@@ -28,6 +28,16 @@ interface DemoSubmission {
   reviewedAtMs: number | null;
   reviewedBy: string | null;
   note: string;
+  /** §14: when the licence expires; null = not yet provided / lifetime. */
+  expiresAtMs: number | null;
+  /** §14: extra certificates (CPR, insurance, …) on the same status machinery. */
+  certifications: DemoCertification[];
+}
+
+interface DemoCertification {
+  id: string;
+  name: string;
+  expiresAtMs: number | null;
 }
 
 interface DemoVisit {
@@ -199,7 +209,10 @@ interface DemoNotification {  id: string;
     | 'review.submitted'
     | 'vitals.alert'
     | 'vetting.decision'
+    | 'screening.due'
     | 'medication.missed'
+    | 'certification.expiring'
+    | 'certification.expired'
     | 'system';
   title: string;
   body: string;
@@ -307,10 +320,28 @@ const state: {
       licenceNumber: 'ΝΟΣ-2024-Α123',
       specialties: ['Injections', 'Wound care'],
       submittedAtMs: now() - 2 * 24 * hour,
-      status: 'pending',
-      reviewedAtMs: null,
-      reviewedBy: null,
+      status: 'approved',
+      reviewedAtMs: now() - 24 * hour,
+      reviewedBy: 'Admin',
       note: '',
+      // §14: licence expiring in 14 days + a valid CPR cert → dashboard "expiring_soon".
+      expiresAtMs: now() + 14 * 24 * hour,
+      certifications: [{ id: 'cert-1', name: 'CPR Basic Life Support', expiresAtMs: now() + 60 * 24 * hour }],
+    },
+    {
+      id: 'v-2',
+      providerId: 'cg-3',
+      providerName: 'Anna Karakosta',
+      licenceNumber: 'ΦΥ-2024-Β456',
+      specialties: ['Post-stroke rehab', 'Mobility'],
+      submittedAtMs: now() - 40 * 24 * hour,
+      status: 'approved',
+      reviewedAtMs: now() - 39 * 24 * hour,
+      reviewedBy: 'Admin',
+      note: '',
+      // §14: lapsed licence (5 days past) → auto-hidden from marketplace search.
+      expiresAtMs: now() - 5 * 24 * hour,
+      certifications: [],
     },
   ],
   visits: [
@@ -548,6 +579,17 @@ const state: {
       createdAtMs: now() - 3 * 24 * hour,
       readAtMs: now() - 2 * 24 * hour,
     },
+    {
+      // §14: reminder that Elena's (u-nurse) licence expires in 14 days.
+      id: 'ntf-4',
+      userId: 'u-nurse',
+      kind: 'certification.expiring',
+      title: 'Licence expires soon',
+      body: 'Your licence ΝΟΣ-2024-Α123 expires in 14 days. Renew it to stay visible in the marketplace.',
+      link: '/onboarding',
+      createdAtMs: now() - 12 * hour,
+      readAtMs: null,
+    },
   ],
   vitals: [
     {
@@ -701,14 +743,20 @@ const caregivers = [
   {
     id: 'cg-1', displayName: 'Elena Papadaki', roles: ['nurse'], rating: 4.8, distanceKm: 3, hourlyRate: 25, availableNow: true,
     specialties: ['Injections', 'Wound care', 'Insulin'], lat: 37.9838, lng: 23.7275, completedVisits: 34, recentCancellations: 0,
+    // §14: licence expiring in 14 days → visible but flagged "expiring soon".
+    expiresAtMs: now() + 14 * 24 * hour,
   },
   {
     id: 'cg-2', displayName: 'Nikos Georgiou', roles: ['caregiver'], rating: 4.2, distanceKm: 12, hourlyRate: 15, availableNow: false,
     specialties: ['Companionship', 'Personal care'], lat: 37.9420, lng: 23.6460, completedVisits: 6, recentCancellations: 2,
+    // §14: valid licence for over a year.
+    expiresAtMs: now() + 365 * 24 * hour,
   },
   {
     id: 'cg-3', displayName: 'Anna Karakosta', roles: ['physio'], rating: 4.9, distanceKm: 5, hourlyRate: 30, availableNow: true,
     specialties: ['Post-stroke rehab', 'Mobility'], lat: 37.9755, lng: 23.7348, completedVisits: 21, recentCancellations: 0,
+    // §14: lapsed licence (5 days past) → auto-hidden from marketplace search.
+    expiresAtMs: now() - 5 * 24 * hour,
   },
 ];
 
@@ -1345,7 +1393,7 @@ export const demoApi: HttpInterceptorFn = (req: HttpRequest<unknown>, next: Http
     if (method === 'POST' && parts.length === 2) {
       const body = req.body as { licenceNumber?: string; specialties?: string[]; note?: string };
       const me = state.session;
-      const submission: DemoSubmission = {
+       const submission: DemoSubmission = {
         id: `v-${Math.random().toString(36).slice(2, 8)}`,
         providerId: me?.userId ?? 'u-nurse',
         providerName: me?.displayName ?? 'Provider',
@@ -1356,6 +1404,9 @@ export const demoApi: HttpInterceptorFn = (req: HttpRequest<unknown>, next: Http
         reviewedAtMs: null,
         reviewedBy: null,
         note: body.note ?? '',
+        // A brand-new submission has no approved expiry/certificates yet.
+        expiresAtMs: null,
+        certifications: [],
       };
       state.submissions.unshift(submission);
       return json(submission);

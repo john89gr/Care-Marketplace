@@ -4,6 +4,7 @@ import { VettingStore } from './vetting.store';
 import { SessionStore } from '../../core/auth/session';
 import { ROLES, Role } from '../../core/auth/roles';
 import { licenceNumberValidator } from '../../shared/validators/id.validators';
+import { daysUntilExpiry } from '../../core/services/integrations/certification-status';
 
 /** Specialty options per provider role (PLAN.md §3.A home health services). */
 const SPECIALTIES: Record<string, string[]> = {
@@ -19,6 +20,16 @@ const SPECIALTIES: Record<string, string[]> = {
   template: `
     <section class="onboarding">
       <h1>Professional onboarding</h1>
+
+      @if (store.certificationStatus() === 'expiring_soon') {
+        <p class="banner warning" role="status">
+          ⚠️ Your licence expires in {{ expiryDays() }} days. Renew it to stay visible in the marketplace.
+        </p>
+      } @else if (store.certificationStatus() === 'expired') {
+        <p class="banner bad" role="alert">
+          ❌ Your licence has expired. You are temporarily hidden from the marketplace until you renew and re-submit for review.
+        </p>
+      }
 
       @if (store.loading()) {
         <p>Loading…</p>
@@ -93,6 +104,14 @@ const SPECIALTIES: Record<string, string[]> = {
     }
     .status.ok { background: color-mix(in srgb, var(--success) 12%, transparent); }
     .status.bad { background: var(--danger-soft); color: var(--danger); }
+    .banner {
+      border-radius: 0.75rem;
+      padding: 0.75rem 1rem;
+      margin: 0 0 1rem;
+      border: 1px solid var(--border);
+    }
+    .banner.warning { background: color-mix(in srgb, var(--warning, #b8860b) 12%, transparent); color: var(--warning, #8a6d00); }
+    .banner.bad { background: var(--danger-soft); color: var(--danger); }
     fieldset {
       border: 1px solid var(--border);
       border-radius: 0.75rem;
@@ -122,6 +141,9 @@ export class OnboardingPage implements OnInit {
     const role = this.providerRole();
     return SPECIALTIES[role] ?? [];
   });
+
+  /** §14: whole days until the provider's licence expires (null = no expiry). */
+  readonly expiryDays = computed(() => daysUntilExpiry(this.store.mine()?.expiresAtMs ?? null));
 
   ngOnInit(): void {
     this.store.loadMine();

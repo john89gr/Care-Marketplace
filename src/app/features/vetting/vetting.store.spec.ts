@@ -3,6 +3,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { of, throwError } from 'rxjs';
 import { VettingStore, LicenceSubmission } from './vetting.store';
 import { ApiClient } from '../../core/api/api.client';
+import { DAY_MS, EXPIRY_WARNING_DAYS } from '../../core/services/integrations/certification-status';
 
 function makeApi(overrides: Partial<Record<'get' | 'post', unknown>> = {}) {
   return {
@@ -26,6 +27,8 @@ function submission(overrides: Partial<LicenceSubmission> = {}): LicenceSubmissi
     reviewedAtMs: null,
     reviewedBy: null,
     note: '',
+    expiresAtMs: null,
+    certifications: [],
     ...overrides,
   };
 }
@@ -116,6 +119,95 @@ describe('VettingStore', () => {
     expect(api.post).toHaveBeenCalledWith('/vetting/submissions/v-1/review', {
       decision: 'rejected',
       note: 'Unreadable scan',
+    });
+  });
+
+  describe('certificationStatus (§14)', () => {
+    const NOW = 1_000_000_000_000;
+
+    beforeEach(() => {
+      vi.useFakeTimers().setSystemTime(NOW);
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it('is valid when there is no submission', () => {
+      const api = makeApi({ get: vi.fn(() => of(null)) });
+      const store = new VettingStore(api);
+      store.loadMine();
+      expect(store.certificationStatus()).toBe('valid');
+    });
+
+    it('is valid when the licence has no expiry and no certifications', () => {
+      const api = makeApi({ get: vi.fn(() => of(submission({ status: 'approved' }))) });
+      const store = new VettingStore(api);
+      store.loadMine();
+      expect(store.certificationStatus()).toBe('valid');
+    });
+
+    it('is expiring_soon when the licence expires within the warning window', () => {
+      const api = makeApi({
+        get: vi.fn(() => of(submission({ status: 'approved', expiresAtMs: NOW + 14 * DAY_MS }))),
+      });
+      const store = new VettingStore(api);
+      store.loadMine();
+      expect(store.certificationStatus()).toBe('expiring_soon');
+    });
+
+    it('is expired when the licence has lapsed', () => {
+      const api = makeApi({
+        get: vi.fn(() => of(submission({ status: 'approved', expiresAtMs: NOW - 5 * DAY_MS }))),
+      });
+      const store = new VettingStore(api);
+      store.loadMine();
+      expect(store.certificationStatus()).toBe('expired');
+    });
+
+    it('is valid when the licence expires beyond the warning window', () => {
+      const api = makeApi({
+        get: vi.fn(() =>
+          of(submission({ status: 'approved', expiresAtMs: NOW + (EXPIRY_WARNING_DAYS + 5) * DAY_MS }))
+        ),
+      });
+      const store = new VettingStore(api);
+      store.loadMine();
+      expect(store.certificationStatus()).toBe('valid');
+    });
+
+    it('is expiring_soon when a certification (not the licence) is in the window', () => {
+      const api = makeApi({
+        get: vi.fn(() =>
+          of(
+            submission({
+              status: 'approved',
+              expiresAtMs: NOW + 120 * DAY_MS,
+              certifications: [{ id: 'c-1', name: 'CPR', expiresAtMs: NOW + 14 * DAY_MS }],
+            })
+          )
+        ),
+      });
+      const store = new VettingStore(api);
+      store.loadMine();
+      expect(store.certificationStatus()).toBe('expiring_soon');
+    });
+
+    it('is expired when a certification has lapsed even if the licence is valid', () => {
+      const api = makeApi({
+        get: vi.fn(() =>
+          of(
+            submission({
+              status: 'approved',
+              expiresAtMs: NOW + 120 * DAY_MS,
+              certifications: [{ id: 'c-1', name: 'CPR', expiresAtMs: NOW - 1 }],
+            })
+          )
+        ),
+      });
+      const store = new VettingStore(api);
+      store.loadMine();
+      expect(store.certificationStatus()).toBe('expired');
     });
   });
 });

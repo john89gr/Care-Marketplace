@@ -1,6 +1,11 @@
 import { Injectable, inject, signal, computed } from '@angular/core';
 import { Observable, map, catchError, of } from 'rxjs';
 import { ApiClient } from '../../core/api/api.client';
+import {
+  certificationStatusForMany,
+  Certification,
+  CertificationStatus,
+} from '../../core/services/integrations/certification-status';
 
 /**
  * Licence vetting workflow (PLAN.md §5 Phase 2 — Nurse/Physio onboarding):
@@ -21,6 +26,10 @@ export interface LicenceSubmission {
   reviewedAtMs: number | null;
   reviewedBy: string | null;
   note: string;
+  /** §14: when the licence itself expires; null if not yet recorded or lifetime. */
+  expiresAtMs: number | null;
+  /** §14: additional certificates (CPR, insurance, …) sharing the same status machinery. */
+  certifications: Certification[];
 }
 
 export interface LicenceDraft {
@@ -28,6 +37,9 @@ export interface LicenceDraft {
   specialties: string[];
   note: string;
 }
+
+/** §14 re-export so the onboarding/admin pages share one source of truth. */
+export type { Certification, CertificationStatus };
 
 @Injectable({ providedIn: 'root' })
 export class VettingStore {
@@ -50,6 +62,18 @@ export class VettingStore {
   readonly isApproved = computed(() => this._mine()?.status === 'approved');
   readonly isPending = computed(() => this._mine()?.status === 'pending');
   readonly isRejected = computed(() => this._mine()?.status === 'rejected');
+
+  /** §14: composite expiry status across the licence + every extra certificate. */
+  readonly certificationStatus = computed<CertificationStatus>(() => {
+    const mine = this._mine();
+    if (!mine) {
+      return 'valid';
+    }
+    return certificationStatusForMany(
+      [{ expiresAtMs: mine.expiresAtMs }, ...mine.certifications],
+      Date.now()
+    );
+  });
 
   loadMine(): void {
     this._loading.set(true);
