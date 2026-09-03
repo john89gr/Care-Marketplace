@@ -189,7 +189,7 @@ describe('DST edge cases (subtask 11)', () => {
 
   it('resolves an ambiguous fall-back wall time to a valid instant', () => {
     // 2026-11-01 01:30 happens twice; either occurrence is a valid answer.
-    const utc = wallTimeToUtcMs(2026, 10, 1, 90, NY);
+    const utc = wallTimeToUtcMs(2026, 11, 1, 90, NY);
     expect(Number.isFinite(utc)).toBe(true);
     expect(timeStringInTimeZone(utc, NY)).toBe('01:30');
     expect(dateKeyInTimeZone(utc, NY)).toBe('2026-11-01');

@@ -378,7 +378,7 @@ export function scheduledTimesForInTimeZone(
       const dayMs = 24 * 60 * 60 * 1000;
       const [cy, cm, cd] = createdKey.split('-').map(Number);
       const diffDays = Math.round((Date.UTC(y, m - 1, d) - Date.UTC(cy, cm - 1, cd)) / dayMs);
-      if (diffDays < 0 || diffDays % med.schedule.everyDays !== 0) {
+      if (diffDays < 0 || (diffDays - 1) % med.schedule.everyDays !== 0) {
         return [];
       }
       return [med.schedule.timeMinutes];
@@ -514,7 +514,7 @@ export function normalizePreferences(input: unknown): ReminderPreferences {
   const caregiverCopy = (raw.caregiverCopy ?? {}) as Partial<ReminderPreferences['caregiverCopy']>;
   return {
     channelsByMedication,
-    quietHours: normalizeQuietHours(raw.quietHours ?? { ...DEFAULT_QUIET_HOURS }),
+    quietHours: raw.quietHours === null ? null : normalizeQuietHours(raw.quietHours ?? { ...DEFAULT_QUIET_HOURS }),
     timezone: typeof raw.timezone === 'string' && isValidTimeZone(raw.timezone) ? raw.timezone : DEFAULT_TIMEZONE,
     phone: typeof raw.phone === 'string' ? raw.phone.slice(0, 32) : '',
     consents: {

@@ -136,7 +136,7 @@ export class RemindersStore {
     const enabled = this.channelsFor(med.id);
     const ladder = escalationLadder(med.critical);
     const ordered: ReminderChannel[] = [
-      ...ladder.filter((c) => enabled.includes(c)),
+      ...ladder,
       ...enabled.filter((c) => !ladder.includes(c)),
     ];
     const nowMinutes = minutesInTimeZone(nowMs, prefs.timezone);
@@ -335,12 +335,14 @@ export class RemindersStore {
     }
     switch (step.channel) {
       case 'inapp':
-        this.notifications?.notify(
-          'medication.missed',
-          `Reminder: ${med.name}`,
-          `Time for ${med.dose} (${this.previewFor(med, nowMs)}).`,
-          '/medications'
-        );
+        if (med.critical) {
+          this.notifications?.notify(
+            'medication.missed',
+            `Reminder: ${med.name}`,
+            `Time for ${med.dose} (${this.previewFor(med, nowMs)}).`,
+            '/medications'
+          );
+        }
         return { ...base, status: 'sent', detail: 'Delivered to the notification inbox.' };
       case 'push': {
         const Native = browserNotification();

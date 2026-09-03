@@ -92,7 +92,7 @@ describe('PaymentMethodsStore', () => {
   });
 
   it('adds a tokenised payment method', async () => {
-    const api = makeApi({ post: vi.fn(() => of(pm({ isDefault: false })) });
+    const api = makeApi({ post: vi.fn(() => of(pm({ token: 'tok_new', isDefault: false }))) });
     const store = new PaymentMethodsStore(api);
     const ok = await new Promise<boolean>((resolve) =>
       store
