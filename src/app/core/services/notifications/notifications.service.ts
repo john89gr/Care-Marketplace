@@ -25,6 +25,8 @@ export type NotificationKind =
   | 'vetting.decision'
   | 'screening.due'
   | 'medication.missed'
+  | 'certification.expiring'
+  | 'certification.expired'
   | 'system';
 
 export interface AppNotification {
@@ -78,6 +80,9 @@ export function routeForKind(kind: NotificationKind): string {
       return '/screenings';
     case 'medication.missed':
       return '/medications';
+    case 'certification.expiring':
+    case 'certification.expired':
+      return '/onboarding';
     case 'vetting.decision':
       return '/onboarding';
     case 'system':
