@@ -257,6 +257,26 @@ interface DemoPharmacyOrder {
   updatedAtMs: number;
 }
 
+/** Gov.gr Health Wallet document categories (FEATURE_PLAN.md §15 subtask 6). */
+export type WalletCategory = 'vaccinations' | 'prescriptions' | 'exams' | 'kepa_certificates';
+
+/** A single document in the citizen's Gov.gr Health Wallet. */
+interface DemoWalletDocument {
+  id: string;
+  userId: string;
+  category: WalletCategory;
+  title: string;
+  issuer: string;
+  issuedAtMs: number;
+  expiresAtMs: number | null;
+  /** 'pdf' | 'image' — drives the viewer's object-URL rendering path. */
+  docType: 'pdf' | 'image';
+  /** Embedded data URL for the demo backend (no external files). */
+  dataUrl: string;
+  /** Whether Gov.gr has cryptographically verified the document. */
+  verified: boolean;
+}
+
 const now = () => Date.now();
 const hour = 60 * 60 * 1000;
 const dayMs = 24 * 60 * 60 * 1000;
@@ -290,7 +310,8 @@ const state: {
   reminderPreferences: Record<string, DemoReminderPreferences>;
   pharmacies: DemoPharmacy[];
   prescriptions: DemoPrescription[];
-  pharmacyOrders: DemoPharmacyOrder[];
+   pharmacyOrders: DemoPharmacyOrder[];
+  walletDocs: DemoWalletDocument[];
   audit: { id: string; actorId: string; action: string; resourceType: string; resourceId: string; atMs: number; meta?: Record<string, unknown> }[];
   session: DemoUser | null;
 } = {
@@ -655,8 +676,72 @@ const state: {
       updatedAtMs: now() - 26 * hour,
     },
   ],
+  // Gov.gr Health Wallet: seeded vaccination + KEPA certificate + a virtual
+  // prescription + diagnostic exam (FEATURE_PLAN.md §15 subtask 12).
+  walletDocs: seededWalletDocs(),
   session: null,
 };
+
+/** Minimal 1×1 transparent PNG data URL for seed images. */
+const PNG_PIXEL =
+  'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==';
+
+/** Minimal valid PDF data URL for seed documents. */
+const PDF_BLOB =
+  'data:application/pdf;base64,JVBERi0xLjQKMSAwIG9iago8PAovVHlwZSAvQ2F0YWxvZwovUGFnZXMgMiAwIFIKPj4KZW5kb2JqCjIgMCBvYmoKPDwKL1R5cGUgL1BhZ2VzCi9LaWRzIFszIDAgUl0KL0NvdW50IDEKPj4KZW5kb2JqCjMgMCBvYmoKPDwKL1R5cGUgL1BhZ2UKL1BhcmVudCAyIDAgUgovTWVkaWFCb3ggWzAgMCA2MTIgNzkyXQo+PgplbmRvYmoKeHJlZgowIDQKMDAwMDAwMDAwMCA2NTUzNSBmIAowMDAwMDAwMDQ5IDAwMDAwIG4gCjAwMDAwMDAxMTUgMDAwMDAgbiAKMDAwMDAwMDIwOCAwMDAwMCBuIAp0cmFpbGVyCjw8Ci9TaXplIDQKL1Jvb3QgMSAwIFIKPj4Kc3RhcnR4cmVmCjMwMAolJUVPRgo=';
+
+function seededWalletDocs(): DemoWalletDocument[] {
+  return [
+    {
+      id: 'w-vacc-1',
+      userId: 'u-client',
+      category: 'vaccinations',
+      title: 'COVID-19 vaccination certificate',
+      issuer: 'Ministry of Health',
+      issuedAtMs: now() - 548 * 24 * 60 * 60 * 1000,
+      expiresAtMs: now() + 180 * 24 * 60 * 60 * 1000,
+      docType: 'pdf',
+      dataUrl: PDF_BLOB,
+      verified: true,
+    },
+    {
+      id: 'w-kepa-1',
+      userId: 'u-client',
+      category: 'kepa_certificates',
+      title: 'KEPA disability certificate (40%)',
+      issuer: 'KEPA',
+      issuedAtMs: now() - 365 * 24 * 60 * 60 * 1000,
+      expiresAtMs: now() + 365 * 24 * 60 * 60 * 1000,
+      docType: 'pdf',
+      dataUrl: PDF_BLOB,
+      verified: true,
+    },
+    {
+      id: 'w-exam-1',
+      userId: 'u-client',
+      category: 'exams',
+      title: 'Blood panel',
+      issuer: 'Attikon General Hospital',
+      issuedAtMs: now() - 30 * 24 * 60 * 60 * 1000,
+      expiresAtMs: null,
+      docType: 'image',
+      dataUrl: PNG_PIXEL,
+      verified: true,
+    },
+    {
+      id: 'w-rx-1',
+      userId: 'u-client',
+      category: 'prescriptions',
+      title: 'Atorvastatin 20 mg',
+      issuer: 'Dr. Stavrou',
+      issuedAtMs: now() - 2 * 24 * 60 * 60 * 1000,
+      expiresAtMs: null,
+      docType: 'pdf',
+      dataUrl: PDF_BLOB,
+      verified: true,
+    },
+  ];
+}
 
 interface DemoClinicalEntry {
   id: string;
@@ -889,6 +974,45 @@ export const demoApi: HttpInterceptorFn = (req: HttpRequest<unknown>, next: Http
   if (method === 'POST' && parts[0] === 'auth' && parts[1] === 'logout') {
     state.session = null;
     return json({ ok: true });
+  }
+
+  // ---- Gov.gr OIDC: authorize (step 1) ----
+  // Simulates the Gov.gr sandbox: returns an authorize URL + state, and in
+  // demo mode also a simulated authorization code that the callback endpoint
+  // will validate (FEATURE_PLAN.md §15 subtask 4 / 18).
+  if (method === 'GET' && parts[0] === 'auth' && parts[1] === 'gov-gr' && parts[2] === 'authorize') {
+    const user = state.session ?? state.users.find((u) => u.userId === 'u-client')!;
+    const stateParam = crypto.randomUUID();
+    const code = `demo-code-${stateParam.slice(0, 8)}`;
+    // In production the client would redirect to authorizeUrl; demo returns
+    // a simulated code so the callback step can be exercised end-to-end.
+    return json({
+      authorizeUrl: 'https://sandbox.gov.gr/authorize',
+      state: stateParam,
+      code,
+      demo: true,
+    });
+  }
+
+  // ---- Gov.gr OIDC: callback (step 2) ----
+  // Exchanges the simulated code for a session with idVerifiedVia: 'gov_gr'.
+  // Rejects mismatched state / unknown codes (FEATURE_PLAN.md §15 subtask 18:
+  // state param validated, no tokens in URL).
+  if (method === 'POST' && parts[0] === 'auth' && parts[1] === 'gov-gr' && parts[2] === 'callback') {
+    const body = req.body as { code?: string; state?: string };
+    if (!body.code || !body.code.startsWith('demo-code-')) {
+      return of(
+        new HttpResponse({ status: 400, body: { message: 'Invalid authorization code.' } })
+      );
+    }
+    if (!body.state || body.state.length < 8) {
+      return of(
+        new HttpResponse({ status: 400, body: { message: 'Missing or invalid state parameter.' } })
+      );
+    }
+    const user = state.session ?? state.users.find((u) => u.userId === 'u-client')!;
+    state.session = user;
+    return json(sessionPayload(user, 'gov_gr'));
   }
 
   // ---- Marketplace ----
@@ -1330,6 +1454,20 @@ export const demoApi: HttpInterceptorFn = (req: HttpRequest<unknown>, next: Http
       }
       return json({ ok: true });
     }
+  }
+
+  // ---- Gov.gr Health Wallet (FEATURE_PLAN.md §15 subtask 7) ----
+  // GET /me/wallet — all documents for the current user, newest first.
+  // Per-category refresh: GET /me/wallet?category=vaccinations etc.
+  if (parts[0] === 'me' && parts[1] === 'wallet' && parts.length === 2) {
+    const userId = state.session?.userId ?? 'u-client';
+    let docs = state.walletDocs.filter((d) => d.userId === userId);
+    const category = query ? (query.split('&')[0].split('=')[1] ?? '') : '';
+    if (category && category !== 'all') {
+      docs = docs.filter((d) => d.category === category);
+    }
+    docs.sort((a, b) => b.issuedAtMs - a.issuedAtMs);
+    return json({ documents: docs });
   }
 
   // ---- Vetting ----
@@ -1909,11 +2047,12 @@ export const demoApi: HttpInterceptorFn = (req: HttpRequest<unknown>, next: Http
   return next(req);
 };
 
-function sessionPayload(user: DemoUser) {
+function sessionPayload(user: DemoUser, idVerifiedVia: 'email' | 'gov_gr' = 'email') {
   return {
     userId: user.userId,
     displayName: user.displayName,
     roles: user.roles,
     expiresAtMs: now() + 12 * hour,
+    idVerifiedVia,
   };
 }

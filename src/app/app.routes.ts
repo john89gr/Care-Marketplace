@@ -76,6 +76,16 @@ export const routes: Routes = [
     loadComponent: () => import('./features/payments/payments.page').then((m) => m.PaymentsPage),
   },
   {
+    path: 'wallet',
+    canActivate: [roleGuard([ROLES.CLIENT])],
+    loadComponent: () => import('./features/integrations/wallet.page').then((m) => m.WalletPage),
+  },
+  {
+    path: 'gov-gr-auth',
+    loadComponent: () =>
+      import('./features/integrations/gov-gr-auth.page').then((m) => m.GovGrAuthPage),
+  },
+  {
     path: 'vitals',
     canActivate: [roleGuard([ROLES.CLIENT, ROLES.CAREGIVER, ROLES.NURSE])],
     loadComponent: () => import('./features/health-record/vitals.page').then((m) => m.VitalsPage),
