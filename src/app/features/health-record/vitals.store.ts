@@ -108,24 +108,26 @@ export class VitalsStore {
     const payload: VitalReading = { ...reading, id: crypto.randomUUID(), source: 'manual' };
     return this.api.post<VitalReading>('/vitals/me', payload).pipe(
       map((saved) => {
-        this._readings.update((list) => [saved, ...list]);
+        const reading = saved ?? payload;
+        this._readings.update((list) => [reading, ...list]);
         this._saving.set(false);
         this._saved.set(true);
         // Out-of-range readings raise a notification (FEATURE_PLAN.md §4
         // subtask 9; the alert itself is the existing `alerts` computed).
-        if (this.notifications && isOutOfRange(saved)) {
+        if (this.notifications && isOutOfRange(reading)) {
           this.notifications.notify(
             'vitals.alert',
-            `${VITAL_LABELS[saved.type]} outside reference range`,
+            `${VITAL_LABELS[reading.type]} outside reference range`,
             `Latest reading is outside the expected range — check the trends view.`,
             '/vitals'
           );
         }
         // FEATURE_PLAN.md §16 subtask 3: audit every write with a client
         // correlation id so the audit trail can trace the full request cycle.
-        this.audit?.log('vitals.create', 'vital-reading', saved.id, {
-          type: saved.type,
-          value: saved.value,
+        this.audit?.log('vitals.create', 'vital-reading', reading.id, {
+          type: reading.type,
+          value: reading.value,
+          source: 'manual',
           correlationId: `vitals-add-${Date.now().toString(36)}`,
         });
         return true;

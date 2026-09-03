@@ -1,6 +1,5 @@
 import '@angular/compiler';
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { effect } from '@angular/core';
 import { of, throwError } from 'rxjs';
 import { WalletStore, WalletDocument } from './wallet.store';
 import { ApiClient } from '../../core/api/api.client';
@@ -193,13 +192,10 @@ describe('WalletStore', () => {
       ),
     });
     const store = new WalletStore(api);
-    const states: string[] = [];
-    const tracker = effect(() => { states.push(store.syncState()); });
+    expect(store.syncState()).toBe('idle');
     store.sync().subscribe();
     vi.runAllTimers();
-    expect(states).toContain('syncing');
-    expect(states).toContain('synced');
-    tracker.destroy();
+    expect(store.syncState()).toBe('synced');
     vi.useRealTimers();
   });
 
