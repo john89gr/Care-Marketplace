@@ -40,6 +40,7 @@ function makeStore(http: HttpClient = makeHttp()) {
   const ws = {
     messages$,
     connected$,
+    typing$: new Subject(),
     connect: vi.fn(),
     send: vi.fn(() => true),
     close: vi.fn(),

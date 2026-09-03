@@ -37,7 +37,7 @@ describe('luhnValidator', () => {
   });
 
   it('rejects a number that is too long', () => {
-    expect(luhnValidator()(control('4242424242424242424'))).toEqual({ cardNumberPattern: true });
+    expect(luhnValidator()(control('42424242424242424242'))).toEqual({ cardNumberPattern: true });
   });
 
   it('rejects a number with non-digit characters after stripping', () => {

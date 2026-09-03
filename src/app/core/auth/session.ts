@@ -1,6 +1,8 @@
 import { Injectable, inject, signal, computed } from '@angular/core';
 import { Role, rolesFrom } from './roles';
 
+export type IdVerificationMethod = 'email' | 'gov_gr';
+
 /**
  * Minimal session model. The API contract is intentionally narrow:
  * everything the guards and stores need lives here.
@@ -10,6 +12,8 @@ export interface Session {
   displayName: string;
   roles: Role[];
   expiresAtMs: number;
+  /** How the user's identity was verified at login. */
+  idVerifiedVia: IdVerificationMethod;
 }
 
 const SESSION_KEY = 'cm.session.v1';
@@ -22,9 +26,14 @@ export class SessionStore {
   readonly isLoggedIn = computed(() => this._session() !== null);
   readonly roles = computed<Role[]>(() => this._session()?.roles ?? []);
   readonly displayName = computed(() => this._session()?.displayName ?? '');
+  /** How the current user's identity was verified (email vs. Gov.gr OIDC). */
+  readonly idVerifiedVia = computed<IdVerificationMethod>(
+    () => this._session()?.idVerifiedVia ?? 'email'
+  );
+  readonly isVerifiedViaGovGr = computed(() => this.idVerifiedVia() === 'gov_gr');
 
   setSession(session: Session): void {
-    this._session.set(session);
+    this._session.set({ ...session, idVerifiedVia: session.idVerifiedVia ?? 'email' });
     try {
       localStorage.setItem(SESSION_KEY, JSON.stringify(session));
     } catch {
@@ -65,6 +74,8 @@ export class SessionStore {
         displayName: typeof parsed.displayName === 'string' ? parsed.displayName : '',
         roles: rolesFrom(parsed.roles),
         expiresAtMs: typeof parsed.expiresAtMs === 'number' ? parsed.expiresAtMs : 0,
+        idVerifiedVia:
+          parsed.idVerifiedVia === 'gov_gr' ? 'gov_gr' : parsed.idVerifiedVia === 'email' ? 'email' : 'email',
       };
     } catch {
       return null;

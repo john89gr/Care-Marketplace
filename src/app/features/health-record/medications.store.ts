@@ -158,7 +158,7 @@ export class MedicationsStore {
          this._meds.update((meds) => [created, ...meds]);
          this.raiseCriticalMissAlerts();
          // FEATURE_PLAN.md §16 subtask 4: client correlation id on writes.
-         this.audit?.log('medications.add', 'medication', created.id, {
+          this.audit?.log('medications.create', 'medication', created.id, {
            name: created.name,
            correlationId: `meds-add-${Date.now().toString(36)}`,
          });
@@ -202,7 +202,7 @@ export class MedicationsStore {
            this._actingId.set(null);
            this.raiseCriticalMissAlerts();
            // FEATURE_PLAN.md §16 subtask 4: audit dose logging with who logged it.
-           this.audit?.log('medications.logDose', 'adherence-log', entry.id, {
+            this.audit?.log('medication.log', 'adherence-log', entry.id, {
              medicationId: entry.medicationId,
              action: entry.action,
              loggedBy,
@@ -231,7 +231,7 @@ export class MedicationsStore {
            this._meds.update((meds) => meds.map((m) => (m.id === updated.id ? updated : m)));
            this._actingId.set(null);
            // FEATURE_PLAN.md §16: audit soft-delete (history preserved).
-           this.audit?.log('medications.archive', 'medication', updated.id, {
+            this.audit?.log('medication.archive', 'medication', updated.id, {
              archived: true,
              correlationId: `meds-archive-${Date.now().toString(36)}`,
            });

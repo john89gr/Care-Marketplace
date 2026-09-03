@@ -123,7 +123,7 @@ export class VitalsStore {
         }
         // FEATURE_PLAN.md §16 subtask 3: audit every write with a client
         // correlation id so the audit trail can trace the full request cycle.
-        this.audit?.log('vitals.add', 'vital-reading', saved.id, {
+        this.audit?.log('vitals.create', 'vital-reading', saved.id, {
           type: saved.type,
           value: saved.value,
           correlationId: `vitals-add-${Date.now().toString(36)}`,

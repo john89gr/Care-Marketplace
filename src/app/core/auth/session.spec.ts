@@ -8,6 +8,7 @@ function makeSession(overrides: Record<string, unknown> = {}) {
     displayName: 'Maria Papadopoulou',
     roles: [ROLES.CLIENT],
     expiresAtMs: Date.now() + 60 * 60 * 1000,
+    idVerifiedVia: 'email' as 'email' | 'gov_gr',
     ...overrides,
   };
 }
@@ -108,5 +109,53 @@ describe('SessionStore', () => {
     expect(() => store.setSession(makeSession())).not.toThrow();
     expect(store.isLoggedIn()).toBe(true);
     spy.mockRestore();
+  });
+
+  describe('idVerifiedVia', () => {
+    it('defaults to "email" when not specified', () => {
+      const store = new SessionStore();
+      store.setSession({
+        userId: 'u-1',
+        displayName: 'Test',
+        roles: [ROLES.CLIENT],
+        expiresAtMs: Date.now() + 3600000,
+      } as never);
+      expect(store.idVerifiedVia()).toBe('email');
+      expect(store.isVerifiedViaGovGr()).toBe(false);
+    });
+
+    it('stores and exposes gov_gr verification', () => {
+      const store = new SessionStore();
+      store.setSession(makeSession({ idVerifiedVia: 'gov_gr' }));
+      expect(store.idVerifiedVia()).toBe('gov_gr');
+      expect(store.isVerifiedViaGovGr()).toBe(true);
+    });
+
+    it('persists idVerifiedVia to localStorage', () => {
+      const store = new SessionStore();
+      store.setSession(makeSession({ idVerifiedVia: 'gov_gr' }));
+      const raw = localStorage.getItem('cm.session.v1');
+      expect(raw).not.toBeNull();
+      expect(JSON.parse(raw!).idVerifiedVia).toBe('gov_gr');
+    });
+
+    it('reloads idVerifiedVia from storage', () => {
+      localStorage.setItem(
+        'cm.session.v1',
+        JSON.stringify(makeSession({ idVerifiedVia: 'gov_gr' }))
+      );
+      const store = new SessionStore();
+      expect(store.idVerifiedVia()).toBe('gov_gr');
+      expect(store.isVerifiedViaGovGr()).toBe(true);
+    });
+
+    it('falls back to "email" when stored idVerifiedVia is invalid', () => {
+      localStorage.setItem(
+        'cm.session.v1',
+        JSON.stringify({ ...makeSession(), idVerifiedVia: 'bogus' })
+      );
+      const store = new SessionStore();
+      expect(store.idVerifiedVia()).toBe('email');
+    });
   });
 });
