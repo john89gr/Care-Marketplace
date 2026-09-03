@@ -1,22 +1,33 @@
 import { Injectable, inject, signal, computed } from '@angular/core';
-import { HttpClient, HttpResponse, HttpEventType, type HttpEvent } from '@angular/common/http';
-import { Observable, of, type Subscription } from 'rxjs';
+import { HttpClient, HttpEvent, HttpEventType, HttpResponse } from '@angular/common/http';
+import { Subscription } from 'rxjs';
 import { SessionStore } from '../../core/auth/session';
-import { WebSocketClient, WsEnvelope } from '../../core/services/ws/websocket.client';
+import { WebSocketClient, WsEnvelope, WsTypingEvent } from '../../core/services/ws/websocket.client';
+
+/** 1 MB — used to format attachment sizes in the UI. */
+export const MB = 1024 * 1024;
+
+/** Maximum upload size for attachments (FEATURE_PLAN.md §18 subtask 3). */
+export const MAX_ATTACHMENT_SIZE = 10 * MB;
 
 export type MessageStatus = 'sending' | 'sent' | 'failed';
 
-/** v2: attachment kinds accepted in chat (FEATURE_PLAN.md §18). */
 export type AttachmentKind = 'image' | 'pdf' | 'voice';
 
-export interface Attachment {
+export interface ChatAttachment {
   kind: AttachmentKind;
   url: string;
   name: string;
-  sizeMs: number;
+  sizeBytes: number;
 }
 
-export type ReactionCounts = Record<string, number>;
+/** Resolve the attachment kind from a file's MIME type. Returns null if unsupported. */
+export function attachmentKindForType(file: File): AttachmentKind | null {
+  if (file.type.startsWith('image/') && file.type !== 'image/svg+xml') return 'image';
+  if (file.type === 'application/pdf') return 'pdf';
+  if (file.type.startsWith('audio/')) return 'voice';
+  return null;
+}
 
 export interface ChatMessage {
   id: string;
@@ -25,15 +36,16 @@ export interface ChatMessage {
   text: string;
   sentAtMs: number;
   status: MessageStatus;
-  /** v2: attachment payload (image / pdf / voice). */
-  attachment?: Attachment;
-  /** v2: read-receipt timestamps. */
-  deliveredAtMs?: number | null;
-  readAtMs?: number | null;
-  /** v2: aggregated reactions keyed by emoji. */
-  reactions?: ReactionCounts;
-  /** v2: optional booking-context reference rendered as an inline card. */
-  bookingId?: string | null;
+  /** v2: file/image/voice attachment (FEATURE_PLAN.md §18 subtask 1). */
+  attachment?: ChatAttachment;
+  /** v2: reactions aggregated by emoji char → count. */
+  reactions: Record<string, number>;
+  /** v2: server-delivered ack (delivered to recipient device). */
+  deliveredAtMs?: number;
+  /** v2: recipient read this message (read by the other party). */
+  readAtMs?: number;
+  /** v2: inline booking context card reference. */
+  bookingId?: string;
 }
 
 export interface Conversation {
@@ -41,111 +53,44 @@ export interface Conversation {
   displayName: string;
   lastMessageAtMs: number;
   unread: number;
-  /** v2: peer user ids currently typing in this conversation. */
-  typingIds: string[];
 }
 
-/** 10 MB cap for chat attachments (subtask 3). */
-export const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
-
-/** Duration cap for recorded voice notes (subtask 5). */
-export const VOICE_NOTE_MAX_MS = 60_000;
-
-/** Type allowlist (subtask 3); maps a MIME type to its attachment kind. */
-export const ALLOWED_ATTACHMENT_TYPES: Readonly<Record<AttachmentKind, readonly string[]>> = {
-  image: ['image/png', 'image/jpeg', 'image/gif', 'image/webp', 'image/avif'],
-  pdf: ['application/pdf'],
-  voice: ['audio/webm', 'audio/webm;codecs=opus'],
-};
-
-export interface AttachmentResult {
-  valid: boolean;
-  error: string | null;
-  kind: AttachmentKind | null;
+/** Options accepted by `send` for the v2 message envelope. */
+export interface SendOptions {
+  attachment?: ChatAttachment;
+  bookingId?: string;
 }
 
-/** Maps a MIME type to an attachment kind, or null if unsupported. */
-export function attachmentKindFor(type: string): AttachmentKind | null {
-  for (const [kind, types] of Object.entries(ALLOWED_ATTACHMENT_TYPES)) {
-    if (types.includes(type)) {
-      return kind as AttachmentKind;
-    }
-  }
-  return null;
-}
+/** Lifecycle of a file upload tracked inside the store (not persisted). */
+export type UploadStatus = 'uploading' | 'success' | 'error';
 
-/** Validates a file for size + type before upload (subtask 3). Pure. */
-export function validateAttachment(file: File): AttachmentResult {
-  const kind = attachmentKindFor(file.type);
-  if (kind === null) {
-    return {
-      valid: false,
-      error: 'Unsupported file type. Allowed: images, PDF, and voice notes.',
-      kind: null,
-    };
-  }
-  if (file.size > MAX_ATTACHMENT_BYTES) {
-    return { valid: false, error: 'File is larger than the 10 MB limit.', kind };
-  }
-  return { valid: true, error: null, kind };
-}
-
-/** Minimal shape the chat needs to render a booking-context card (subtask 6). */
-export interface BookingContextCard {
+export interface ChatUpload {
   id: string;
-  status: string;
-  caregiverName: string;
-  clientName: string;
-  scheduledAtMs: number;
-  note: string;
-}
-
-/** Resolves a booking-context card from a message + the booking roster (subtask 6). */
-export function resolveBookingContext(
-  message: ChatMessage,
-  bookings: ReadonlyArray<BookingContextCard>
-): BookingContextCard | null {
-  if (!message.bookingId) {
-    return null;
-  }
-  return bookings.find((b) => b.id === message.bookingId) ?? null;
-}
-
-/** Sums reaction counts across messages (subtask 9 aggregation). Pure. */
-export function aggregateReactions(messages: ReadonlyArray<ChatMessage>): ReactionCounts {
-  const totals: ReactionCounts = {};
-  for (const msg of messages) {
-    const reactions = msg.reactions;
-    if (!reactions) {
-      continue;
-    }
-    for (const [emoji, count] of Object.entries(reactions)) {
-      totals[emoji] = (totals[emoji] ?? 0) + count;
-    }
-  }
-  return totals;
-}
-
-interface UploadState {
   progress: number;
-  status: 'uploading' | 'done' | 'error';
-  error: string | null;
+  status: UploadStatus;
+  /** Human-readable error when status === 'error'. */
+  error?: string;
+  /** Resolved attachment once the upload succeeds. */
+  attachment?: ChatAttachment;
 }
 
 const STORAGE_KEY = 'cm.chat.v2';
 const WS_URL = () => `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/api/ws/chat`;
 
 /**
- * Chat state (PLAN.md §5 Phase 1 + FEATURE_PLAN.md §18 Chat v2). Real-time
- * WebSocket sync, unread counters, v2 attachments/voice/typing/receipts/
- * reactions/booking-context, and localStorage persistence. Conversations are
- * keyed by the peer's user id; incoming messages bump unread until the
- * conversation is opened.
+ * Chat state (PLAN.md §5 Phase 1 — Chat): real-time WebSocket sync, unread
+ * counters, and localStorage persistence. Conversations are keyed by the
+ * peer's user id; incoming messages bump unread until the conversation is
+ * opened.
+ *
+ * Chat v2 (FEATURE_PLAN.md §18): attachments + upload progress, emoji
+ * reactions with count aggregation, typing presence over a dedicated WS
+ * channel, per-message read receipts, and inline booking-context cards.
  */
 @Injectable({ providedIn: 'root' })
 export class ChatStore {
-  // Default-parameter injection keeps `new ChatStore(session, ws, http)` possible
-  // in unit tests while remaining DI-friendly in the app.
+  // Default-parameter injection keeps `new ChatStore(session, ws)` possible in
+  // unit tests while remaining DI-friendly in the app.
   constructor(
     private readonly session: SessionStore = inject(SessionStore),
     private readonly ws: WebSocketClient = inject(WebSocketClient),
@@ -153,6 +98,7 @@ export class ChatStore {
   ) {
     this._hydrate();
     this.ws.messages$.subscribe((envelope) => this.handleEnvelope(envelope));
+    this.ws.typing$.subscribe((event) => this._handleTyping(event));
     this.ws.connected$.subscribe((connected) => this._connected.set(connected));
   }
 
@@ -161,14 +107,12 @@ export class ChatStore {
   private readonly _activeId = signal<string | null>(null);
   private readonly _connected = signal(false);
   private readonly _sendError = signal('');
-  /** In-flight uploads keyed by the optimistic message id (subtask 3). */
-  private readonly _uploads = signal<Record<string, UploadState>>({});
-  /** User ids the current user has blocked (subtask 11). */
-  private readonly _blockedIds = signal<Set<string>>(new Set());
-  /** Live subscriptions to in-flight uploads, keyed by message id (subtask 3). */
+  private readonly _uploads = signal<Record<string, ChatUpload>>({});
+  /** conversationId → Set of peer user ids currently typing. */
+  private readonly _typing = signal<Record<string, Set<string>>>({});
+  /** Abort controllers for in-flight uploads (cancel support). */
+  private readonly _uploadControllers = new Map<string, AbortController>();
   private readonly _uploadSubs = new Map<string, Subscription>();
-  /** Typing timers so idle peers stop showing "…is typing" (subtask 7). */
-  private readonly _typingTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
   readonly conversations = this._conversations.asReadonly();
   readonly messages = this._messages.asReadonly();
@@ -176,7 +120,6 @@ export class ChatStore {
   readonly connected = this._connected.asReadonly();
   readonly sendError = this._sendError.asReadonly();
   readonly uploads = this._uploads.asReadonly();
-  readonly blockedIds = this._blockedIds.asReadonly();
 
   readonly totalUnread = computed(() =>
     this._conversations().reduce((sum, c) => sum + c.unread, 0)
@@ -187,13 +130,158 @@ export class ChatStore {
     return id ? this._messages()[id] ?? [] : [];
   });
 
-  /** Peers currently typing in the active conversation (subtask 7). */
-  readonly typingInActive = computed<string[]>(() => {
-    const id = this._activeId();
-    const conv = this._conversations().find((c) => c.id === id);
+  /** Peer user ids currently typing in the active conversation (excludes self). */
+  readonly typingUsers = computed<string[]>(() => {
+    const activeId = this._activeId();
     const me = this.session.session()?.userId ?? '';
-    return conv ? conv.typingIds.filter((u) => u !== me) : [];
+    if (!activeId) return [];
+    const set = this._typing()[activeId] ?? new Set();
+    return [...set].filter((u) => u !== me);
   });
+
+  /**
+   * Upload progress + status for a given upload id.
+   */
+  readonly uploadProgress = (id: string): number => this._uploads()[id]?.progress ?? 0;
+
+  /**
+   * Upload an attachment file. Returns an upload id the caller can use with
+   * `uploads()` to read progress / status / the resolved attachment URL.
+   * Files exceeding {@link MAX_ATTACHMENT_SIZE} or with unsupported types are
+   * rejected client-side and reported as `status: 'error'` without an HTTP call.
+   */
+  uploadAttachment(file: File): string {
+    const id = crypto.randomUUID();
+    const kind = attachmentKindForType(file);
+    if (!kind) {
+      this._uploads.update((up) => ({
+        ...up,
+        [id]: { id, progress: 0, status: 'error', error: 'Unsupported file type.' },
+      }));
+      return id;
+    }
+    if (file.size > MAX_ATTACHMENT_SIZE) {
+      const mb = (file.size / MB).toFixed(1);
+      this._uploads.update((up) => ({
+        ...up,
+        [id]: {
+          id,
+          progress: 0,
+          status: 'error',
+          error: `File exceeds the 10 MB limit (${mb} MB).`,
+        },
+      }));
+      return id;
+    }
+
+    const controller = new AbortController();
+    this._uploadControllers.set(id, controller);
+    this._uploadFiles.set(id, file);
+
+    const formData = new FormData();
+    formData.append('file', file);
+
+    this._uploads.update((up) => ({
+      ...up,
+      [id]: { id, progress: 0, status: 'uploading' },
+    }));
+
+    const sub = this.http
+      .request<UploadResponse>('POST', '/api/uploads', {
+        body: formData,
+        reportProgress: true,
+        observe: 'events',
+        signal: controller.signal,
+      })
+      .subscribe({
+        next: (event: HttpEvent<UploadResponse>) => {
+          if (event.type === HttpEventType.UploadProgress) {
+            const total = event.total ?? file.size;
+            const progress = total > 0 ? Math.round((100 * (event.loaded ?? 0)) / total) : 0;
+            this._uploads.update((up) => ({
+              ...up,
+              [id]: { ...up[id], progress, status: 'uploading' },
+            }));
+          } else if (event instanceof HttpResponse && event.body) {
+            const attachment: ChatAttachment = {
+              kind: event.body.kind,
+              url: event.body.url,
+              name: event.body.name,
+              sizeBytes: event.body.sizeBytes,
+            };
+            this._uploads.update((up) => ({
+              ...up,
+              [id]: { id, progress: 100, status: 'success', attachment },
+            }));
+            this._uploadControllers.delete(id);
+          }
+        },
+        error: (_err: unknown) => {
+          this._uploads.update((up) => ({
+            ...up,
+            [id]: {
+              id,
+              progress: 0,
+              status: 'error',
+              error: 'Upload failed. Please try again.',
+            },
+          }));
+          this._uploadControllers.delete(id);
+        },
+      });
+
+    this._uploadSubs.set(id, sub);
+    return id;
+  }
+
+  /** Abort an in-flight upload and mark it cancelled. */
+  cancelUpload(id: string): void {
+    const controller = this._uploadControllers.get(id);
+    if (controller) {
+      controller.abort();
+      this._uploadControllers.delete(id);
+    }
+    const sub = this._uploadSubs.get(id);
+    if (sub) {
+      sub.unsubscribe();
+      this._uploadSubs.delete(id);
+    }
+    this._uploads.update((up) => {
+      const current = up[id];
+      if (!current) return up;
+      return {
+        ...up,
+        [id]: { ...current, status: 'error', error: 'Upload cancelled.' },
+      };
+    });
+  }
+
+  /** Retry a previously failed upload (re-uses the original File). */
+  retryUpload(id: string): void {
+    const file = this._uploadFiles.get(id);
+    if (!file) return;
+    this._uploads.update((up) => {
+      const current = up[id];
+      if (!current) return up;
+      return { ...up, [id]: { ...current, progress: 0, status: 'uploading', error: undefined } };
+    });
+    this._doUpload(id, file);
+  }
+
+  /** Remove a finished/failed upload from the UI state. */
+  clearUpload(id: string): void {
+    this._uploads.update((up) => {
+      const next = { ...up };
+      delete next[id];
+      return next;
+    });
+  }
+
+  /**
+   * Files retained for retry. In a full implementation uploads would survive
+   * page navigations via a shared service; here we keep a transient map.
+   */
+  private readonly _uploadFiles = new Map<string, File>();
 
   connect(): void {
     this.ws.connect(WS_URL());
@@ -205,12 +293,11 @@ export class ChatStore {
 
   /** Opens (or creates) a conversation and marks it read. */
   openConversation(id: string, displayName = id): void {
-    this.clearTyping(id);
     this._activeId.set(id);
     const existing = this._conversations().find((c) => c.id === id);
     if (!existing) {
       this._conversations.update((list) => [
-        { id, displayName, lastMessageAtMs: 0, unread: 0, typingIds: [] },
+        { id, displayName, lastMessageAtMs: 0, unread: 0 },
         ...list,
       ]);
     } else if (existing.displayName !== displayName) {
@@ -222,60 +309,44 @@ export class ChatStore {
   }
 
   markRead(id: string): void {
-    const now = Date.now();
     this._conversations.update((list) =>
-      list.map((c) => (c.id === id ? { ...c, unread: 0, typingIds: [] } : c))
+      list.map((c) => (c.id === id ? { ...c, unread: 0 } : c))
     );
-    // Read receipts (subtask 8): mark the peer's messages read locally, then
-    // push a WS ack so the other side can reflect it.
+    // v2: stamp readAtMs on incoming messages that haven't been read yet,
+    // then notify the peer so their sent-tick updates to "read".
+    const me = this.session.session();
+    const now = Date.now();
+    const readIds: string[] = [];
     this._messages.update((all) => {
-      const list = all[id];
-      if (!list) {
-        return all;
-      }
-      const me = this.session.session()?.userId ?? '';
-      const next = list.map((m) =>
-        m.authorId !== me && (m.readAtMs == null || m.readAtMs < now)
-          ? { ...m, readAtMs: now }
-          : m
-      );
+      const conv = all[id] ?? [];
+      const next = conv.map((m) => {
+        if (m.authorId !== me?.userId && !m.readAtMs) {
+          readIds.push(m.id);
+          return { ...m, readAtMs: now };
+        }
+        return m;
+      });
       return { ...all, [id]: next };
     });
+    if (readIds.length > 0) {
+      this.ws.send({
+        type: 'chat.read_receipt',
+        payload: { conversationId: id, messageIds: readIds },
+      });
+    }
     this._persist();
-    this.ws.send({ type: 'chat.read', payload: { conversationId: id, readAtMs: now } });
   }
 
-  /** Notify the server that the user is typing (subtask 7). */
-  startTyping(): void {
+  /**
+   * Send a text message, optionally with an attachment or booking context
+   * (FEATURE_PLAN.md §18 subtask 6/1).
+   */
+  send(text: string, options?: SendOptions): void {
     const conversationId = this._activeId();
     if (!conversationId) {
       return;
     }
-    this.ws.send({ type: 'chat.typing', payload: { conversationId, typing: true } });
-  }
-
-  /** Stop announcing typing state (subtask 7). */
-  stopTyping(): void {
-    const conversationId = this._activeId();
-    if (!conversationId) {
-      return;
-    }
-    this.ws.send({ type: 'chat.typing', payload: { conversationId, typing: false } });
-  }
-
-  private clearTyping(conversationId: string): void {
-    this._conversations.update((list) =>
-      list.map((c) => (c.id === conversationId ? { ...c, typingIds: [] } : c))
-    );
-    for (const timer of this._typingTimers.values()) {
-      clearTimeout(timer);
-    }
-    this._typingTimers.clear();
-  }
-
-  send(text: string): void {
-    const conversationId = this._activeId();
-    if (!conversationId || !text.trim()) {
+    if (!text.trim() && !options?.attachment) {
       return;
     }
     const me = this.session.session();
@@ -291,12 +362,27 @@ export class ChatStore {
       status: 'sending',
       reactions: {},
     };
+    if (options?.attachment) {
+      message.attachment = options.attachment;
+    }
+    if (options?.bookingId) {
+      message.bookingId = options.bookingId;
+    }
     this.appendMessage(message);
 
-    const delivered = this.ws.send({
-      type: 'chat.send',
-      payload: { conversationId, text: message.text, clientMessageId: message.id },
-    });
+    const payload: Record<string, unknown> = {
+      conversationId,
+      text: message.text,
+      clientMessageId: message.id,
+    };
+    if (message.attachment) {
+      payload.attachment = message.attachment;
+    }
+    if (message.bookingId) {
+      payload.bookingId = message.bookingId;
+    }
+
+    const delivered = this.ws.send({ type: 'chat.send', payload });
     this.updateStatus(message.id, delivered ? 'sent' : 'failed');
     if (!delivered) {
       this._sendError.set('Not connected — message will not reach the caregiver yet.');
@@ -305,225 +391,32 @@ export class ChatStore {
     }
   }
 
-  /** Optimistic send of an attachment with upload progress (subtasks 1, 3, 13). */
-  sendAttachment(file: File): void {
-    const conversationId = this._activeId();
-    if (!conversationId) {
-      this._sendError.set('Open a conversation before attaching a file.');
-      return;
-    }
+  /** Notify the server that the current user has started/stopped typing. */
+  startTyping(): void {
+    const conv = this._activeId();
     const me = this.session.session();
-    if (!me) {
-      return;
-    }
-    const validation = validateAttachment(file);
-    if (!validation.valid || !validation.kind) {
-      this._sendError.set(validation.error ?? 'Invalid file.');
-      return;
-    }
-    const kind = validation.kind;
-    this._sendError.set('');
-
-    const message: ChatMessage = {
-      id: crypto.randomUUID(),
-      conversationId,
-      authorId: me.userId,
-      text: '',
-      sentAtMs: Date.now(),
-      status: 'sending',
-      attachment: {
-        kind,
-        url: this._previewUrl(file),
-        name: file.name,
-        sizeMs: file.size,
-      },
-      reactions: {},
-    };
-    this.appendMessage(message);
-    this._uploads.update((u) => ({
-      ...u,
-      [message.id]: { progress: 0, status: 'uploading', error: null },
-    }));
-
-    const form = new FormData();
-    form.append('file', file);
-
-    this._uploadSubs.set(
-      message.id,
-      this.http
-        .request('POST', '/api/uploads', {
-          body: form,
-          observe: 'events',
-          reportProgress: true,
-          responseType: 'json',
-        })
-        .subscribe({
-        next: (event: HttpEvent<unknown>) => {
-          if (event.type === HttpEventType.UploadProgress) {
-            const total = event.total ?? event.loaded;
-            const progress = total > 0 ? Math.round((100 * event.loaded) / total) : 0;
-            this._uploads.update((u) =>
-              u[message.id] ? { ...u, [message.id]: { ...u[message.id], progress } } : u
-            );
-          } else if (event instanceof HttpResponse) {
-            const body = event.body as { url: string; name: string; sizeMs: number; kind?: AttachmentKind } | null;
-            if (body?.url) {
-              this._replaceAttachment(message.id, {
-                kind: body.kind ?? kind,
-                url: body.url,
-                name: body.name ?? file.name,
-                sizeMs: body.sizeMs ?? file.size,
-              });
-              this._uploads.update((u) =>
-                u[message.id] ? { ...u, [message.id]: { progress: 100, status: 'done', error: null } } : u
-              );
-              this._deliverMessage(message, conversationId);
-            } else {
-              this._failUpload(message.id, conversationId, 'Upload did not return a URL.');
-            }
-          }
-        },
-        error: () => {
-          this._failUpload(message.id, conversationId, 'Upload failed. Tap to retry.');
-        },
-        complete: () => {
-          this._uploadSubs.delete(message.id);
-        },
-      })
-    );
+    if (!conv || !me) return;
+    this.ws.sendTyping(conv, me.userId, true);
   }
 
-  /** Send a booking-context card (subtask 6). */
-  sendBookingContext(bookingId: string, booking?: BookingContextCard): void {
-    const conversationId = this._activeId();
-    if (!conversationId) {
-      this._sendError.set('Open a conversation before sharing context.');
-      return;
-    }
+  stopTyping(): void {
+    const conv = this._activeId();
     const me = this.session.session();
-    if (!me) {
-      return;
-    }
-    const message: ChatMessage = {
-      id: crypto.randomUUID(),
-      conversationId,
-      authorId: me.userId,
-      text: booking ? `${booking.caregiverName} — ${booking.note}` : `Booking ${bookingId}`,
-      sentAtMs: Date.now(),
-      status: 'sending',
-      bookingId,
-      reactions: {},
-    };
-    this.appendMessage(message);
-    const delivered = this.ws.send({
-      type: 'chat.send',
-      payload: { conversationId, text: message.text, bookingId, clientMessageId: message.id },
-    });
-    this.updateStatus(message.id, delivered ? 'sent' : 'failed');
+    if (!conv || !me) return;
+    this.ws.sendTyping(conv, me.userId, false);
   }
 
-  /** React to a message (subtask 9). */
-  react(messageId: string, emoji: string): void {
-    this._messages.update((all) => {
-      const next: Record<string, ChatMessage[]> = {};
-      for (const [id, list] of Object.entries(all)) {
-        next[id] = list.map((m) => {
-          if (m.id !== messageId) {
-            return m;
-          }
-          const current = m.reactions ?? {};
-          return { ...m, reactions: { ...current, [emoji]: (current[emoji] ?? 0) + 1 } };
-        });
-      }
-      return next;
-    });
-    this._persist();
-    this.ws.send({ type: 'chat.reaction', payload: { messageId, emoji } });
+  /** Add an emoji reaction to a message (sends a WS frame to the peer). */
+  addReaction(messageId: string, emoji: string): void {
+    this._applyReaction(messageId, emoji, 1);
+    this._broadcastReaction(messageId, emoji, true);
   }
 
-  /** Retry a message that failed to send (subtask 13). */
-  retry(messageId: string): void {
-    const message = this._findMessage(messageId);
-    if (!message) {
-      return;
-    }
-    this.updateStatus(messageId, 'sending');
-    this._sendError.set('');
-    if (message.attachment) {
-      this._uploads.update((u) =>
-        u[message.id] ? { ...u, [message.id]: { progress: 0, status: 'uploading', error: null } } : u
-      );
-      // Re-upload from the (possibly temp) attachment url is not possible without
-      // the original file; signal the page so it can re-select. For text-only
-      // retries, push through the socket directly.
-      if (!message.text) {
-        this._sendError.set('Re-select the attachment to retry sending.');
-        this.updateStatus(messageId, 'failed');
-        return;
-      }
-    }
-    const delivered = this.ws.send({
-      type: 'chat.send',
-      payload: { conversationId: message.conversationId, text: message.text, clientMessageId: message.id },
-    });
-    this.updateStatus(messageId, delivered ? 'sent' : 'failed');
-    if (!delivered) {
-      this._sendError.set('Not connected — message will not reach the caregiver yet.');
-    }
+  /** Remove an emoji reaction from a message. */
+  removeReaction(messageId: string, emoji: string): void {
+    this._applyReaction(messageId, emoji, -1);
+    this._broadcastReaction(messageId, emoji, false);
   }
-
-  /** Cancel an in-flight upload (subtask 3). */
-  cancelUpload(messageId: string): void {
-    const sub = this._uploadSubs.get(messageId);
-    if (sub) {
-      sub.unsubscribe();
-      this._uploadSubs.delete(messageId);
-    }
-    this._uploads.update((u) => {
-      const cur = u[messageId];
-      if (!cur) {
-        return u;
-      }
-      return { ...u, [messageId]: { progress: cur.progress, status: 'error', error: 'Upload cancelled.' } };
-    });
-    this.updateStatus(messageId, 'failed');
-  }
-
-  /** Report a user to moderation (subtask 11). */
-  reportUser(userId: string, reason = ''): void {
-    this.ws.send({ type: 'report.create', payload: { targetUserId: userId, reason } });
-  }
-
-  /** Block a user (subtask 11). */
-  blockUser(userId: string): void {
-    this._blockedIds.update((set) => new Set(set).add(userId));
-    this.ws.send({ type: 'chat.block', payload: { blockedUserId: userId } });
-  }
-
-  unblockUser(userId: string): void {
-    this._blockedIds.update((set) => {
-      const next = new Set(set);
-      next.delete(userId);
-      return next;
-    });
-    this.ws.send({ type: 'chat.unblock', payload: { blockedUserId: userId } });
-  }
-
-  /** Client-side conversation search (subtask 10). */
-  readonly searchInConversation = (query: string): string[] => {
-    const id = this._activeId();
-    if (!id) {
-      return [];
-    }
-    const needle = query.trim().toLowerCase();
-    if (!needle) {
-      return [];
-    }
-    const me = this.session.session()?.userId ?? '';
-    return (this._messages()[id] ?? [])
-      .filter((m) => m.authorId !== me && m.text.toLowerCase().includes(needle))
-      .map((m) => m.id);
-  };
 
   /** Handles envelopes from the chat WebSocket. */
   handleEnvelope(envelope: WsEnvelope): void {
@@ -534,28 +427,23 @@ export class ChatStore {
           authorId: string;
           text: string;
           sentAtMs: number;
-          attachment?: Attachment;
-          bookingId?: string | null;
-          reactions?: ReactionCounts;
-          deliveredAtMs?: number;
-          readAtMs?: number;
+          attachment?: ChatAttachment;
+          reactions?: Record<string, number>;
+          bookingId?: string;
         };
         const me = this.session.session();
-        const isMine = me !== null && payload.authorId === me?.userId;
-        const message: ChatMessage = {
+        const isMine = me !== null && payload.authorId === me.userId;
+        this.appendMessage({
           id: crypto.randomUUID(),
           conversationId: payload.conversationId,
           authorId: payload.authorId,
-          text: payload.text ?? '',
+          text: payload.text,
           sentAtMs: payload.sentAtMs,
           status: 'sent',
-          attachment: payload.attachment,
           reactions: payload.reactions ?? {},
-          bookingId: payload.bookingId ?? null,
-          deliveredAtMs: payload.deliveredAtMs ?? null,
-          readAtMs: payload.readAtMs ?? null,
-        };
-        this.appendMessage(message);
+          ...(payload.attachment ? { attachment: payload.attachment } : {}),
+          ...(payload.bookingId ? { bookingId: payload.bookingId } : {}),
+        });
         if (!isMine) {
           this._bumpUnread(payload.conversationId);
         }
@@ -568,62 +456,28 @@ export class ChatStore {
         }
         break;
       }
-      case 'chat.delivered': {
-        // Server: these messages reached the peer (subtask 8).
-        const payload = envelope.payload as { messageIds?: string[]; deliveredAtMs?: number };
-        const at = payload.deliveredAtMs ?? Date.now();
-        this._stampReceipts(payload.messageIds, 'deliveredAtMs', at);
+      case 'chat.react': {
+        const payload = envelope.payload as { messageId: string; emoji: string; added: boolean };
+        this._applyReaction(payload.messageId, payload.emoji, payload.added ? 1 : -1);
         break;
       }
-      case 'chat.read': {
-        // Peer read our messages (subtask 8).
-        const payload = envelope.payload as { conversationId: string; messageIds?: string[]; readAtMs?: number };
-        const at = payload.readAtMs ?? Date.now();
-        const convo = payload.conversationId;
-        const me = this.session.session()?.userId ?? '';
-        const ids =
-          payload.messageIds ??
-          (this._messages()[convo] ?? [])
-            .filter((m) => m.authorId === me)
-            .map((m) => m.id);
-        this._stampReceipts(ids, 'readAtMs', at);
-        break;
-      }
-      case 'chat.typing': {
-        const payload = envelope.payload as { conversationId: string; userId: string; typing: boolean };
-        if (!payload?.conversationId || !payload?.userId) {
-          return;
-        }
-        this._conversations.update((list) =>
-          list.map((c) => {
-            if (c.id !== payload.conversationId) {
-              return c;
-            }
-            const typingIds = c.typingIds.includes(payload.userId)
-              ? c.typingIds.filter((u) => u !== payload.userId)
-              : [...c.typingIds, payload.userId];
-            return { ...c, typingIds };
-          })
-        );
-        if (payload.typing) {
-          this._typingTimers.set(
-            payload.userId,
-            setTimeout(() => this._removeTyping(payload.conversationId, payload.userId), 5_000)
+      case 'chat.read_receipt': {
+        const payload = envelope.payload as { conversationId: string; messageIds: string[] };
+        const me = this.session.session();
+        // Only mark MY outgoing messages as read-by-peer.
+        if (!me) break;
+        const now = Date.now();
+        const set = new Set(payload.messageIds);
+        this._messages.update((all) => {
+          const conv = all[payload.conversationId] ?? [];
+          const next = conv.map((m) =>
+            m.authorId === me.userId && set.has(m.id) && !m.readAtMs
+              ? { ...m, readAtMs: now }
+              : m
           );
-        } else {
-          const existing = this._typingTimers.get(payload.userId);
-          if (existing) {
-            clearTimeout(existing);
-            this._typingTimers.delete(payload.userId);
-          }
-        }
-        break;
-      }
-      case 'chat.reaction': {
-        const payload = envelope.payload as { messageId: string; emoji: string };
-        if (payload?.messageId && payload?.emoji) {
-          this._addReaction(payload.messageId, payload.emoji);
-        }
+          return { ...all, [payload.conversationId]: next };
+        });
+        this._persist();
         break;
       }
     }
@@ -638,6 +492,58 @@ export class ChatStore {
     this._persist();
   }
 
+  private _applyReaction(messageId: string, emoji: string, delta: number): void {
+    this._messages.update((all) => {
+      const next: Record<string, ChatMessage[]> = {};
+      for (const [id, list] of Object.entries(all)) {
+        next[id] = list.map((m) => {
+          if (m.id !== messageId) return m;
+          const current = m.reactions[emoji] ?? 0;
+          return {
+            ...m,
+            reactions: { ...m.reactions, [emoji]: Math.max(0, current + delta) },
+          };
+        });
+      }
+      return next;
+    });
+    this._persist();
+  }
+
+  private _broadcastReaction(messageId: string, emoji: string, added: boolean): void {
+    this.ws.send({
+      type: 'chat.react',
+      payload: { messageId, emoji, added },
+    });
+  }
+
+  private _handleTyping(event: WsTypingEvent): void {
+    if (event.userId === this.session.session()?.userId) return;
+    this._typing.update((map) => {
+      const users = new Set(map[event.conversationId] ?? []);
+      if (event.isTyping) {
+        users.add(event.userId);
+      } else {
+        users.delete(event.userId);
+      }
+      return { ...map, [event.conversationId]: users };
+    });
+    // Auto-clear after a timeout so a dropped stop-frame doesn't pin "typing" forever.
+    if (event.isTyping) {
+      clearTimeout(this._typingTimers[event.conversationId]);
+      this._typingTimers[event.conversationId] = setTimeout(() => {
+        this._typing.update((map) => {
+          const users = new Set(map[event.conversationId] ?? []);
+          users.delete(event.userId);
+          return { ...map, [event.conversationId]: users };
+        });
+        delete this._typingTimers[event.conversationId];
+      }, 3_000);
+    }
+  }
+
+  private _typingTimers: Record<string, ReturnType<typeof setTimeout>> = {};
+
   private updateStatus(messageId: string, status: MessageStatus): void {
     this._messages.update((all) => {
       const next: Record<string, ChatMessage[]> = {};
@@ -649,110 +555,12 @@ export class ChatStore {
     this._persist();
   }
 
-  private _stampReceipts(
-    messageIds: string[] | undefined,
-    field: 'deliveredAtMs' | 'readAtMs',
-    at: number
-  ): void {
-    if (!messageIds?.length) {
-      return;
-    }
-    this._messages.update((all) => {
-      const next: Record<string, ChatMessage[]> = {};
-      for (const [id, list] of Object.entries(all)) {
-        next[id] = list.map((m) => (messageIds.includes(m.id) && m[field] == null ? { ...m, [field]: at } : m));
-      }
-      return next;
-    });
-    this._persist();
-  }
-
-  private _addReaction(messageId: string, emoji: string): void {
-    this._messages.update((all) => {
-      const next: Record<string, ChatMessage[]> = {};
-      for (const [id, list] of Object.entries(all)) {
-        next[id] = list.map((m) => {
-          if (m.id !== messageId || m.reactions == null) {
-            return m;
-          }
-          return { ...m, reactions: { ...m.reactions, [emoji]: (m.reactions[emoji] ?? 0) + 1 } };
-        });
-      }
-      return next;
-    });
-    this._persist();
-  }
-
-  private _removeTyping(conversationId: string, userId: string): void {
-    this._conversations.update((list) =>
-      list.map((c) => (c.id === conversationId ? { ...c, typingIds: c.typingIds.filter((u) => u !== userId) } : c))
-    );
-  }
-
-  private _deliverMessage(message: ChatMessage, conversationId: string): void {
-    const me = this.session.session();
-    if (!me) {
-      return;
-    }
-    const delivered = this.ws.send({
-      type: 'chat.send',
-      payload: {
-        conversationId,
-        text: message.text,
-        clientMessageId: message.id,
-        attachment: message.attachment,
-        bookingId: message.bookingId ?? null,
-      },
-    });
-    this.updateStatus(message.id, delivered ? 'sent' : 'failed');
-    if (!delivered) {
-      this._sendError.set('Not connected — message will not reach the caregiver yet.');
-    }
-  }
-
-  private _failUpload(messageId: string, conversationId: string, error: string): void {
-    this.updateStatus(messageId, 'failed');
-    this._uploads.update((u) =>
-      u[messageId] ? { ...u, [messageId]: { progress: 100, status: 'error', error } } : u
-    );
-    this._sendError.set(error);
-  }
-
-  private _findMessage(messageId: string): ChatMessage | undefined {
-    for (const list of Object.values(this._messages())) {
-      const found = list.find((m) => m.id === messageId);
-      if (found) {
-        return found;
-      }
-    }
-    return undefined;
-  }
-
-  private _replaceAttachment(messageId: string, attachment: Attachment): void {
-    this._messages.update((all) => {
-      const next: Record<string, ChatMessage[]> = {};
-      for (const [id, list] of Object.entries(all)) {
-        next[id] = list.map((m) => (m.id === messageId ? { ...m, attachment } : m));
-      }
-      return next;
-    });
-    this._persist();
-  }
-
-  private _previewUrl(file: File): string {
-    try {
-      return URL.createObjectURL(file);
-    } catch {
-      return file.name;
-    }
-  }
-
   private _touchConversation(id: string, sentAtMs: number): void {
     this._conversations.update((list) => {
       const existing = list.find((c) => c.id === id);
       const updated = existing
         ? list.map((c) => (c.id === id ? { ...c, lastMessageAtMs: sentAtMs } : c))
-        : [{ id, displayName: id, lastMessageAtMs: sentAtMs, unread: 0, typingIds: [] }, ...list];
+        : [{ id, displayName: id, lastMessageAtMs: sentAtMs, unread: 0 }, ...list];
       return updated.sort((a, b) => b.lastMessageAtMs - a.lastMessageAtMs);
     });
   }
@@ -793,15 +601,21 @@ export class ChatStore {
       };
       if (Array.isArray(parsed.conversations)) {
         this._conversations.set(
-          parsed.conversations.map((c) => ({ ...c, typingIds: c.typingIds ?? [] }))
+          parsed.conversations.filter((c) => c && typeof c.id === 'string')
         );
       }
       if (parsed.messages && typeof parsed.messages === 'object') {
-        this._messages.set(
-          Object.fromEntries(
-            Object.entries(parsed.messages).filter(([, list]) => Array.isArray(list))
-          )
-        );
+        // Normalize v1 messages: ensure `reactions` is present.
+        const normalized: Record<string, ChatMessage[]> = {};
+        for (const [id, list] of Object.entries(parsed.messages)) {
+          if (Array.isArray(list)) {
+            normalized[id] = list.map((m) => ({
+              reactions: {},
+              ...(m as ChatMessage),
+            }));
+          }
+        }
+        this._messages.set(normalized);
       }
     } catch {
       // Corrupted storage — start clean.
@@ -809,5 +623,10 @@ export class ChatStore {
   }
 }
 
-/** Expose typed upload events for the page's progress view (subtask 3). */
-export type ChatUploadState = { progress: number; status: 'uploading' | 'done' | 'error'; error: string | null };
+/** Response shape from `POST /uploads`. */
+interface UploadResponse {
+  url: string;
+  name: string;
+  sizeBytes: number;
+  kind: AttachmentKind;
+}
