@@ -1,6 +1,7 @@
 import { Injectable, inject, signal, computed } from '@angular/core';
 import { Observable, map, catchError, of } from 'rxjs';
 import { ApiClient } from '../../core/api/api.client';
+import { AuditService } from '../../core/services/audit/audit.service';
 import { NotificationsService } from '../../core/services/notifications/notifications.service';
 import { WebSocketClient } from '../../core/services/ws/websocket.client';
 import {
@@ -41,11 +42,12 @@ export interface InteractionCheck {
 export class MedicationsStore {
   // Default-parameter injection keeps direct construction possible in tests.
   // `ws` is optional (no inject() default) so `new MedicationsStore(api,
-  // notifications)` keeps working outside an injection context.
+  // notifications, audit)` keeps working outside an injection context.
   constructor(
     private readonly api: ApiClient = inject(ApiClient),
     private readonly notifications?: NotificationsService,
-    private readonly ws?: WebSocketClient
+    private readonly ws?: WebSocketClient,
+    private readonly audit?: AuditService
   ) {}
 
   private readonly _meds = signal<Medication[]>([]);
@@ -128,14 +130,19 @@ export class MedicationsStore {
     return this.api
       .get<{ medications: Medication[]; logs: AdherenceLog[] }>('/me/medications')
       .pipe(
-        map(({ medications, logs }) => {
-          this._meds.set(medications ?? []);
-          this._logs.set(logs ?? []);
-          this._loading.set(false);
-          this._loaded.set(true);
-          this.raiseCriticalMissAlerts();
-          return true;
-        }),
+         map(({ medications, logs }) => {
+           this._meds.set(medications ?? []);
+           this._logs.set(logs ?? []);
+           this._loading.set(false);
+           this._loaded.set(true);
+           this.raiseCriticalMissAlerts();
+           // FEATURE_PLAN.md §16 subtask 3: audit the medication record view.
+           this.audit?.log('medications.view', 'medication', 'me', {
+             count: medications?.length ?? 0,
+             correlationId: `meds-load-${Date.now().toString(36)}`,
+           });
+           return true;
+         }),
         catchError(() => {
           this._loading.set(false);
           return of(false);
@@ -147,11 +154,16 @@ export class MedicationsStore {
   add(input: NewMedication): Observable<boolean> {
     this._error.set('');
     return this.api.post<Medication>('/me/medications', input).pipe(
-      map((created) => {
-        this._meds.update((meds) => [created, ...meds]);
-        this.raiseCriticalMissAlerts();
-        return true;
-      }),
+       map((created) => {
+         this._meds.update((meds) => [created, ...meds]);
+         this.raiseCriticalMissAlerts();
+         // FEATURE_PLAN.md §16 subtask 4: client correlation id on writes.
+         this.audit?.log('medications.add', 'medication', created.id, {
+           name: created.name,
+           correlationId: `meds-add-${Date.now().toString(36)}`,
+         });
+         return true;
+       }),
       catchError((error) => {
         this._error.set(
           (error as { error?: { message?: string } })?.error?.message ??
@@ -180,17 +192,24 @@ export class MedicationsStore {
         loggedBy,
       })
       .pipe(
-        map((entry) => {
-          this._logs.update((logs) => [
-            ...logs.filter(
-              (l) => !(l.medicationId === entry.medicationId && l.date === entry.date && l.timeMinutes === entry.timeMinutes)
-            ),
-            entry,
-          ]);
-          this._actingId.set(null);
-          this.raiseCriticalMissAlerts();
-          return true;
-        }),
+         map((entry) => {
+           this._logs.update((logs) => [
+             ...logs.filter(
+               (l) => !(l.medicationId === entry.medicationId && l.date === entry.date && l.timeMinutes === entry.timeMinutes)
+             ),
+             entry,
+           ]);
+           this._actingId.set(null);
+           this.raiseCriticalMissAlerts();
+           // FEATURE_PLAN.md §16 subtask 4: audit dose logging with who logged it.
+           this.audit?.log('medications.logDose', 'adherence-log', entry.id, {
+             medicationId: entry.medicationId,
+             action: entry.action,
+             loggedBy,
+             correlationId: `meds-log-${Date.now().toString(36)}`,
+           });
+           return true;
+         }),
         catchError((error) => {
           this._actingId.set(null);
           this._error.set(
@@ -208,11 +227,16 @@ export class MedicationsStore {
     return this.api
       .post<Medication>(`/medications/${encodeURIComponent(medicationId)}/archive`, {})
       .pipe(
-        map((updated) => {
-          this._meds.update((meds) => meds.map((m) => (m.id === updated.id ? updated : m)));
-          this._actingId.set(null);
-          return true;
-        }),
+         map((updated) => {
+           this._meds.update((meds) => meds.map((m) => (m.id === updated.id ? updated : m)));
+           this._actingId.set(null);
+           // FEATURE_PLAN.md §16: audit soft-delete (history preserved).
+           this.audit?.log('medications.archive', 'medication', updated.id, {
+             archived: true,
+             correlationId: `meds-archive-${Date.now().toString(36)}`,
+           });
+           return true;
+         }),
         catchError((error) => {
           this._actingId.set(null);
           this._error.set(

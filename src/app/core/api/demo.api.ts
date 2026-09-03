@@ -218,6 +218,16 @@ interface DemoPharmacy {
   inStock: boolean;
 }
 
+/** Consent record per purpose (FEATURE_PLAN.md §16 subtask 7). */
+interface DemoConsent {
+  purpose: 'familySharing' | 'smsReminders' | 'bluetooth' | 'export';
+  granted: boolean;
+  updatedAtMs: number;
+  consentedAtMs: number | null;
+  revokedAtMs: number | null;
+  documentVersion: number;
+}
+
 interface DemoRxMed {
   name: string;
   dose: string;
@@ -257,6 +267,11 @@ interface DemoPharmacyOrder {
   updatedAtMs: number;
 }
 
+/** Persisted consents per user: userId → consent records (FEATURE_PLAN §16). */
+interface DemoConsentState {
+  [userId: string]: DemoConsent[];
+}
+
 const now = () => Date.now();
 const hour = 60 * 60 * 1000;
 const dayMs = 24 * 60 * 60 * 1000;
@@ -291,6 +306,7 @@ const state: {
   pharmacies: DemoPharmacy[];
   prescriptions: DemoPrescription[];
   pharmacyOrders: DemoPharmacyOrder[];
+  consents: DemoConsentState;
   audit: { id: string; actorId: string; action: string; resourceType: string; resourceId: string; atMs: number; meta?: Record<string, unknown> }[];
   session: DemoUser | null;
 } = {
@@ -299,7 +315,6 @@ const state: {
     { userId: 'u-nurse', displayName: 'Elena Papadaki', email: 'elena@example.com', roles: ['nurse'] },
     { userId: 'u-admin', displayName: 'Admin', email: 'admin@example.com', roles: ['admin'] },
   ],
-  submissions: [
     {
       id: 'v-1',
       providerId: 'u-nurse',
@@ -516,6 +531,8 @@ const state: {
   ],
   // Append-only audit ledger (FEATURE_PLAN.md §10 subtask 11; viewer in §16).
   audit: [],
+  // Persisted consents per user (FEATURE_PLAN.md §16 subtask 7).
+  consents: {},
   // Smart-reminder channel prefs per user (FEATURE_PLAN.md §8 subtask 3).
   reminderPreferences: {},
   notifications: [
@@ -715,6 +732,38 @@ const caregivers = [
 function json<T>(body: T): Observable<HttpEvent<T>> {
   return of(new HttpResponse({ status: 200, body }));
 }
+
+/** Default consent record for a purpose (all not granted). */
+function defaultConsent(purpose: DemoConsent['purpose']): DemoConsent {
+  return {
+    purpose,
+    granted: false,
+    updatedAtMs: 0,
+    consentedAtMs: null,
+    revokedAtMs: null,
+    documentVersion: CONSENT_DOC_VERSION,
+  };
+}
+
+/** True when a user has an active, current-version consent for a purpose. */
+function userHasConsent(userId: string, purpose: DemoConsent['purpose']): boolean {
+  const records = state.consents[userId] ?? [];
+  const rec = records.find((c) => c.purpose === purpose);
+  if (!rec) {
+    return false;
+  }
+  return rec.granted && rec.documentVersion >= CONSENT_DOC_VERSION;
+}
+
+/** Current consent document version (bump to trigger re-consent, subtask 10). */
+const CONSENT_DOC_VERSION = 1;
+
+const CONSENT_PURPOSES: DemoConsent['purpose'][] = [
+  'familySharing',
+  'smsReminders',
+  'bluetooth',
+  'export',
+];
 
 /** Defaults mirror the client DEFAULT_PREFERENCES (kept in sync manually). */
 function defaultReminderPreferences(userId: string): DemoReminderPreferences {
@@ -1787,9 +1836,58 @@ export const demoApi: HttpInterceptorFn = (req: HttpRequest<unknown>, next: Http
     return json(visit);
   }
 
+  // ---- Consent management (FEATURE_PLAN.md §16 subtasks 7, 9) ----
+  if (parts[0] === 'me' && parts[1] === 'consents') {
+    const me = state.session;
+    const userId = me?.userId ?? 'u-client';
+    if (method === 'GET' && parts.length === 2) {
+      const existing = state.consents[userId] ?? [];
+      const merged = CONSENT_PURPOSES.map((p) => {
+        const rec = existing.find((c) => c.purpose === p);
+        return rec ?? defaultConsent(p);
+      });
+      return json(merged);
+    }
+    if ((method === 'PUT' || method === 'PATCH') && parts.length === 2) {
+      const body = (req.body ?? []) as Partial<DemoConsent>[];
+      const incoming = Array.isArray(body) ? body : [body];
+      const current = state.consents[userId] ?? CONSENT_PURPOSES.map(defaultConsent);
+      for (const incomingRec of incoming) {
+        const idx = current.findIndex((c) => c.purpose === incomingRec.purpose);
+        if (idx >= 0) {
+          current[idx] = {
+            purpose: incomingRec.purpose,
+            granted: Boolean(incomingRec.granted),
+            updatedAtMs: typeof incomingRec.updatedAtMs === 'number' ? incomingRec.updatedAtMs : now(),
+            consentedAtMs:
+              Boolean(incomingRec.granted) && incomingRec.consentedAtMs == null
+                ? now()
+                : incomingRec.consentedAtMs ?? current[idx].consentedAtMs,
+            revokedAtMs: incomingRec.granted
+              ? null
+              : typeof incomingRec.revokedAtMs === 'number' ? incomingRec.revokedAtMs : now(),
+            documentVersion: incomingRec.documentVersion ?? CONSENT_DOC_VERSION,
+          };
+        }
+      }
+      state.consents[userId] = current;
+      return json(current);
+    }
+  }
+
   // ---- Vitals ----
   if (parts[0] === 'vitals' && parts[1] === 'me') {
     if (method === 'GET') {
+      // Consent enforcement (FEATURE_PLAN.md §16 subtask 9): non-owner roles
+      // that can only see shared data must have the owner's familySharing
+      // consent on file. The demo "owner" is u-client; caregivers/nurses
+      // without that consent see 403.
+      const me = state.session;
+      const isOwner = !me || me.roles.includes('client');
+      const hasConsent = isOwner || userHasConsent(state.session?.userId ?? 'u-client', 'familySharing');
+      if (!hasConsent) {
+        return of(new HttpResponse({ status: 403, body: { message: 'Family sharing consent is required to view these vitals.' } }));
+      }
       return json(state.vitals);
     }
     if (method === 'POST') {

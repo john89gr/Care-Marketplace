@@ -1,6 +1,7 @@
 import { Injectable, inject, signal, computed } from '@angular/core';
 import { Observable, map, catchError, of } from 'rxjs';
 import { ApiClient } from '../../core/api/api.client';
+import { AuditService } from '../../core/services/audit/audit.service';
 import { NotificationsService } from '../../core/services/notifications/notifications.service';
 
 /**
@@ -61,11 +62,14 @@ const DIASTOLIC_RANGE: VitalRange = { min: 60, max: 90 };
 
 @Injectable({ providedIn: 'root' })
 export class VitalsStore {
-  // Default-parameter injection keeps `new VitalsStore(api, notifications)`
+  // Default-parameter injection keeps `new VitalsStore(api, notifications, audit)`
   // possible in unit tests while remaining DI-friendly in the app.
+  // `notifications` and `audit` are optional so existing call sites and tests
+  // that omit them keep working.
   constructor(
     private readonly api: ApiClient = inject(ApiClient),
-    private readonly notifications?: NotificationsService
+    private readonly notifications?: NotificationsService,
+    private readonly audit?: AuditService
   ) {}
 
   private readonly _readings = signal<VitalReading[]>([]);
@@ -86,6 +90,12 @@ export class VitalsStore {
       next: (readings) => {
         this._readings.set(readings);
         this._loading.set(false);
+        // FEATURE_PLAN.md §16 subtask 3: audit every view of the vitals
+        // record (who/when). Fire-and-forget — never blocks the UI.
+        this.audit?.log('vitals.view', 'vital-reading', 'me', {
+          count: readings.length,
+          correlationId: `vitals-load-${Date.now().toString(36)}`,
+        });
       },
       error: () => this._loading.set(false),
     });
@@ -111,6 +121,13 @@ export class VitalsStore {
             '/vitals'
           );
         }
+        // FEATURE_PLAN.md §16 subtask 3: audit every write with a client
+        // correlation id so the audit trail can trace the full request cycle.
+        this.audit?.log('vitals.add', 'vital-reading', saved.id, {
+          type: saved.type,
+          value: saved.value,
+          correlationId: `vitals-add-${Date.now().toString(36)}`,
+        });
         return true;
       }),
       catchError((error) => {
