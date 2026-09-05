@@ -1,4 +1,4 @@
-import { Component, inject, input } from '@angular/core';
+import { Component, inject, input, signal } from '@angular/core';
 import { RemindersStore } from './reminders.store';
 import type { Medication } from './medications.logic';
 import {
@@ -303,7 +303,7 @@ export class ReminderChannelPrefsComponent {
 export class ReminderSettingsComponent {
   readonly store = inject(RemindersStore);
   protected readonly timezones = TIMEZONES;
-  protected tzError = '';
+  protected readonly tzError = signal('');
 
   constructor() {
     this.store.load().subscribe();
@@ -366,10 +366,10 @@ export class ReminderSettingsComponent {
 
   setTimezone(event: Event): void {
     const value = (event.target as HTMLInputElement).value.trim();
-    this.tzError = '';
+    this.tzError.set('');
     this.store.setTimezone(value).subscribe((ok) => {
       if (!ok) {
-        this.tzError = `Unknown timezone "${value}". Use an IANA name like Europe/Athens.`;
+        this.tzError.set(`Unknown timezone "${value}". Use an IANA name like Europe/Athens.`);
       }
     });
   }

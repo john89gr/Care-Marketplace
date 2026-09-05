@@ -1,10 +1,9 @@
 import { Component, computed, inject, OnInit, signal } from '@angular/core';
-import { FormsModule } from '@angular/forms';
 import { Router } from '@angular/router';
-import { DisputesStore, Dispute, DisputeDraft, DisputeResolutionInput, DISPUTE_REASON_LABELS, DISPUTE_REASONS, DISPUTE_SLA_MS, quotePartialRefund } from './disputes.store';
-import { EscrowStore } from './escrow.store';
+import { DisputesStore, Dispute, DISPUTE_REASON_LABELS } from './disputes.store';
 import { SessionStore } from '../../core/auth/session';
-import { BookingStore } from '../../core/marketplace/booking.store';
+import { AdminQueueComponent } from './admin-queue.component';
+import { DisputeDetailComponent } from './dispute-detail.component';
 
 function formatDate(ms: number): string {
   return new Date(ms).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
@@ -22,7 +21,7 @@ function formatTimeDiff(ms: number): string {
 @Component({
   selector: 'app-disputes',
   standalone: true,
-  imports: [FormsFormsModule],
+  imports: [AdminQueueComponent, DisputeDetailComponent],
   template: `
     <section class="disputes">
       <h1>Dispute resolution</h1>
@@ -92,14 +91,13 @@ function formatTimeDiff(ms: number): string {
 })
 export class DisputesPage implements OnInit {
   readonly store = inject(DisputesStore);
-  private readonly escrow = inject(EscrowStore);
   private readonly session = inject(SessionStore);
   readonly router = inject(Router);
 
   readonly isAdmin = computed(() => this.session.hasAnyRole(['admin']));
   readonly DISPUTE_REASON_LABELS = DISPUTE_REASON_LABELS;
 
-  readonly selectedDispute = signal<Dispute | null>(null);
+  readonly selected = signal<Dispute | null>(null);
 
   readonly openCount = computed(() =>
     this.store.disputes().filter((d) => d.state === 'open' || d.state === 'under_review').length
@@ -107,13 +105,11 @@ export class DisputesPage implements OnInit {
 
   ngOnInit(): void {
     this.store.loadMine();
-    if (this.isAdmin()) {
-      this.store.loadQueue();
-    }
+    // The <admin-queue> component loads the full queue itself (owned data).
   }
 
   select(dispute: Dispute | null): void {
-    this.selectedDispute.set(dispute);
+    this.selected.set(dispute);
   }
 
   formatDate(ms: number): string {

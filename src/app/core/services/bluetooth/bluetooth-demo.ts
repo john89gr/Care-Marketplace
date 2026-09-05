@@ -1,10 +1,8 @@
 import { isDemoMode } from '../../api/demo.mode';
 import { DEVICE_PROFILES, BATTERY_SERVICE_UUID, BATTERY_LEVEL_UUID, BluetoothDeviceKind } from './device-profiles';
-import { parseBloodPressureMeasurement, parseGlucoseMeasurement } from './gatt-parsers';
-import { VitalType } from '../../features/health-record/vitals.store';
-import type { BluetoothAPI, BluetoothDeviceLike, BluetoothGattServerLike, BluetoothServiceLike, BluetoothCharacteristicLike } from './bluetooth.service';
 import { encodeSfloat, parseBloodPressureMeasurement, parseGlucoseMeasurement } from './gatt-parsers';
-import { VitalType } from '../../features/health-record/vitals.store';
+import type { BluetoothAPI, BluetoothDeviceLike, BluetoothGattServerLike, BluetoothServiceLike, BluetoothCharacteristicLike } from './bluetooth.service';
+import type { VitalType } from '../../../features/health-record/vitals.store';
 
 export interface SimulatedReading {
   kind: BluetoothDeviceKind;

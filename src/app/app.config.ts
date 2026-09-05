@@ -7,6 +7,7 @@ import { demoApi } from './core/api/demo.api';
 import { enableDemoFromUrl } from './core/api/demo.mode';
 import { WebSocketClient } from './core/services/ws/websocket.client';
 import { socketFactoryForMode } from './core/api/demo.socket';
+import { IndexedDbBackendProvider } from './core/services/offline/local-indexed-db';
 
 // If the URL carries ?demo=1, persist it so the demo backend stays active
 // across navigation. Harmless when absent.
@@ -27,5 +28,8 @@ export const appConfig: ApplicationConfig = {
         return client;
       },
     },
+    // Offline outbox persistence (Feature 20 subtask 5): IndexedDB in the
+    // browser; falls back to the in-memory buffer when storage is blocked.
+    IndexedDbBackendProvider,
   ],
 };

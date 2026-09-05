@@ -1,4 +1,4 @@
-import { Injectable, computed, signal, inject, OnDestroy } from '@angular/core';
+import { Injectable, Optional, Inject, computed, signal, inject, OnDestroy } from '@angular/core';
 import {
   QueuedRequest,
   QueueAction,
@@ -52,7 +52,11 @@ export class OfflineQueueService implements OnDestroy {
 
   // Optional at construction: in DI the binding comes from app.config; in unit
   // tests an in-memory fake is passed straight through (codebase convention).
-  constructor(backend: QueueBackend | null = inject(QUEUE_BACKEND, { optional: true })) {
+  constructor(
+    @Optional()
+    @Inject(QUEUE_BACKEND)
+    backend: QueueBackend | null = inject(QUEUE_BACKEND, { optional: true })
+  ) {
     this.backend = backend ?? null;
     this.bootstrap().catch(() => {
       /* SW unavailable / IDB blocked — keep the in-memory buffer. */
@@ -224,7 +228,11 @@ export class OfflineQueueService implements OnDestroy {
       this._entries.update((list) =>
         list.map((e) => {
           if (e.id === entry.id) {
-            const updated = { ...e, status: 'syncing', attempts: e.attempts + 1 };
+            const updated: QueuedRequest = {
+              ...e,
+              status: 'syncing',
+              attempts: e.attempts + 1,
+            };
             inFlight = updated;
             return updated;
           }

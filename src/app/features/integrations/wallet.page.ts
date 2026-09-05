@@ -30,7 +30,7 @@ function formatSyncAge(ms: number): string {
 
       <header class="wallet-header">
         <h1>Health Wallet</h1>
-        @if (store.isVerifiedViaGovGr()) {
+        @if (isVerifiedViaGovGr()) {
           <span class="verified-chip" title="Identity verified via Gov.gr">
             ✅ Verified via Gov.gr
           </span>
@@ -190,6 +190,9 @@ function formatSyncAge(ms: number): string {
 export class WalletPage implements OnInit {
   readonly store = inject(WalletStore);
   private readonly session = inject(SessionStore);
+
+  /** Category order for the tab bar (stable feature-list ordering). */
+  protected readonly WALLET_CATEGORIES = WALLET_CATEGORIES;
 
   readonly activeCategory = signal<WalletCategory>('vaccinations');
 

@@ -104,6 +104,18 @@ export function canTransitionDispute(from: DisputeState, to: DisputeState): bool
 export const DISPUTE_SLA_MS = 48 * 60 * 60 * 1000;
 
 /**
+ * True when a non-resolved dispute has been open past the SLA window — the
+ * admin queue flags these (§17 subtask 11). Pure so both components and the
+ * specs share one implementation.
+ */
+export function isPastSla(dispute: Dispute, nowMs: number = Date.now()): boolean {
+  return (
+    (dispute.state === 'open' || dispute.state === 'under_review') &&
+    dispute.createdAtMs < nowMs - DISPUTE_SLA_MS
+  );
+}
+
+/**
  * Human-readable reason labels for the UI.
  */
 export const DISPUTE_REASON_LABELS: Record<DisputeReason, string> = {

@@ -40,7 +40,7 @@ interface AdminConsentsResponse {
       <div class="filters" role="group" aria-label="Consent filters">
         <label>
           Purpose
-          <select [value]="purposeFilter()" (change)="purposeFilter.set($event.target.value)">
+          <select [value]="purposeFilter()" (change)="purposeFilter.set($any($event.target).value)">
             <option value="">All purposes</option>
             @for (p of purposes; track p) {
               <option [value]="p">{{ label(p) }}</option>

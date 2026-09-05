@@ -42,7 +42,10 @@ export class OrdersStore {
   private readonly _actingId = signal<string | null>(null);
   private readonly _error = signal('');
   private readonly _loaded = signal(false);
-  /** Orders already staged into the medication list (see TODO in models). */
+  /**
+   * Orders already staged into the medication list (subtask 10 idempotency
+   * guard — `importToMedications` is a no-op for ids tracked here).
+   */
   private readonly _importedIds = signal<readonly string[]>([]);
 
   readonly orders = this._orders.asReadonly();

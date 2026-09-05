@@ -114,7 +114,10 @@ import {
                 >
                   <span class="fill" [style.width.%]="pct(entry.med)"></span>
                 </span>
-                <span class="meta">{{ adherencePct(entry.med) }} · 30-day {{ adherencePct30(entry.med) }}</span>
+                <span class="meta">
+                  <span>{{ adherencePct(entry.med) }}</span>
+                  · 30-day <span>{{ adherencePct30(entry.med) }}</span>
+                </span>
               </div>
               <div class="med-actions">
                 <button type="button" class="link" (click)="check(entry.med.id)">

@@ -12,7 +12,7 @@ import {
   BATTERY_LEVEL_UUID,
 } from './device-profiles';
 import { parseFrame, ParsedVitalReading } from './gatt-parsers';
-import { VitalType } from '../../features/health-record/vitals.store';
+import type { VitalType } from '../../../features/health-record/vitals.store';
 
 const isDevMode =
   typeof window !== 'undefined' &&
@@ -357,7 +357,7 @@ export class BluetoothService {
     if (rawType !== 'bloodPressure' && rawType !== 'glucose') {
       return;
     }
-    const type = rawType as VitalType;
+    const type = rawType as BluetoothDeviceKind;
     const value = Number(payload['value'] ?? 0);
     const value2 = payload['value2'] == null ? null : Number(payload['value2']);
     const battery = payload['batteryLevel'] == null ? null : Number(payload['batteryLevel']);

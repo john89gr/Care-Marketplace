@@ -1,4 +1,4 @@
-import { Injectable, inject, signal, computed } from '@angular/core';
+import { Injectable, Optional, Inject, InjectionToken, inject, signal, computed } from '@angular/core';
 import { Observable, map, catchError, of } from 'rxjs';
 import { ApiClient } from '../../core/api/api.client';
 import { NotificationsService } from '../../core/services/notifications/notifications.service';
@@ -36,6 +36,13 @@ export interface ScreeningAuditHook {
   log(event: ScreeningAuditEvent): void;
 }
 
+/**
+ * Injection token for the optional audit hook (subtask 13). Nothing provides it
+ * in the app yet — `@Optional()` keeps the in-memory audit log the fallback —
+ * but a provider can be wired later without touching the store.
+ */
+export const SCREENING_AUDIT_HOOK = new InjectionToken<ScreeningAuditHook>('cm.screening.auditHook');
+
 @Injectable({ providedIn: 'root' })
 export class ScreeningStore {
   // Default-parameter injection keeps `new ScreeningStore(api, notifications)`
@@ -45,6 +52,8 @@ export class ScreeningStore {
   constructor(
     private readonly api: ApiClient = inject(ApiClient),
     private readonly notifications?: NotificationsService,
+    @Optional()
+    @Inject(SCREENING_AUDIT_HOOK)
     private readonly audit?: ScreeningAuditHook
   ) {}
 

@@ -76,6 +76,11 @@ export const routes: Routes = [
     loadComponent: () => import('./features/payments/payments.page').then((m) => m.PaymentsPage),
   },
   {
+    path: 'disputes',
+    canActivate: [roleGuard([ROLES.CLIENT, ROLES.CAREGIVER, ROLES.NURSE, ROLES.PHYSIO, ROLES.ADMIN])],
+    loadComponent: () => import('./features/payments/disputes.page').then((m) => m.DisputesPage),
+  },
+  {
     path: 'wallet',
     canActivate: [roleGuard([ROLES.CLIENT])],
     loadComponent: () => import('./features/integrations/wallet.page').then((m) => m.WalletPage),

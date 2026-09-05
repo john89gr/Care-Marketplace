@@ -125,9 +125,10 @@ export function toObservation(
     );
   }
 
-  const spec = OBSERVATION_LOINC[reading.type as VitalType];
+  const spec: ObservationLoinc = OBSERVATION_LOINC[reading.type as VitalType];
   const id = `obs-${reading.id}`;
   const base = {
+    resourceType: 'Observation' as const,
     id,
     status: 'final' as const,
     category: [VITAL_SIGNS_CATEGORY],

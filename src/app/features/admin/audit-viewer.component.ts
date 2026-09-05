@@ -1,4 +1,5 @@
 import { Component, computed, inject, OnInit, signal } from '@angular/core';
+import { JsonPipe } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { AuditService, AuditEvent } from '../../core/services/audit/audit.service';
 import { SessionStore } from '../../core/auth/session';
@@ -12,7 +13,7 @@ import { SessionStore } from '../../core/auth/session';
 @Component({
   selector: 'app-audit-viewer',
   standalone: true,
-  imports: [FormsModule],
+  imports: [FormsModule, JsonPipe],
   template: `
     <section class="audit-viewer">
       <h1>Audit trail</h1>
@@ -29,35 +30,35 @@ import { SessionStore } from '../../core/auth/session';
           Actor
           <input type="text" placeholder="actor id"
                  [value]="actorFilter()"
-                 (input)="actorFilter.set($event.target.value)"
+                 (input)="actorFilter.set($any($event.target).value)"
                  aria-label="Filter by actor id" />
         </label>
         <label>
           Action
           <input type="text" placeholder="e.g. vitals.view"
                  [value]="actionFilter()"
-                 (input)="actionFilter.set($event.target.value)"
+                 (input)="actionFilter.set($any($event.target).value)"
                  aria-label="Filter by action" />
         </label>
         <label>
           Resource
           <input type="text" placeholder="e.g. vital-reading"
                  [value]="resourceFilter()"
-                 (input)="resourceFilter.set($event.target.value)"
+                 (input)="resourceFilter.set($any($event.target).value)"
                  aria-label="Filter by resource type" />
         </label>
         <label>
           From
           <input type="date"
                  [value]="dateFrom()"
-                 (change)="dateFrom.set($event.target.value)"
+                 (change)="dateFrom.set($any($event.target).value)"
                  aria-label="Filter by date from" />
         </label>
         <label>
           To
           <input type="date"
                  [value]="dateTo()"
-                 (change)="dateTo.set($event.target.value)"
+                 (change)="dateTo.set($any($event.target).value)"
                  aria-label="Filter by date to" />
         </label>
         <button type="button" (click)="resetFilters()" aria-label="Reset filters">Reset</button>

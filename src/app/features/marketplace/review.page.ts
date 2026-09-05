@@ -1,5 +1,4 @@
 import { Component, computed, effect, inject, OnInit, signal } from '@angular/core';
-import { FormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
 import { ActivatedRoute } from '@angular/router';
 import { BookingStore } from './booking.store';
 import {
@@ -21,13 +20,14 @@ function formatDate(ms: number): string {
 /**
  * Review form (FEATURE_PLAN.md §1): rate a completed visit 1–5 stars with an
  * optional comment. One review per completed booking; the star picker is a
- * native radio group bound to a typed reactive form control so it stays
- * keyboard- and screen-reader-friendly.
+ * native radio group so it stays keyboard- and screen-reader-friendly. The
+ * fields are signal-backed with explicit change handlers (the pattern used by
+ * the marketplace/export pages in this build).
  */
 @Component({
   selector: 'app-review',
   standalone: true,
-  imports: [ReactiveFormsModule],
+  imports: [],
   template: `
     <section class="review">
       <h1>Rate your visit</h1>
@@ -40,11 +40,12 @@ function formatDate(ms: number): string {
           completed, and each visit can be rated once.
         </p>
       } @else {
-        <form [formGroup]="form" (ngSubmit)="submit($event)">
+        <form (submit)="submit($event)">
           <label for="booking-select">Visit</label>
           <select
             id="booking-select"
-            formControlName="bookingId"
+            [value]="bookingId()"
+            (change)="onBookingChange($any($event.target).value)"
           >
             @for (booking of eligible(); track booking.id) {
               <option [value]="booking.id">
@@ -59,14 +60,15 @@ function formatDate(ms: number): string {
               <label class="star" [attr.aria-label]="star + ' star' + (star > 1 ? 's' : '')">
                 <input
                   type="radio"
-                  formControlName="rating"
                   [value]="star"
+                  [checked]="rating() === star"
+                  (change)="rating.set(star)"
                   [attr.aria-invalid]="showRatingError() ? true : null"
                 />
-                <span aria-hidden="true">{{ ratingValue() >= star ? '★' : '☆' }}</span>
+                <span aria-hidden="true">{{ rating() >= star ? '★' : '☆' }}</span>
               </label>
             }
-            <span class="rating-value" aria-hidden="true">{{ ratingValue() }} / {{ MAX_RATING }}</span>
+            <span class="rating-value" aria-hidden="true">{{ rating() }} / {{ MAX_RATING }}</span>
           </fieldset>
           @if (showRatingError()) {
             <p class="error" role="alert">Choose a rating between 1 and 5 stars.</p>
@@ -76,13 +78,14 @@ function formatDate(ms: number): string {
           <textarea
             id="comment"
             rows="4"
-            formControlName="comment"
+            [value]="comment()"
+            (input)="comment.set($any($event.target).value)"
             [attr.maxlength]="MAX_COMMENT_LENGTH"
             aria-describedby="comment-count"
             [attr.aria-invalid]="showCommentError() ? true : null"
           ></textarea>
           <p class="meta" id="comment-count" aria-hidden="true">
-            {{ commentLength() }} / {{ MAX_COMMENT_LENGTH }}
+            {{ comment().length }} / {{ MAX_COMMENT_LENGTH }}
           </p>
           @if (showCommentError()) {
             <p class="error" role="alert">
@@ -125,7 +128,6 @@ export class ReviewPage implements OnInit {
   private readonly bookings = inject(BookingStore);
   private readonly session = inject(SessionStore);
   private readonly route = inject(ActivatedRoute);
-  private readonly fb = inject(FormBuilder);
 
   readonly MIN_RATING = MIN_RATING;
   readonly MAX_RATING = MAX_RATING;
@@ -135,31 +137,25 @@ export class ReviewPage implements OnInit {
     (_, i) => MIN_RATING + i
   );
 
-  /** Typed reactive form: booking + 1–5 star rating + maxlength comment. */
-  protected readonly form = this.fb.nonNullable.group({
-    bookingId: ['', Validators.required],
-    rating: [0, [Validators.required, Validators.min(MIN_RATING), Validators.max(MAX_RATING)]],
-    comment: ['', Validators.maxLength(MAX_COMMENT_LENGTH)],
-  });
+  /** Selected visit + rating + comment (signal-backed, like the export page). */
+  readonly bookingId = signal('');
+  readonly rating = signal(0);
+  readonly comment = signal('');
 
   /** Set once the user attempts submit — drives inline error visibility. */
   private readonly submitAttempted = signal(false);
   /** Deep-link pre-selection (/review?booking=b-123) before options load. */
   private readonly preselectedId = signal('');
 
-  /** Numeric rating (radio inputs report strings at runtime). */
-  readonly ratingValue = computed(() => Number(this.form.controls.rating.value) || 0);
-  readonly commentLength = computed(() => this.form.controls.comment.value.length);
+  readonly showRatingError = computed(
+    () =>
+      (this.rating() < MIN_RATING || this.rating() > MAX_RATING) &&
+      (this.submitAttempted() || this.rating() > 0)
+  );
 
-  readonly showRatingError = computed(() => {
-    const control = this.form.controls.rating;
-    return control.invalid && (control.touched || control.dirty || this.submitAttempted());
-  });
-
-  readonly showCommentError = computed(() => {
-    const control = this.form.controls.comment;
-    return control.invalid && (control.touched || control.dirty || this.submitAttempted());
-  });
+  readonly showCommentError = computed(
+    () => this.comment().length > MAX_COMMENT_LENGTH && this.submitAttempted()
+  );
 
   /** My reviews (to exclude already-rated bookings). */
   private readonly myReviewedBookingIds = computed(() => {
@@ -189,7 +185,7 @@ export class ReviewPage implements OnInit {
       if (list.length === 0) {
         return;
       }
-      const current = this.form.controls.bookingId.value;
+      const current = this.bookingId();
       if (current && list.some((b) => b.id === current)) {
         return;
       }
@@ -197,7 +193,7 @@ export class ReviewPage implements OnInit {
       const fallback =
         (preselected && list.some((b) => b.id === preselected) ? preselected : null) ??
         list[0].id;
-      this.form.controls.bookingId.setValue(fallback);
+      this.bookingId.set(fallback);
     });
   }
 
@@ -208,7 +204,7 @@ export class ReviewPage implements OnInit {
       if (bookingId) {
         this.preselectedId.set(bookingId);
         if (this.eligible().some((b) => b.id === bookingId)) {
-          this.form.controls.bookingId.setValue(bookingId);
+          this.bookingId.set(bookingId);
         }
       }
     });
@@ -217,15 +213,17 @@ export class ReviewPage implements OnInit {
     this.store.loadAll();
   }
 
+  onBookingChange(value: string): void {
+    this.bookingId.set(value);
+  }
+
   submit(event: Event): void {
     event.preventDefault();
     this.submitAttempted.set(true);
-    if (this.form.invalid) {
-      this.form.markAllAsTouched();
+    if (this.comment().length > MAX_COMMENT_LENGTH) {
       return;
     }
-    const { bookingId, comment } = this.form.getRawValue();
-    const booking = this.eligible().find((b) => b.id === bookingId);
+    const booking = this.eligible().find((b) => b.id === this.bookingId());
     if (!booking) {
       return;
     }
@@ -233,9 +231,9 @@ export class ReviewPage implements OnInit {
       .submit(
         {
           caregiverId: booking.caregiverId,
-          bookingId,
-          rating: this.ratingValue(),
-          comment: comment.trim(),
+          bookingId: booking.id,
+          rating: this.rating(),
+          comment: this.comment().trim(),
         },
         {
           bookingIds: this.bookings.allBookingIds(),
@@ -246,7 +244,9 @@ export class ReviewPage implements OnInit {
       .subscribe((ok) => {
         if (ok) {
           this.submitAttempted.set(false);
-          this.form.reset({ bookingId: '', rating: 0, comment: '' });
+          this.bookingId.set('');
+          this.rating.set(0);
+          this.comment.set('');
           this.bookings.load();
         }
       });

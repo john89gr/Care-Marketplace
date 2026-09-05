@@ -548,6 +548,37 @@ export class MarketplacePage implements OnInit, OnDestroy {
     this.saved.remove(id).subscribe();
   }
 
+  /**
+   * Roving-focus navigation for the saved-searches list (subtask 18): arrow
+   * keys move between items, Home/End jump to the first/last. Focus lands on
+   * the item's primary action (apply search) so the whole list is operable
+   * from the keyboard without tabbing through every inline button.
+   */
+  onSavedListKeydown(event: KeyboardEvent): void {
+    const item = (event.target as HTMLElement | null)?.closest('li');
+    const list = (event.target as HTMLElement | null)?.closest('.saved-list');
+    if (!item || !list) {
+      return;
+    }
+    const items = Array.from(list.querySelectorAll<HTMLElement>('li'));
+    const index = items.indexOf(item);
+    let target: HTMLElement | undefined;
+    if (event.key === 'ArrowRight' || event.key === 'ArrowDown') {
+      target = items[index + 1];
+    } else if (event.key === 'ArrowLeft' || event.key === 'ArrowUp') {
+      target = items[index - 1];
+    } else if (event.key === 'Home') {
+      target = items[0];
+    } else if (event.key === 'End') {
+      target = items[items.length - 1];
+    } else {
+      return;
+    }
+    event.preventDefault();
+    const focusable = target?.querySelector<HTMLElement>('button');
+    focusable?.focus();
+  }
+
   toggleFavorite(caregiverId: string): void {
     this.saved.toggleFavorite(caregiverId).subscribe((ok) => {
       if (ok) {

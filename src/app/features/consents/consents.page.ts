@@ -121,7 +121,7 @@ import { ConsentStore, ConsentPurpose, CONSENT_PURPOSES, CONSENT_PURPOSE_LABELS 
   `,
 })
 export class ConsentsPage implements OnInit {
-  private readonly store = inject(ConsentStore);
+  protected readonly store = inject(ConsentStore);
 
   protected readonly purposes = CONSENT_PURPOSES;
   readonly status = signal('');

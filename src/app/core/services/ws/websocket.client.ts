@@ -52,6 +52,13 @@ export class WebSocketClient {
   private manualClose = false;
   private reconnectAttempts = 0;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  /**
+   * Stop reconnecting after this many consecutive failed attempts: an
+   * unreachable WS endpoint (static hosting, backend down) should fail
+   * quietly once instead of spamming the console every retry forever.
+   * Notifications/chat already fall back to polling/optimistic sends.
+   */
+  private readonly MAX_RECONNECT_ATTEMPTS = 5;
 
   readonly messages$ = this._messages.asObservable();
   readonly typing$ = this._typing.asObservable();
@@ -144,6 +151,11 @@ export class WebSocketClient {
     socket.onclose = () => {
       this._connected.next(false);
       if (this.manualClose) {
+        return;
+      }
+      if (this.reconnectAttempts >= this.MAX_RECONNECT_ATTEMPTS) {
+        // Give up on an endpoint that never answers — no infinite retry loop.
+        this.socket = null;
         return;
       }
       // Exponential backoff, capped at 30s.

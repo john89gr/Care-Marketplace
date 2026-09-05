@@ -37,6 +37,7 @@ const NAV_ITEMS: NavItem[] = [
   { label: 'Care plan', href: '/care-plan', exact: false, roles: [ROLES.CLIENT, ROLES.CAREGIVER, ROLES.NURSE, ROLES.PHYSIO] },
   { label: 'Vitals', href: '/vitals', exact: false, roles: [ROLES.CLIENT, ROLES.CAREGIVER, ROLES.NURSE] },
   { label: 'Payments', href: '/payments', exact: false, roles: [ROLES.CLIENT, ROLES.CAREGIVER, ROLES.NURSE, ROLES.PHYSIO] },
+  { label: 'Disputes', href: '/disputes', exact: false, roles: [ROLES.CLIENT, ROLES.CAREGIVER, ROLES.NURSE, ROLES.PHYSIO, ROLES.ADMIN] },
   { label: 'Health record', href: '/health-record', exact: false, roles: [ROLES.CLIENT, ROLES.CAREGIVER, ROLES.NURSE] },
   { label: 'Preventive care', href: '/screenings', exact: false, roles: [ROLES.CLIENT, ROLES.CAREGIVER, ROLES.NURSE] },
    { label: 'Medications', href: '/medications', exact: false, roles: [ROLES.CLIENT, ROLES.CAREGIVER, ROLES.NURSE] },
@@ -163,7 +164,8 @@ export class App {
 
   /** Minimal focus trap: keep Tab cycling inside the open panel (subtask 16). */
   @HostListener('document:keydown.tab', ['$event'])
-  onTab(event: KeyboardEvent): void {
+  onTab(event: Event): void {
+    const keyEvent = event as KeyboardEvent;
     if (!this.panelOpen()) {
       return;
     }
@@ -179,12 +181,12 @@ export class App {
     }
     const first = focusable[0];
     const last = focusable[focusable.length - 1];
-    if (event.shiftKey && document.activeElement === first) {
+    if (keyEvent.shiftKey && document.activeElement === first) {
       last.focus();
-      event.preventDefault();
-    } else if (!event.shiftKey && document.activeElement === last) {
+      keyEvent.preventDefault();
+    } else if (!keyEvent.shiftKey && document.activeElement === last) {
       first.focus();
-      event.preventDefault();
+      keyEvent.preventDefault();
     }
   }
 

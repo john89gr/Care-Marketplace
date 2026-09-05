@@ -7,7 +7,14 @@
  * the mappers could realistically make and that would break a consuming
  * system.
  */
-import type { Bundle, FhirResource } from './fhir.types';
+import type {
+  Bundle,
+  CarePlan,
+  FhirResource,
+  MedicationRequest,
+  Observation,
+  Patient,
+} from './fhir.types';
 
 export interface ValidationResult {
   /** True when `errors` is empty. */
@@ -26,7 +33,7 @@ function err(errors: string[]): ValidationResult {
 
 /** A compact, deterministic "type/id" locator for error messages. */
 function loc(resource: FhirResource): string {
-  return `${resource.resourceType}/${resource.id ?? '<no-id>}'`;
+  return `${resource.resourceType}/${resource.id ?? '<no-id>'}`;
 }
 
 /** Collect every `reference`-key value that looks like a FHIR reference. */
@@ -78,7 +85,7 @@ export function validateResource(resource: FhirResource): ValidationResult {
 
   switch (resource.resourceType) {
     case 'Patient': {
-      const p = resource as InstanceType<typeof Object>;
+      const p = resource as Patient;
       if (!p.name || !Array.isArray(p.name) || p.name.length === 0) {
         errors.push(`${l}: missing name`);
       }
@@ -88,7 +95,7 @@ export function validateResource(resource: FhirResource): ValidationResult {
       break;
     }
     case 'Observation': {
-      const o = resource as InstanceType<typeof Object>;
+      const o = resource as Observation;
       if (!o.status) {
         errors.push(`${l}: missing status`);
       }
@@ -105,7 +112,7 @@ export function validateResource(resource: FhirResource): ValidationResult {
       break;
     }
     case 'MedicationRequest': {
-      const m = resource as InstanceType<typeof Object>;
+      const m = resource as MedicationRequest;
       if (!m.status) {
         errors.push(`${l}: missing status`);
       }
@@ -118,7 +125,7 @@ export function validateResource(resource: FhirResource): ValidationResult {
       break;
     }
     case 'CarePlan': {
-      const c = resource as InstanceType<typeof Object>;
+      const c = resource as CarePlan;
       if (!c.status) {
         errors.push(`${l}: missing status`);
       }

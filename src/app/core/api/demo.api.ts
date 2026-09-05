@@ -258,7 +258,8 @@ interface DemoScreening {
   snoozeCount?: number;
 }
 
-interface DemoNotification {  id: string;
+interface DemoNotification {
+  id: string;
   userId: string;
   kind:
     | 'booking.accepted'
@@ -332,6 +333,12 @@ interface DemoPharmacyOrder {
   timeline: { status: DemoOrderStatus; atMs: number; note?: string }[];
   createdAtMs: number;
   updatedAtMs: number;
+  /**
+   * Client geo at scan time. `failed → routed` retries re-route from this
+   * same origin so the retry matches the original nearest-with-stock choice;
+   * legacy/seed orders without one fall back to the city-centre origin.
+   */
+  origin?: { lat: number; lng: number };
 }
 
 /** Gov.gr Health Wallet document categories (FEATURE_PLAN.md §15 subtask 6). */
@@ -390,7 +397,7 @@ const state: {
   reminderPreferences: Record<string, DemoReminderPreferences>;
   pharmacies: DemoPharmacy[];
   prescriptions: DemoPrescription[];
-   pharmacyOrders: DemoPharmacyOrder[];
+  pharmacyOrders: DemoPharmacyOrder[];
   walletDocs: DemoWalletDocument[];
   audit: { id: string; actorId: string; action: string; resourceType: string; resourceId: string; atMs: number; meta?: Record<string, unknown> }[];
   consents: Record<string, DemoConsentState>;
@@ -400,6 +407,8 @@ const state: {
     { userId: 'u-client', displayName: 'Maria Papadopoulou', email: 'maria@example.com', roles: ['client'] },
     { userId: 'u-nurse', displayName: 'Elena Papadaki', email: 'elena@example.com', roles: ['nurse'] },
     { userId: 'u-admin', displayName: 'Admin', email: 'admin@example.com', roles: ['admin'] },
+    // §9 pharmacy partner: sees the full order queue (all clients) + fulfilment actions.
+    { userId: 'u-pharmacy', displayName: 'Syntagma Central Pharmacy', email: 'pharmacy@example.com', roles: ['pharmacy'] },
   ],
   submissions: [
     {
@@ -863,6 +872,32 @@ const state: {
   session: null,
 };
 
+/**
+ * Keep the demo backend's in-memory session in sync with the client's
+ * persisted session (cm.session.v1). The real backend would trust an auth
+ * cookie; the demo reads the same localStorage the SessionStore writes, so a
+ * pre-seeded session (tests, ?demo=1 deep links) works for role-gated
+ * endpoints without going through POST /auth/login.
+ */
+function hydrateDemoSession(): void {
+  try {
+    const raw = localStorage.getItem('cm.session.v1');
+    if (!raw) {
+      return;
+    }
+    const parsed = JSON.parse(raw) as { userId?: unknown } | null;
+    if (!parsed || typeof parsed.userId !== 'string') {
+      return;
+    }
+    const user = state.users.find((u) => u.userId === parsed.userId);
+    if (user) {
+      state.session = user;
+    }
+  } catch {
+    // Storage unavailable — leave the in-memory session as-is.
+  }
+}
+
 /** Minimal 1×1 transparent PNG data URL for seed images. */
 const PNG_PIXEL =
   'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==';
@@ -1130,6 +1165,12 @@ export const demoApi: HttpInterceptorFn = (req: HttpRequest<unknown>, next: Http
     return next(req);
   }
 
+  // Re-sync on every request: the SPA loads this module once, so a module-
+  // level hydration would only ever see the first session. Reading the
+  // persisted session here keeps role-gated endpoints in sync with whatever
+  // the client's SessionStore has (login form or pre-seeded storage).
+  hydrateDemoSession();
+
   const [path, query = ''] = req.url.slice('/api/'.length).split('?');
   const parts = path.split('/').filter(Boolean);
   const method = req.method;
@@ -1228,6 +1269,9 @@ export const demoApi: HttpInterceptorFn = (req: HttpRequest<unknown>, next: Http
       // Screening hook (Feature 6 §5): DOB/sex feed the rule engine.
       dateOfBirth: '1968-03-14',
       sex: 'female',
+      // Delivery-address default for pharmacy orders (Feature 9 subtask 14):
+      // the client page prefills it from the profile and allows an override.
+      address: 'Mitropoleos 12, Athens',
     };
     if (method === 'GET') {
       return json(base);
@@ -1587,6 +1631,9 @@ export const demoApi: HttpInterceptorFn = (req: HttpRequest<unknown>, next: Http
       ],
       createdAtMs: now(),
       updatedAtMs: now(),
+      // Remember where the client scanned from so a later retry re-routes
+      // from the same origin (not the city-centre fallback).
+      origin: { lat: origin.lat, lng: origin.lng },
     };
     state.pharmacyOrders.unshift(order);
     return json({ prescription, order });
@@ -1615,9 +1662,11 @@ export const demoApi: HttpInterceptorFn = (req: HttpRequest<unknown>, next: Http
       );
     }
     // Retry edge (failed → routed): re-run nearest-with-stock routing in case
-    // a partner restocked.
+    // a partner restocked. Route from the order's scan origin when recorded;
+    // legacy/seed orders fall back to the Athens-centre origin.
     if (order.status === 'failed' && to === 'routed') {
-      const routed = nearestPharmacyWithStock(37.9838, 23.7275);
+      const retryOrigin = order.origin ?? { lat: 37.9838, lng: 23.7275 };
+      const routed = nearestPharmacyWithStock(retryOrigin.lat, retryOrigin.lng);
       if (!routed) {
         return of(
           new HttpResponse({
@@ -2437,7 +2486,7 @@ export const demoApi: HttpInterceptorFn = (req: HttpRequest<unknown>, next: Http
       state.disputes.unshift(created);
       state.notifications.unshift({
         id: `ntf-${Math.random().toString(36).slice(2, 8)}`,
-        userId: bookingRef.providerUserId,
+        userId: booking.providerUserId,
         kind: 'dispute.opened',
         title: 'Dispute opened',
         body: `A dispute has been opened for booking ${body.bookingId}.`,

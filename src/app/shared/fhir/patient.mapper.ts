@@ -184,7 +184,7 @@ export function patientId(amka: string, fallback: string): string {
 }
 
 /** Map the app sex field to FHIR AdministrativeGender. */
-export function sexToGender(sex: UserProfile['sex']): AdministrativeGender {
+export function sexToGender(sex: UserProfile['sex'] | AdministrativeGender): AdministrativeGender {
   switch (sex) {
     case 'female':
       return 'female';

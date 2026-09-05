@@ -116,8 +116,11 @@ test.describe('Feature 1 — Reviews & Ratings', () => {
     await page
       .getByRole('button', { name: /Reviews \(1\)/ })
       .click();
-    await expect(page.getByText('Maria Papadopoulou')).toBeVisible();
-    await expect(page.getByText('Wonderful care.')).toBeVisible();
+    // The review author is scoped to the expanded reviews list — the shell
+    // header also renders the signed-in user's name (same demo client).
+    const reviewList = page.locator('.reviews');
+    await expect(reviewList.getByText('Maria Papadopoulou')).toBeVisible();
+    await expect(reviewList.getByText('Wonderful care.')).toBeVisible();
   });
 
   test('a review can be flagged for moderation from the marketplace', async ({ page }) => {

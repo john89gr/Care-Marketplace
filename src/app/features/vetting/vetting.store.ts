@@ -69,8 +69,10 @@ export class VettingStore {
     if (!mine) {
       return 'valid';
     }
+    // Guard against legacy/partial records (seed data, older mocks) that
+    // predate the §14 certification fields.
     return certificationStatusForMany(
-      [{ expiresAtMs: mine.expiresAtMs }, ...mine.certifications],
+      [{ expiresAtMs: mine.expiresAtMs ?? null }, ...(mine.certifications ?? [])],
       Date.now()
     );
   });

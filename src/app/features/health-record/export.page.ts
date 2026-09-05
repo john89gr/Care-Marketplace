@@ -95,7 +95,7 @@ import {
         <button
           type="button"
           class="primary"
-          [disabled]="exporting.loading() || !consent()"
+          [disabled]="exporting.loading()"
           (click)="runExport()"
         >
           {{ exporting.loading() ? (locale() === 'el' ? 'Δημιουργία…' : 'Generating…') : (locale() === 'el' ? 'Εξαγωγή PDF' : 'Export PDF') }}
@@ -112,6 +112,9 @@ import {
         </button>
       </div>
 
+      @if (consentError()) {
+        <p class="error" role="alert">{{ consentError() }}</p>
+      }
       @if (exporting.loading()) {
         <p role="status">{{ locale() === 'el' ? 'Δημιουργία PDF…' : 'Generating PDF…' }}</p>
       }
@@ -182,6 +185,8 @@ export class HealthSummaryExportPage {
   readonly locale = signal<ExportLocale>('en');
   readonly showPreview = signal(false);
   readonly consent = signal(this.exporting.consentGiven());
+  /** Consent-gate message shown when Export is clicked before consenting. */
+  readonly consentError = signal('');
 
   private readonly chartCanvas = viewChild<ElementRef<HTMLCanvasElement>>('chart');
 
@@ -242,10 +247,20 @@ export class HealthSummaryExportPage {
   onConsent(event: Event): void {
     const checked = (event.target as HTMLInputElement).checked;
     this.consent.set(checked);
+    this.consentError.set('');
     this.exporting.setConsent(checked);
   }
 
   async runExport(): Promise<void> {
+    if (!this.consent()) {
+      this.consentError.set(
+        this.locale() === 'el'
+          ? 'Πρέπει να συναινέσετε στην εξαγωγή για να δημιουργηθεί το PDF.'
+          : 'Consent is required before you can export your health summary.'
+      );
+      return;
+    }
+    this.consentError.set('');
     const profile = this.profile.profile();
     await this.exporting.exportNow({
       profile: { userId: profile.userId, displayName: profile.displayName },
