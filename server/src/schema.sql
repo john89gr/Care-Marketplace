@@ -180,6 +180,57 @@ CREATE TABLE IF NOT EXISTS push_subscriptions (
   updated_at_ms BIGINT NOT NULL
 );
 
+-- Provider licence/certificate expiry (FEATURE_PLAN.md §14/§20): one row per
+-- certificate; expiry drives certification.expiring / certification.expired
+-- Web Push reminders to the provider.
+CREATE TABLE IF NOT EXISTS certifications (
+  id             TEXT PRIMARY KEY,
+  provider_id    TEXT NOT NULL REFERENCES user_accounts(id) ON DELETE CASCADE,
+  name           TEXT NOT NULL,
+  licence_number TEXT NOT NULL DEFAULT '',
+  expires_at_ms  BIGINT NOT NULL,
+  created_at_ms  BIGINT NOT NULL
+);
+
+-- Once-only expiry notices per (certificate, kind): a renewed certificate gets
+-- a new id, so a fresh expiring/expired push can fire for it.
+CREATE TABLE IF NOT EXISTS certification_notices (
+  cert_id        TEXT NOT NULL REFERENCES certifications(id) ON DELETE CASCADE,
+  kind           TEXT NOT NULL, -- expiring | expired
+  notified_at_ms BIGINT NOT NULL,
+  PRIMARY KEY (cert_id, kind)
+);
+
+-- Preventive-care screenings (FEATURE_PLAN.md §6): one record per type
+-- (done/waived + snooze/schedule state), mirroring the demo contract.
+CREATE TABLE IF NOT EXISTS screenings (
+  id               TEXT PRIMARY KEY,
+  user_id          TEXT NOT NULL REFERENCES user_accounts(id) ON DELETE CASCADE,
+  type             TEXT NOT NULL,
+  status           TEXT NOT NULL, -- done | waived
+  at_ms            BIGINT NOT NULL,
+  reason           TEXT NOT NULL DEFAULT '',
+  snooze_until_ms  BIGINT,
+  scheduled_at_ms  BIGINT,
+  snooze_count     INTEGER NOT NULL DEFAULT 0,
+  created_at_ms    BIGINT NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_screenings_user_type ON screenings(user_id, type);
+
+-- Once-only screening.due push per (user, type, due-at): a done record moves
+-- the due date forward, so the next due cycle can notify again.
+CREATE TABLE IF NOT EXISTS screening_notices (
+  user_id        TEXT NOT NULL REFERENCES user_accounts(id) ON DELETE CASCADE,
+  type           TEXT NOT NULL,
+  due_at_ms      BIGINT NOT NULL, -- 0 when the rule applies with no record
+  notified_at_ms BIGINT NOT NULL,
+  PRIMARY KEY (user_id, type, due_at_ms)
+);
+
+-- Client screening profile (age/sex drives the §6 rule engine).
+ALTER TABLE profiles ADD COLUMN IF NOT EXISTS date_of_birth TEXT NOT NULL DEFAULT '';
+ALTER TABLE profiles ADD COLUMN IF NOT EXISTS sex TEXT NOT NULL DEFAULT '';
+
 -- Medication calendar + adherence (FEATURE_PLAN.md §7). Schedule is the
 -- frontend MedicationSchedule JSON ({kind, timesMinutes|everyDays|weekdays}).
 CREATE TABLE IF NOT EXISTS medications (

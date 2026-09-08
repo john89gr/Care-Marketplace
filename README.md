@@ -95,13 +95,22 @@ Push through the browser's push service:
   - **out-of-range vitals reading** → user (`vitals.alert` → `/vitals`)
   - **missed critical medication dose** → user (`medication.missed` →
     `/medications`; idempotent per dose)
+  - **screening due** → user (`screening.due` → `/screenings`; once per
+    user/type/due-cycle, driven by the server-side mirror of the frontend
+    age/sex rule engine in `server/src/screenings.ts`)
+  - **certification expiring / expired** → provider
+    (`certification.expiring` / `certification.expired` → `/onboarding`;
+    once per certificate, `server/src/certifications.ts`, 30-day window)
   - **dispute opened** → other party; **dispute resolved/rejected** → both
     parties (`dispute.opened` / `dispute.resolved` / `dispute.rejected` →
     `/disputes`)
 
   The minimal models behind those events (bookings status, medications +
-  adherence logs with server-side missed-dose detection, disputes) live in
-  `server/src/` so the real backend can drive them end to end.
+  adherence logs with server-side missed-dose detection, disputes,
+  screenings + certification expiry) live in `server/src/` so the real
+  backend can drive them end to end. Reminder pushes are raised on the
+  feature reads (medications, screenings, vetting) and are idempotent, so
+  they fire exactly once per due cycle.
 
 VAPID keys are read from env (`VAPID_SUBJECT`, `VAPID_PUBLIC_KEY`,
 `VAPID_PRIVATE_KEY`) with a committed demo pair as fallback so
@@ -118,6 +127,17 @@ VAPID_PRIVATE_KEY=<private-key> npm run server
 Regenerate keys with `npx web-push generate-vapid-keys --json`. End-to-end
 check: log in on a PWA install with push enabled, then
 `curl -X POST -b <cookies> http://localhost:3000/api/me/push/test`.
+
+### Fullstack E2E: a push really delivered
+
+`npm run e2e:fullstack` runs the compiled app against the real API server
+(Postgres, seeded — not demo mode) and proves a Web Push is actually
+delivered: `playwright.fullstack.config.ts` boots the server plus a local
+HTTPS stand-in push service (`e2e-fullstack/push-receiver.mjs`), the spec
+logs in via the UI, registers a subscription pointing at the stand-in, posts
+an out-of-range heart rate, and asserts the stand-in received and decrypted
+the `vitals.alert` payload (same aes128gcm/click-routing shape the ngsw
+worker shows). Requires `docker compose up -d db` and a built `dist/`.
 
 ### Install on a phone
 

@@ -10,8 +10,8 @@
 - ✅ Phase 2 (home health + escrow) — complete
 - ✅ Phase 3 (PHR) — vitals, screening, medications, pharmacy, export complete
 - ✅ Phase 4 — all features merged: gov.gr OIDC/wallet, FHIR R4 export, audit trail + consent, dispute resolution, payment methods + payout, certification expiry, chat v2, PWA/offline/push, bluetooth pairing, web Bluetooth
-- ✅ §20 (PWA/offline) shipped end-to-end: manifest + icon set (installable), IndexedDB outbox with replay + server-ts conflict policy, offline banner + retry, VAPID push opt-in (post-first-booking) + SW click-routing, new-version reload prompt, ngsw dataGroups (catalog cache-first, user data network-first, health data excluded), server-side push sender (subscription CRUD + /me/push/test) wired to real events (booking accepted/completed, out-of-range vitals, missed critical medication, dispute opened/resolved/rejected), E2E covering offline reload → sync, manifest validity and the one-time push prompt
-- ✅ Phase 4 test suite: 516 tests passing across 39 files (+ push service unit tests)
+- ✅ §20 (PWA/offline) shipped end-to-end: manifest + icon set (installable), IndexedDB outbox with replay + server-ts conflict policy, offline banner + retry, VAPID push opt-in (post-first-booking) + SW click-routing, new-version reload prompt, ngsw dataGroups (catalog cache-first, user data network-first, health data excluded), server-side push sender (subscription CRUD + /me/push/test) wired to real events (booking accepted/completed, out-of-range vitals, missed critical medication, screening due, certification expiring/expired, dispute opened/resolved/rejected), fullstack E2E (npm run e2e:fullstack) proving a real Web Push is delivered against the Postgres-backed server, E2E covering offline reload → sync, manifest validity and the one-time push prompt
+- ✅ Phase 4 test suite: 516+ unit tests passing across 39+ files (+ push service unit tests) + 90 server tests + fullstack push-delivery E2E
 
 Priority legend: 🔴 P0 = blocks core trust/loop · 🟡 P1 = completes planned phases · 🟢 P2 = growth & polish
 
@@ -522,8 +522,8 @@ Elderly users on flaky home connections; PLAN.md mentions WebSockets but no offl
 4. Offline detection service + global offline banner.
 5. Offline queue: chat messages + vitals entries queued (IndexedDB) and flushed on reconnect.
 6. Conflict policy on flush: server timestamps win; local entry marked `synced/failed` states.
-7. Push: VAPID key env config + service-worker push handler.
-8. Push → notification click routes to the right feature (reuse feature 4 kind map).
+7. Push: VAPID key env config + service-worker push handler. Server side: `web-push` sender, subscription CRUD, `POST /api/me/push/test`.
+8. Push → notification click routes to the right feature (reuse feature 4 kind map). Server pushes carry the ngsw `onActionClick` deep link.
 9. Opt-in prompt UX (after first successful booking — not on load).
 10. Update flow: new version available toast → reload prompt.
 11. Cache versioning + safe upgrade testing procedure.

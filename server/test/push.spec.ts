@@ -436,6 +436,99 @@ describe('real notification triggers', () => {
     expect(endpoints).toEqual([SUBSCRIPTION.endpoint, NURSE_SUBSCRIPTION.endpoint].sort());
   });
 
+  it('pushes screening.due for every newly due screening (once per due cycle)', async () => {
+    const cookie = await login(CLIENT_EMAIL);
+    await request(baseUrl)
+      .post('/api/me/push-subscription')
+      .set('Cookie', cookie.join('; '))
+      .send(SUBSCRIPTION);
+    sendNotification.mockResolvedValue({ statusCode: 201 });
+    // Clean leftover notices from earlier runs (dev DB persists across runs).
+    await pool.query(`DELETE FROM screening_notices WHERE user_id = 'u-client'`);
+
+    // Seeded profile (1968-03-14, female) + cardioCheck done ~14 months ago
+    // (12-month interval) → overdue; mammography/cervicalSmear/colorectalScreening
+    // apply with no record → due.
+    const res = await request(baseUrl).get('/api/screenings/me').set('Cookie', cookie.join('; '));
+    expect(res.status).toBe(200);
+    expect(res.body.profile).toMatchObject({ dateOfBirth: '1968-03-14', sex: 'female' });
+
+    const dueCalls = callsWithKind('screening.due');
+    expect(dueCalls).toHaveLength(4);
+    const cardio = dueCalls.find(([, payload]) =>
+      JSON.parse(payload as string).notification.title === 'Cardiovascular check is due'
+    ) as [unknown, string] | undefined;
+    expect(cardio).toBeDefined();
+    const body = JSON.parse(cardio![1]);
+    expect(body.notification.body).toContain('overdue');
+    expect(body.notification.data.onActionClick.default.url).toBe('/screenings');
+
+    // Second read: nothing new → no re-push.
+    await request(baseUrl).get('/api/screenings/me').set('Cookie', cookie.join('; '));
+    expect(callsWithKind('screening.due')).toHaveLength(4);
+  });
+
+  it('does not push screening.due when nothing is due', async () => {
+    const cookie = await login(NURSE_EMAIL);
+    await request(baseUrl)
+      .post('/api/me/push-subscription')
+      .set('Cookie', cookie.join('; '))
+      .send(NURSE_SUBSCRIPTION);
+    // u-nurse has no profile DOB → no rules apply → no pushes.
+    const res = await request(baseUrl).get('/api/screenings/me').set('Cookie', cookie.join('; '));
+    expect(res.status).toBe(200);
+    expect(callsWithKind('screening.due')).toHaveLength(0);
+  });
+
+  it('pushes certification.expiring to the provider once per certificate', async () => {
+    const cookie = await login(NURSE_EMAIL);
+    await request(baseUrl)
+      .post('/api/me/push-subscription')
+      .set('Cookie', cookie.join('; '))
+      .send(NURSE_SUBSCRIPTION);
+    sendNotification.mockResolvedValue({ statusCode: 201 });
+    // Clean leftover notices from earlier runs (dev DB persists across runs).
+    await pool.query(`DELETE FROM certification_notices WHERE cert_id = 'cert-nurse-1'`);
+
+    // Seeded licence expires in 14 days → expiring push on the vetting read.
+    const res = await request(baseUrl)
+      .get('/api/vetting/submissions/me')
+      .set('Cookie', cookie.join('; '));
+    expect(res.status).toBe(200);
+
+    const calls = callsWithKind('certification.expiring');
+    expect(calls).toHaveLength(1);
+    const [sub, payload] = calls[0] as [unknown, string];
+    expect(sub).toMatchObject({ endpoint: NURSE_SUBSCRIPTION.endpoint });
+    const body = JSON.parse(payload);
+    expect(body.notification.title).toBe('Licence expires soon');
+    expect(body.notification.body).toContain('expires in 14 days');
+    expect(body.notification.data.onActionClick.default.url).toBe('/onboarding');
+
+    // Second read: already notified → no re-push.
+    await request(baseUrl)
+      .get('/api/vetting/submissions/me')
+      .set('Cookie', cookie.join('; '));
+    expect(callsWithKind('certification.expiring')).toHaveLength(1);
+  });
+
+  it('does not push certification expiry for a far-future certificate', async () => {
+    const cookie = await login(NURSE_EMAIL);
+    // Insert a cert expiring well past the 30-day window (no notice yet).
+    await pool.query(
+      `INSERT INTO certifications (id, provider_id, name, licence_number, expires_at_ms, created_at_ms)
+       VALUES ('cert-far-future', 'u-nurse', 'CPR', 'CPR-1', $1, $2)
+       ON CONFLICT (id) DO NOTHING`,
+      [Date.now() + 200 * 24 * 60 * 60 * 1000, Date.now()]
+    );
+    await pool.query(`DELETE FROM certification_notices WHERE cert_id = 'cert-far-future'`);
+    await request(baseUrl)
+      .get('/api/vetting/submissions/me')
+      .set('Cookie', cookie.join('; '));
+    expect(callsWithKind('certification.expiring')).toHaveLength(0);
+    expect(callsWithKind('certification.expired')).toHaveLength(0);
+  });
+
   it('pushes dispute.rejected on admin rejection', async () => {
     const clientCookie = await login(CLIENT_EMAIL);
     const booking = await request(baseUrl)

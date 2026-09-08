@@ -21,6 +21,8 @@ import {
 } from './push';
 import { vitalsAlert } from './vitals';
 import { detectMissedDoses, dateKey, minutesSinceMidnight } from './medications';
+import { checkScreeningDue, ScreeningType } from './screenings';
+import { checkCertificationExpiry } from './certifications';
 
 const hour = 60 * 60 * 1000;
 const now = () => Date.now();
@@ -143,7 +145,7 @@ export function createApp() {
     try {
       const me = req.user as AuthedUser;
       const profile = await queryOne<Row>(
-        `SELECT phone, amka, afm, licence_number, hourly_rate FROM profiles WHERE user_id = $1`,
+        `SELECT phone, amka, afm, licence_number, hourly_rate, date_of_birth, sex FROM profiles WHERE user_id = $1`,
         [me.userId]
       );
       res.json({
@@ -154,6 +156,8 @@ export function createApp() {
         afm: profile?.afm ?? '',
         licenceNumber: profile?.licence_number ?? '',
         hourlyRate: profile?.hourly_rate ?? null,
+        dateOfBirth: profile?.date_of_birth ?? '',
+        sex: profile?.sex ?? '',
       });
     } catch (error) {
       next(error);
@@ -169,6 +173,8 @@ export function createApp() {
         afm?: string;
         licenceNumber?: string;
         hourlyRate?: number | null;
+        dateOfBirth?: string;
+        sex?: string;
       };
       const current = await queryOne<Row>(`SELECT * FROM profiles WHERE user_id = $1`, [me.userId]);
       const merged = {
@@ -177,15 +183,18 @@ export function createApp() {
         afm: body.afm ?? current?.afm ?? '',
         licenceNumber: body.licenceNumber ?? current?.licence_number ?? '',
         hourlyRate: body.hourlyRate !== undefined ? body.hourlyRate : (current?.hourly_rate ?? null),
+        dateOfBirth: body.dateOfBirth ?? current?.date_of_birth ?? '',
+        sex: body.sex ?? current?.sex ?? '',
       };
       await query(
-        `INSERT INTO profiles (user_id, phone, amka, afm, licence_number, hourly_rate)
-         VALUES ($1, $2, $3, $4, $5, $6)
+        `INSERT INTO profiles (user_id, phone, amka, afm, licence_number, hourly_rate, date_of_birth, sex)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
          ON CONFLICT (user_id) DO UPDATE SET
            phone = EXCLUDED.phone, amka = EXCLUDED.amka, afm = EXCLUDED.afm,
-           licence_number = EXCLUDED.licence_number, hourly_rate = EXCLUDED.hourly_rate
+           licence_number = EXCLUDED.licence_number, hourly_rate = EXCLUDED.hourly_rate,
+           date_of_birth = EXCLUDED.date_of_birth, sex = EXCLUDED.sex
         `,
-        [me.userId, merged.phone, merged.amka, merged.afm, merged.licenceNumber, merged.hourlyRate]
+        [me.userId, merged.phone, merged.amka, merged.afm, merged.licenceNumber, merged.hourlyRate, merged.dateOfBirth, merged.sex]
       );
       res.json({ ...merged, userId: me.userId, displayName: me.displayName });
     } catch (error) {
@@ -196,6 +205,12 @@ export function createApp() {
   // ---- Vetting ----
   app.get('/api/vetting/submissions/me', requireAuth, async (req: Request, res: Response, next: NextFunction) => {
     try {
+      // Licence-expiry reminders fire on this read (once per cert/kind).
+      try {
+        await checkCertificationExpiry((req.user as AuthedUser).userId);
+      } catch {
+        // A push/notice problem never fails the read.
+      }
       const row = await queryOne<Row>(
         `SELECT * FROM vetting_submissions WHERE provider_id = $1 ORDER BY submitted_at_ms DESC LIMIT 1`,
         [(req.user as AuthedUser).userId]
@@ -686,6 +701,85 @@ export function createApp() {
     }
   });
 
+  // ---- Screenings (preventive care, FEATURE_PLAN.md §6/§20) ----
+  app.get('/api/screenings/me', requireAuth, async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const me = req.user as AuthedUser;
+      // screening.due pushes fire on this read (once per user/type/due-at).
+      try {
+        await checkScreeningDue(me.userId);
+      } catch {
+        // A push/notice problem never fails the read.
+      }
+      const [profile, rows] = await Promise.all([
+        queryOne<Row>(`SELECT date_of_birth, sex FROM profiles WHERE user_id = $1`, [me.userId]),
+        query<Row>(`SELECT * FROM screenings WHERE user_id = $1 ORDER BY at_ms DESC`, [me.userId]),
+      ]);
+      res.json({
+        profile: {
+          dateOfBirth: profile?.date_of_birth ?? '',
+          sex: profile?.sex ?? '',
+        },
+        records: rows.map(screeningFromRow),
+      });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  // POST /api/screenings/me/:type/:action (done | waive | snooze | schedule)
+  app.post('/api/screenings/me/:type/:action', requireAuth, async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const me = req.user as AuthedUser;
+      const type = req.params.type as ScreeningType;
+      const action = req.params.action;
+      const body = req.body as {
+        reason?: string;
+        snoozeUntilMs?: number;
+        snoozeCount?: number;
+        scheduledAtMs?: number;
+      };
+      const nowMs = now();
+      const existing = await queryOne<Row>(
+        `SELECT * FROM screenings WHERE user_id = $1 AND type = $2`,
+        [me.userId, type]
+      );
+      if (action === 'waive' && !body.reason?.trim()) {
+        res.status(422).json({ message: 'A reason is required to waive a screening.' });
+        return;
+      }
+      if (action === 'schedule' && typeof body.scheduledAtMs !== 'number') {
+        res.status(422).json({ message: 'Choose a valid date to schedule this screening.' });
+        return;
+      }
+      const record = {
+        id: existing?.id ?? id('scr'),
+        type,
+        status: action === 'waive' ? 'waived' : 'done',
+        atMs: action === 'done' ? nowMs : Number(existing?.at_ms ?? nowMs),
+        reason: action === 'waive' ? body.reason ?? '' : existing?.reason ?? '',
+        snooze_until_ms:
+          action === 'snooze' ? (body.snoozeUntilMs ?? nowMs + 30 * 24 * hour) : (existing?.snooze_until_ms ?? null),
+        scheduled_at_ms:
+          action === 'schedule' ? body.scheduledAtMs : (existing?.scheduled_at_ms ?? null),
+        snooze_count: action === 'snooze' ? (body.snoozeCount ?? Number(existing?.snooze_count ?? 0)) : Number(existing?.snooze_count ?? 0),
+      };
+      await query(
+        `INSERT INTO screenings
+         (id, user_id, type, status, at_ms, reason, snooze_until_ms, scheduled_at_ms, snooze_count, created_at_ms)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+         ON CONFLICT (user_id, type) DO UPDATE SET
+           status = EXCLUDED.status, at_ms = EXCLUDED.at_ms, reason = EXCLUDED.reason,
+           snooze_until_ms = EXCLUDED.snooze_until_ms, scheduled_at_ms = EXCLUDED.scheduled_at_ms,
+           snooze_count = EXCLUDED.snooze_count`,
+        [record.id, me.userId, record.type, record.status, record.atMs, record.reason, record.snooze_until_ms, record.scheduled_at_ms, record.snooze_count, nowMs]
+      );
+      res.status(201).json(screeningFromRow(record));
+    } catch (error) {
+      next(error);
+    }
+  });
+
   // ---- Medications + adherence (FEATURE_PLAN.md §7/§20) ----
   app.get('/api/me/medications', requireAuth, async (req: Request, res: Response, next: NextFunction) => {
     try {
@@ -1117,6 +1211,19 @@ function medicationFromRow(row: Row) {
     prescriber: row.prescriber ?? '',
     archived: Boolean(row.archived),
     createdAtMs: num(row.created_at_ms),
+  };
+}
+
+function screeningFromRow(row: Row) {
+  return {
+    id: row.id,
+    type: row.type,
+    status: row.status,
+    atMs: num(row.at_ms),
+    reason: row.reason ?? '',
+    snoozeUntilMs: row.snooze_until_ms === null || row.snooze_until_ms === undefined ? null : num(row.snooze_until_ms),
+    scheduledAtMs: row.scheduled_at_ms === null || row.scheduled_at_ms === undefined ? null : num(row.scheduled_at_ms),
+    snoozeCount: Number(row.snooze_count ?? 0),
   };
 }
 

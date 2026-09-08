@@ -22,8 +22,10 @@ export async function seed(): Promise<void> {
   await seedCaregivers();
   await seedProfiles();
   await seedVetting();
+  await seedCertifications();
   await seedAvailability();
   await seedVisitAndEscrow();
+  await seedScreenings();
   await seedCarePlan();
 }
 
@@ -67,18 +69,48 @@ async function seedCaregivers(): Promise<void> {
 
 async function seedProfiles(): Promise<void> {
   const profiles = [
-    { userId: 'u-client', phone: '6940000000', amka: '01010112345', afm: '000000000', licenceNumber: '', hourlyRate: null },
-    { userId: 'u-nurse', phone: '6950000000', amka: '02020212345', afm: '000000001', licenceNumber: 'ΝΟΣ-2024-Α123', hourlyRate: 25 },
-    { userId: 'u-physio', phone: '6960000000', amka: '03030312345', afm: '000000002', licenceNumber: 'ΦΘ-2023-Β456', hourlyRate: 30 },
+    { userId: 'u-client', phone: '6940000000', amka: '01010112345', afm: '000000000', licenceNumber: '', hourlyRate: null, dateOfBirth: '1968-03-14', sex: 'female' },
+    { userId: 'u-nurse', phone: '6950000000', amka: '02020212345', afm: '000000001', licenceNumber: 'ΝΟΣ-2024-Α123', hourlyRate: 25, dateOfBirth: '', sex: '' },
+    { userId: 'u-physio', phone: '6960000000', amka: '03030312345', afm: '000000002', licenceNumber: 'ΦΘ-2023-Β456', hourlyRate: 30, dateOfBirth: '', sex: '' },
   ];
   for (const p of profiles) {
     await query(
-      `INSERT INTO profiles (user_id, phone, amka, afm, licence_number, hourly_rate)
-       VALUES ($1, $2, $3, $4, $5, $6)
-       ON CONFLICT (user_id) DO NOTHING`,
-      [p.userId, p.phone, p.amka, p.afm, p.licenceNumber, p.hourlyRate]
+      `INSERT INTO profiles (user_id, phone, amka, afm, licence_number, hourly_rate, date_of_birth, sex)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+       ON CONFLICT (user_id) DO UPDATE SET
+         phone = EXCLUDED.phone, amka = EXCLUDED.amka, afm = EXCLUDED.afm,
+         licence_number = EXCLUDED.licence_number, hourly_rate = EXCLUDED.hourly_rate,
+         date_of_birth = EXCLUDED.date_of_birth, sex = EXCLUDED.sex`,
+      [p.userId, p.phone, p.amka, p.afm, p.licenceNumber, p.hourlyRate, p.dateOfBirth, p.sex]
     );
   }
+}
+
+async function seedCertifications(): Promise<void> {
+  const existing = await queryOne(`SELECT id FROM certifications WHERE id = 'cert-nurse-1'`);
+  if (existing) {
+    return;
+  }
+  // §14: u-nurse licence expires in 14 days → certification.expiring push.
+  await query(
+    `INSERT INTO certifications (id, provider_id, name, licence_number, expires_at_ms, created_at_ms)
+     VALUES ($1, $2, $3, $4, $5, $6)`,
+    ['cert-nurse-1', 'u-nurse', 'Registered Nurse Licence', 'ΝΟΣ-2024-Α123', now() + 14 * 24 * hour, now()]
+  );
+}
+
+async function seedScreenings(): Promise<void> {
+  const existing = await queryOne(`SELECT id FROM screenings WHERE id = 'scr-1'`);
+  if (existing) {
+    return;
+  }
+  // §6 mirror of the demo: cardio check done ~14 months ago (12-month
+  // interval) → overdue for u-client (DOB 1968-03-14 → in the 40+ range).
+  await query(
+    `INSERT INTO screenings (id, user_id, type, status, at_ms, reason, snooze_until_ms, scheduled_at_ms, snooze_count, created_at_ms)
+     VALUES ($1, $2, $3, $4, $5, '', NULL, NULL, 0, $6)`,
+    ['scr-1', 'u-client', 'cardioCheck', 'done', now() - Math.round(14 * 30.44 * 24 * hour), now()]
+  );
 }
 
 async function seedVetting(): Promise<void> {
