@@ -13,6 +13,14 @@ import {
   verifyPassword,
 } from './auth';
 import { query, queryOne, Row } from './db';
+import {
+  getSubscription,
+  saveSubscription,
+  removeSubscription,
+  notifyUser,
+} from './push';
+import { vitalsAlert } from './vitals';
+import { detectMissedDoses, dateKey, minutesSinceMidnight } from './medications';
 
 const hour = 60 * 60 * 1000;
 const now = () => Date.now();
@@ -312,6 +320,57 @@ export function createApp() {
   });
 
   // ---- Bookings + escrow hold ----
+  app.get('/api/bookings', requireAuth, async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const me = req.user as AuthedUser;
+      const rows = await query<Row>(
+        `SELECT b.*, c.display_name AS caregiver_name, u.display_name AS client_name
+         FROM bookings b
+         JOIN caregivers c ON c.id = b.caregiver_id
+         JOIN user_accounts u ON u.id = b.client_id
+         WHERE b.client_id = $1 OR b.caregiver_id = $1
+         ORDER BY b.scheduled_at_ms ASC`,
+        [me.userId]
+      );
+      res.json(rows.map(bookingFromRow));
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  // Provider accepts a requested booking → push the client a real
+  // notification when they have a push subscription (FEATURE_PLAN.md §20).
+  app.post('/api/bookings/:id/accept', requireAuth, requireRole('nurse', 'caregiver', 'physio'), async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const me = req.user as AuthedUser;
+      const result = await query<Row>(
+        `UPDATE bookings SET status = 'accepted'
+         WHERE id = $1 AND caregiver_id = $2 AND status = 'requested' RETURNING *`,
+        [req.params.id, me.userId]
+      );
+      if (result.length === 0) {
+        res.status(404).json({ message: 'Booking not found or not awaiting acceptance.' });
+        return;
+      }
+      // Push the client a real notification when they have a subscription.
+      // Awaited (and failure-swallowed) so the response reflects completion;
+      // a push problem never fails the accept itself.
+      try {
+        await notifyUser(String(result[0].client_id), {
+          kind: 'booking.accepted',
+          title: 'Booking accepted',
+          body: `${me.displayName} accepted your visit request.`,
+          link: '/bookings',
+        });
+      } catch {
+        // Ignore push failures.
+      }
+      res.json(bookingFromRow(result[0]));
+    } catch (error) {
+      next(error);
+    }
+  });
+
   app.post('/api/bookings', requireAuth, async (req: Request, res: Response, next: NextFunction) => {
     try {
       const me = req.user as AuthedUser;
@@ -391,6 +450,18 @@ export function createApp() {
          WHERE booking_id = $2 AND status = 'held'`,
         [now(), (result[0] as Row).booking_id]
       );
+      // Push the client a real completion notification (FEATURE_PLAN.md §20).
+      // Awaited (failure-swallowed) so the response reflects completion.
+      try {
+        await notifyUser(String((result[0] as Row).client_id), {
+          kind: 'booking.completed',
+          title: 'Visit completed',
+          body: `How was your visit with ${(result[0] as Row).provider_name}? Rate it now.`,
+          link: `/review?booking=${(result[0] as Row).booking_id}`,
+        });
+      } catch {
+        // Ignore push failures.
+      }
       const visit = visitFromRow(result[0]);
       broadcast('visits', { type: 'visit.status', payload: { visitId: visit.id, status: visit.status } });
       res.json(visit);
@@ -615,6 +686,273 @@ export function createApp() {
     }
   });
 
+  // ---- Medications + adherence (FEATURE_PLAN.md §7/§20) ----
+  app.get('/api/me/medications', requireAuth, async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const me = req.user as AuthedUser;
+      // Raising missed-dose pushes before returning (idempotent per dose).
+      await detectMissedDoses(me.userId);
+      const meds = await query<Row>(
+        `SELECT * FROM medications WHERE user_id = $1 ORDER BY created_at_ms DESC`,
+        [me.userId]
+      );
+      const logs = await query<Row>(
+        `SELECT * FROM medication_logs WHERE user_id = $1 ORDER BY at_ms DESC`,
+        [me.userId]
+      );
+      res.json({ medications: meds.map(medicationFromRow), logs: logs.map(adherenceFromRow) });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.post('/api/me/medications', requireAuth, async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const me = req.user as AuthedUser;
+      const body = req.body as {
+        name?: string;
+        dose?: string;
+        schedule?: unknown;
+        critical?: boolean;
+        prescriber?: string;
+      };
+      if (!body.name || !body.schedule) {
+        res.status(422).json({ message: 'Name and schedule are required.' });
+        return;
+      }
+      const row = {
+        id: id('med'),
+        user_id: me.userId,
+        name: body.name,
+        dose: body.dose ?? '',
+        schedule: JSON.stringify(body.schedule),
+        critical: Boolean(body.critical),
+        prescriber: body.prescriber ?? '',
+        created_at_ms: now(),
+      };
+      await query(
+        `INSERT INTO medications (id, user_id, name, dose, schedule, critical, prescriber, archived, created_at_ms)
+         VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7, FALSE, $8)`,
+        [row.id, row.user_id, row.name, row.dose, row.schedule, row.critical, row.prescriber, row.created_at_ms]
+      );
+      res.status(201).json(medicationFromRow(row));
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.post('/api/medications/:id/log', requireAuth, async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const me = req.user as AuthedUser;
+      const med = await queryOne<Row>(
+        `SELECT * FROM medications WHERE id = $1 AND user_id = $2`,
+        [req.params.id, me.userId]
+      );
+      if (!med) {
+        res.status(404).json({ message: 'Medication not found.' });
+        return;
+      }
+      const nowMs = now();
+      const slot = new Date(nowMs).setHours(0, 0, 0, 0) + (Number(req.body?.timeMinutes ?? 0) % 1440) * 60_000;
+      const log = {
+        id: id('ml'),
+        medication_id: med.id as string,
+        user_id: me.userId,
+        scheduled_for_ms: slot,
+        action: 'taken',
+        at_ms: nowMs,
+      };
+      await query(
+        `INSERT INTO medication_logs (id, medication_id, user_id, scheduled_for_ms, action, at_ms)
+         VALUES ($1, $2, $3, $4, $5, $6)
+         ON CONFLICT (medication_id, scheduled_for_ms) DO UPDATE SET
+           action = 'taken', at_ms = EXCLUDED.at_ms`,
+        [log.id, log.medication_id, log.user_id, log.scheduled_for_ms, log.action, log.at_ms]
+      );
+      res.status(201).json(adherenceFromRow(log));
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  // ---- Disputes (FEATURE_PLAN.md §17/§20) ----
+  app.get('/api/me/disputes', requireAuth, async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const me = req.user as AuthedUser;
+      const rows = await query<Row>(
+        `SELECT * FROM disputes WHERE client_id = $1 OR provider_id = $1 ORDER BY created_at_ms DESC`,
+        [me.userId]
+      );
+      res.json(await Promise.all(rows.map(disputeWithNames)));
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.get('/api/disputes', requireAuth, requireRole('admin'), async (_req: Request, res: Response, next: NextFunction) => {
+    try {
+      const rows = await query<Row>(`SELECT * FROM disputes ORDER BY created_at_ms DESC`);
+      res.json(await Promise.all(rows.map(disputeWithNames)));
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.post('/api/disputes', requireAuth, async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const me = req.user as AuthedUser;
+      const body = req.body as { bookingId?: string; reason?: string; description?: string };
+      if (!body.bookingId || !body.reason) {
+        res.status(422).json({ message: 'Booking id and reason are required.' });
+        return;
+      }
+      const booking = await queryOne<Row>(`SELECT * FROM bookings WHERE id = $1`, [body.bookingId]);
+      if (!booking) {
+        res.status(404).json({ message: 'Booking not found.' });
+        return;
+      }
+      if (booking.client_id !== me.userId && booking.caregiver_id !== me.userId) {
+        res.status(403).json({ message: 'Only the client or provider of the booking can open a dispute.' });
+        return;
+      }
+      const row = {
+        id: id('dp'),
+        booking_id: body.bookingId,
+        client_id: booking.client_id as string,
+        provider_id: booking.caregiver_id as string,
+        opened_by: me.userId,
+        reason: body.reason,
+        description: body.description ?? '',
+        state: 'open',
+        created_at_ms: now(),
+        updated_at_ms: now(),
+      };
+      await query(
+        `INSERT INTO disputes (id, booking_id, client_id, provider_id, opened_by, reason, description, state, resolution, created_at_ms, updated_at_ms)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NULL, $9, $9)`,
+        [row.id, row.booking_id, row.client_id, row.provider_id, row.opened_by, row.reason, row.description, row.state, row.created_at_ms]
+      );
+      // Notify the other party of the booking.
+      const otherId = me.userId === booking.client_id ? booking.caregiver_id : booking.client_id;
+      try {
+        await notifyUser(String(otherId), {
+          kind: 'dispute.opened',
+          title: 'Dispute opened',
+          body: `A dispute has been opened for booking ${body.bookingId}.`,
+          link: '/disputes',
+        });
+      } catch {
+        // Ignore push failures.
+      }
+      res.status(201).json(await disputeWithNames(row));
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.post('/api/disputes/:id/state', requireAuth, requireRole('admin'), async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const state = req.body?.state as string | undefined;
+      const resolution = (req.body?.resolution as string | undefined) ?? null;
+      if (!['resolved_client', 'resolved_provider', 'rejected'].includes(state ?? '')) {
+        res.status(422).json({ message: 'Invalid dispute state.' });
+        return;
+      }
+      const result = await query<Row>(
+        `UPDATE disputes SET state = $1, resolution = $2, updated_at_ms = $3 WHERE id = $4 RETURNING *`,
+        [state, resolution, now(), req.params.id]
+      );
+      if (result.length === 0) {
+        res.status(404).json({ message: 'Dispute not found.' });
+        return;
+      }
+      const dispute = result[0];
+      const kind = state === 'rejected' ? 'dispute.rejected' : 'dispute.resolved';
+      const title = state === 'rejected' ? 'Dispute rejected' : 'Dispute resolved';
+      for (const partyId of [dispute.client_id, dispute.provider_id]) {
+        try {
+          await notifyUser(String(partyId), {
+            kind,
+            title,
+            body: 'A decision has been made on your dispute. See the console for details.',
+            link: '/disputes',
+          });
+        } catch {
+          // Ignore push failures.
+        }
+      }
+      res.json(await disputeWithNames(dispute));
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  // ---- PWA push subscriptions + Web Push (FEATURE_PLAN.md §20) ----
+  app.get('/api/me/push-subscription', requireAuth, async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const me = req.user as AuthedUser;
+      const sub = await getSubscription(me.userId);
+      res.json(sub ? { endpoint: sub.endpoint, subscribed: true } : { endpoint: null, subscribed: false });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.post('/api/me/push-subscription', requireAuth, async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const me = req.user as AuthedUser;
+      const body = req.body as { endpoint?: string; keys?: { p256dh?: string; auth?: string } };
+      if (
+        typeof body?.endpoint !== 'string' ||
+        !body.endpoint ||
+        !body.keys?.p256dh ||
+        !body.keys?.auth
+      ) {
+        res.status(422).json({ message: 'Push subscription endpoint and keys are required.' });
+        return;
+      }
+      await saveSubscription(me.userId, {
+        endpoint: body.endpoint,
+        keys: { p256dh: body.keys.p256dh, auth: body.keys.auth },
+      });
+      res.json({ ok: true, endpoint: body.endpoint });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.delete('/api/me/push-subscription', requireAuth, async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      await removeSubscription((req.user as AuthedUser).userId);
+      res.json({ ok: true });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  // Test send — verifies the whole loop without waiting for a real event.
+  app.post('/api/me/push/test', requireAuth, async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const result = await notifyUser((req.user as AuthedUser).userId, {
+        kind: 'system',
+        title: 'Test notification',
+        body: 'Push notifications are working!',
+        link: '/marketplace',
+      });
+      if (result === 'no-subscription') {
+        res.status(422).json({ message: 'No push subscription for this account.' });
+        return;
+      }
+      if (result === 'failed') {
+        res.status(502).json({ message: 'Push service could not deliver the notification.' });
+        return;
+      }
+      res.json({ ok: true, result });
+    } catch (error) {
+      next(error);
+    }
+  });
+
   // ---- Vitals ----
   app.get('/api/vitals/me', requireAuth, async (req: Request, res: Response, next: NextFunction) => {
     try {
@@ -652,6 +990,23 @@ export function createApp() {
          VALUES ($1, $2, $3, $4, $5, $6, $7)`,
         [row.id, row.user_id, row.type, row.value, row.value2, row.measured_at_ms, row.source]
       );
+      // Out-of-range reading → real push alert when the user is subscribed
+      // (FEATURE_PLAN.md §4/§20; ranges mirror the frontend in vitals.ts).
+      // Awaited before responding so tests/clients see the attempt complete;
+      // a push problem never fails the vitals write.
+      const alert = vitalsAlert(row.type, Number(row.value), row.value2 == null ? null : Number(row.value2));
+      if (alert) {
+        try {
+          await notifyUser(me.userId, {
+            kind: 'vitals.alert',
+            title: `${alert.label} outside reference range`,
+            body: alert.body,
+            link: '/vitals',
+          });
+        } catch {
+          // Ignore push failures.
+        }
+      }
       res.status(201).json(vitalFromRow(row));
     } catch (error) {
       next(error);
@@ -746,6 +1101,78 @@ function escrowFromRow(row: Row) {
     status: row.status,
     createdAtMs: num(row.created_at_ms),
     settledAtMs: num(row.settled_at_ms),
+  };
+}
+
+function medicationFromRow(row: Row) {
+  return {
+    id: row.id,
+    name: row.name,
+    dose: row.dose ?? '',
+    schedule:
+      typeof row.schedule === 'string'
+        ? JSON.parse(row.schedule)
+        : (row.schedule ?? { kind: 'daily', timesMinutes: [] }),
+    critical: Boolean(row.critical),
+    prescriber: row.prescriber ?? '',
+    archived: Boolean(row.archived),
+    createdAtMs: num(row.created_at_ms),
+  };
+}
+
+function adherenceFromRow(row: Row) {
+  const slotMs = num(row.scheduled_for_ms) ?? 0;
+  return {
+    id: row.id,
+    medicationId: row.medication_id,
+    date: dateKey(slotMs),
+    timeMinutes: minutesSinceMidnight(slotMs),
+    action: row.action ?? 'taken',
+    atMs: num(row.at_ms),
+    loggedBy: 'client',
+  };
+}
+
+async function disputeWithNames(row: Row) {
+  const [client, provider, openedBy] = await Promise.all([
+    queryOne<Row>(`SELECT display_name FROM user_accounts WHERE id = $1`, [row.client_id]),
+    queryOne<Row>(`SELECT display_name FROM caregivers WHERE id = $1`, [row.provider_id]),
+    queryOne<Row>(`SELECT display_name FROM user_accounts WHERE id = $1`, [row.opened_by]),
+  ]);
+  return {
+    id: row.id,
+    bookingId: row.booking_id,
+    clientId: row.client_id,
+    clientName: client?.display_name ?? '',
+    providerId: row.provider_id,
+    providerName: provider?.display_name ?? '',
+    openedBy: row.opened_by,
+    openedByName: openedBy?.display_name ?? '',
+    reason: row.reason,
+    description: row.description ?? '',
+    state: row.state,
+    resolution: row.resolution ?? null,
+    refundCents: null,
+    escrowTransactionId: null,
+    createdAtMs: num(row.created_at_ms),
+    updatedAtMs: num(row.updated_at_ms),
+    evidence: [],
+  };
+}
+
+function bookingFromRow(row: Row) {
+  return {
+    id: row.id,
+    caregiverId: row.caregiver_id,
+    caregiverName: row.caregiver_name ?? '',
+    clientId: row.client_id,
+    clientName: row.client_name ?? '',
+    providerUserId: row.caregiver_id,
+    scheduledAtMs: num(row.scheduled_at_ms),
+    note: row.note ?? '',
+    status: row.status ?? 'requested',
+    createdAtMs: num(row.created_at_ms),
+    pendingReschedule: null,
   };
 }
 

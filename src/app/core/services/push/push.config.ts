@@ -27,4 +27,4 @@
  *    lands on the right feature (subtask 8).
  */
 export const VAPID_PUBLIC_KEY =
-  'BDSg7Zozl9hBT2i_ho_-QOcxtdmJXAWKOMNccXQUs1pOc0sjHXBFg3trEZnfM5PTE0YOAb1Uh_iF89GRcsmH48U';
+  'BKZ612A7cLiu4XQmBK770IJrs2dh8WOLvi5mnmBkv-hh0t-uaJBDFn_kaJ8Ep-NKLTQLBJPLp1wU2aaKuxvmbfg';

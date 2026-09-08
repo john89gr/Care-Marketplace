@@ -84,8 +84,12 @@ CREATE TABLE IF NOT EXISTS bookings (
   scheduled_at_ms BIGINT NOT NULL,
   note           TEXT NOT NULL DEFAULT '',
   amount_cents   INTEGER NOT NULL,
+  status         TEXT NOT NULL DEFAULT 'requested', -- requested | accepted | in_progress | completed | cancelled | disputed (FEATURE_PLAN.md §3)
   created_at_ms  BIGINT NOT NULL
 );
+
+-- Booking lifecycle status for existing databases (idempotent).
+ALTER TABLE bookings ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'requested';
 
 -- Visits with GPS stamps (Phase 2 — check-in/out).
 CREATE TABLE IF NOT EXISTS visits (
@@ -163,6 +167,63 @@ CREATE TABLE IF NOT EXISTS care_plan_notes (
   text        TEXT NOT NULL,
   at_ms       BIGINT NOT NULL
 );
+
+-- PWA push subscriptions (FEATURE_PLAN.md §20 subtask 7): one per user.
+-- The VAPID keys live server-side (env); endpoint/keys here let the server
+-- send Web Push to the browser's push service.
+CREATE TABLE IF NOT EXISTS push_subscriptions (
+  user_id       TEXT PRIMARY KEY REFERENCES user_accounts(id) ON DELETE CASCADE,
+  endpoint      TEXT NOT NULL,
+  p256dh        TEXT NOT NULL,
+  auth          TEXT NOT NULL,
+  created_at_ms BIGINT NOT NULL,
+  updated_at_ms BIGINT NOT NULL
+);
+
+-- Medication calendar + adherence (FEATURE_PLAN.md §7). Schedule is the
+-- frontend MedicationSchedule JSON ({kind, timesMinutes|everyDays|weekdays}).
+CREATE TABLE IF NOT EXISTS medications (
+  id            TEXT PRIMARY KEY,
+  user_id       TEXT NOT NULL REFERENCES user_accounts(id) ON DELETE CASCADE,
+  name          TEXT NOT NULL,
+  dose          TEXT NOT NULL DEFAULT '',
+  schedule      JSONB NOT NULL,
+  critical      BOOLEAN NOT NULL DEFAULT FALSE,
+  prescriber    TEXT NOT NULL DEFAULT '',
+  archived      BOOLEAN NOT NULL DEFAULT FALSE,
+  created_at_ms BIGINT NOT NULL
+);
+
+-- One log per dose slot (taken by the user, or auto-inserted missed by the
+-- server's missed-dose detection). Unique per (medication, slot) so a dose is
+-- alerted/recorded exactly once.
+CREATE TABLE IF NOT EXISTS medication_logs (
+  id               TEXT PRIMARY KEY,
+  medication_id    TEXT NOT NULL REFERENCES medications(id) ON DELETE CASCADE,
+  user_id          TEXT NOT NULL,
+  scheduled_for_ms BIGINT NOT NULL,
+  action           TEXT NOT NULL DEFAULT 'taken', -- taken | missed
+  at_ms            BIGINT NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_medication_logs_slot
+  ON medication_logs(medication_id, scheduled_for_ms);
+
+-- Dispute resolution (FEATURE_PLAN.md §17).
+CREATE TABLE IF NOT EXISTS disputes (
+  id            TEXT PRIMARY KEY,
+  booking_id    TEXT NOT NULL,
+  client_id     TEXT NOT NULL,
+  provider_id   TEXT NOT NULL,
+  opened_by     TEXT NOT NULL,
+  reason        TEXT NOT NULL,
+  description   TEXT NOT NULL DEFAULT '',
+  state         TEXT NOT NULL DEFAULT 'open', -- open | under_review | resolved_client | resolved_provider | rejected
+  resolution    TEXT,
+  created_at_ms BIGINT NOT NULL,
+  updated_at_ms BIGINT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_disputes_client ON disputes(client_id);
+CREATE INDEX IF NOT EXISTS idx_disputes_provider ON disputes(provider_id);
 
 -- PHR vitals (Phase 3).
 CREATE TABLE IF NOT EXISTS vitals (

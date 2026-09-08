@@ -80,6 +80,45 @@ loads and keeps working on flaky or missing connections.
   production strategy and take effect when the bypass is removed or scoped in
   a deployment that doesn't run the mock-based E2E suite.
 
+### Sending pushes from the server
+
+The Express server (`server/`) stores push subscriptions and delivers Web
+Push through the browser's push service:
+
+- `POST /api/me/push-subscription` / `GET` / `DELETE` — save, read and remove
+  the current user's subscription (`push_subscriptions` table).
+- `POST /api/me/push/test` — send a test notification to the current user.
+- Real events push automatically when a subscription exists:
+  - **booking accepted** → client (`booking.accepted` → `/bookings`)
+  - **visit completed** → client review prompt (`booking.completed` →
+    `/review?booking=…`)
+  - **out-of-range vitals reading** → user (`vitals.alert` → `/vitals`)
+  - **missed critical medication dose** → user (`medication.missed` →
+    `/medications`; idempotent per dose)
+  - **dispute opened** → other party; **dispute resolved/rejected** → both
+    parties (`dispute.opened` / `dispute.resolved` / `dispute.rejected` →
+    `/disputes`)
+
+  The minimal models behind those events (bookings status, medications +
+  adherence logs with server-side missed-dose detection, disputes) live in
+  `server/src/` so the real backend can drive them end to end.
+
+VAPID keys are read from env (`VAPID_SUBJECT`, `VAPID_PUBLIC_KEY`,
+`VAPID_PRIVATE_KEY`) with a committed demo pair as fallback so
+`npm run server` works out of the box. Override them in production — the
+public key must match the one in
+`src/app/core/services/push/push.config.ts`:
+
+```bash
+VAPID_SUBJECT=mailto:care@example.com \
+VAPID_PUBLIC_KEY=<public-key> \
+VAPID_PRIVATE_KEY=<private-key> npm run server
+```
+
+Regenerate keys with `npx web-push generate-vapid-keys --json`. End-to-end
+check: log in on a PWA install with push enabled, then
+`curl -X POST -b <cookies> http://localhost:3000/api/me/push/test`.
+
 ### Install on a phone
 
 1. Build and serve over HTTPS (the service worker and push API require a
