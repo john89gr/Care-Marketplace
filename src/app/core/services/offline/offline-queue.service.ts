@@ -46,6 +46,9 @@ export class OfflineQueueService implements OnDestroy {
   readonly failedCount = computed(() => this._entries().filter((e) => e.status === 'failed').length);
   readonly syncedCount = computed(() => this._entries().filter((e) => e.status === 'synced').length);
 
+  /** Resolves once the persisted outbox has been loaded (bootstrap). */
+  readonly ready: Promise<void>;
+
   private onlineUnlisten: (() => void) | null = null;
   private reconnectUnlisten: (() => void) | null = null;
   private readonly _retryTimers = new Set<ReturnType<typeof setTimeout>>();
@@ -58,7 +61,7 @@ export class OfflineQueueService implements OnDestroy {
     backend: QueueBackend | null = inject(QUEUE_BACKEND, { optional: true })
   ) {
     this.backend = backend ?? null;
-    this.bootstrap().catch(() => {
+    this.ready = this.bootstrap().catch(() => {
       /* SW unavailable / IDB blocked — keep the in-memory buffer. */
     });
     if (typeof window !== 'undefined') {
@@ -78,6 +81,15 @@ export class OfflineQueueService implements OnDestroy {
   private reconnectHandler: (() => void) | null = null;
   setOnReconnect(handler: () => void): void {
     this.reconnectHandler = handler;
+  }
+
+  /**
+   * The replay handler installed by OfflineSyncService. The shell banner uses
+   * it for "Retry now" without knowing how to replay a payload itself.
+   */
+  private handler: FlushHandler | null = null;
+  setHandler(handler: FlushHandler): void {
+    this.handler = handler;
   }
 
   ngOnDestroy(): void {
@@ -371,6 +383,17 @@ export class OfflineQueueService implements OnDestroy {
   /** Re-flush the queue right now (wired to the online banner / "sync now"). */
   syncNow(handler: FlushHandler): Promise<FlushSummary> {
     return this.flush(handler);
+  }
+
+  /**
+   * Re-flush using the stored replay handler (installed by OfflineSyncService).
+   * No-op when no handler is installed yet (boot replay is still in flight).
+   */
+  retryAll(): Promise<FlushSummary> {
+    if (!this.handler) {
+      return Promise.resolve({ succeeded: 0, failed: 0, remaining: this.pendingCount() });
+    }
+    return this.flush(this.handler);
   }
 }
 

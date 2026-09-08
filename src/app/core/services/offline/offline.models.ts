@@ -13,7 +13,7 @@ import { InjectionToken } from '@angular/core';
  */
 
 export type QueueAction = 'create' | 'update' | 'delete';
-export type QueueStoreName = 'chat' | 'vitals' | 'prescriptions';
+export type QueueStoreName = 'chat' | 'vitals' | 'prescriptions' | 'api';
 
 export type EntryStatus = 'pending' | 'syncing' | 'synced' | 'failed';
 

@@ -120,6 +120,34 @@
   </div>
 </header>
 
+@if (!offline.isOnline()) {
+  <div class="offline-banner" role="status">
+    <strong>You're offline</strong>
+    <span>Actions you take are queued and will sync automatically when you're back online.</span>
+  </div>
+}
+
+@if (offline.pendingCount() > 0 || offline.failedCount() > 0) {
+  <div class="sync-strip" role="status">
+    <span>
+      @if (offline.pendingCount() > 0) {
+        {{ offline.pendingCount() }} action{{ offline.pendingCount() === 1 ? '' : 's' }} waiting to sync
+      }
+      @if (offline.failedCount() > 0) {
+        <span class="sync-failed">· {{ offline.failedCount() }} failed</span>
+      }
+    </span>
+    <button type="button" class="secondary" (click)="retrySync()">Retry now</button>
+  </div>
+}
+
+@if (updateAvailable()) {
+  <div class="update-banner" role="status">
+    <span>A new version is available.</span>
+    <button type="button" class="secondary" (click)="reloadForUpdate()">Reload</button>
+  </div>
+}
+
 <main class="shell-main">
   <router-outlet />
 </main>

@@ -3,8 +3,8 @@
 ## Status snapshot
 - ✅ Phase 1 (marketplace loop) — complete, tested, E2E passing
 - ✅ Phase 2 (home health + escrow) — complete, tested, E2E passing
-- 🔶 Phase 3 (PHR) — vitals, screening, medications, pharmacy mostly complete; **Smart Reminders (§8) has 5 failing tests**
-- ⬜ Phase 4 (gov.gr, FHIR, audit, disputes, payments methods, pwa, a11y, i18n, chat v2, bluetooth) — not started or stubbed
+- ✅ Phase 3 (PHR) — vitals, screening, medications, pharmacy, reminders, export complete
+- ✅ Phase 4 — gov.gr OIDC/wallet, FHIR export, audit + consent, disputes, payment methods/payout, certification expiry, chat v2, bluetooth, and PWA/offline/push (§20: manifest + icons, IndexedDB outbox + replay, offline banner, VAPID push opt-in, update prompt) all landed and tested
 
 ## Workstream assignments (10 parallel worktree sessions)
 

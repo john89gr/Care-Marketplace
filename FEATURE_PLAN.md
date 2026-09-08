@@ -10,7 +10,8 @@
 - ✅ Phase 2 (home health + escrow) — complete
 - ✅ Phase 3 (PHR) — vitals, screening, medications, pharmacy, export complete
 - ✅ Phase 4 — all features merged: gov.gr OIDC/wallet, FHIR R4 export, audit trail + consent, dispute resolution, payment methods + payout, certification expiry, chat v2, PWA/offline/push, bluetooth pairing, web Bluetooth
-- ✅ Phase 4 test suite: 516 tests passing across 39 files
+- ✅ §20 (PWA/offline) shipped end-to-end: manifest + icon set (installable), IndexedDB outbox with replay + server-ts conflict policy, offline banner + retry, VAPID push opt-in (post-first-booking) + SW click-routing, new-version reload prompt, E2E covering offline reload → sync and manifest validity
+- ✅ Phase 4 test suite: 516 tests passing across 39 files (+ push service unit tests)
 
 Priority legend: 🔴 P0 = blocks core trust/loop · 🟡 P1 = completes planned phases · 🟢 P2 = growth & polish
 

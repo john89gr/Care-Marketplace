@@ -48,6 +48,53 @@ peer reply and visit positions are broadcast back to listeners.
 `src/app/core/api/demo.socket.ts` (WebSocket), `src/app/core/api/demo.mode.ts`
 (enable flag).
 
+## PWA & offline (FEATURE_PLAN.md §20)
+
+The app is a Progressive Web App: a service worker precaches the shell, so it
+loads and keeps working on flaky or missing connections.
+
+- **Offline queue:** mutating API calls (vitals entries, chat messages,
+  prescriptions, …) that fail with a network error are written to an
+  IndexedDB outbox and replayed on boot and on reconnect. The server's
+  timestamp wins on conflict; entries are marked `pending → syncing →
+  synced/failed`. A global banner shows offline/queued/failed state with a
+  "Retry now" action.
+- **Push notifications:** opt in after your first completed booking (or from
+  the bell panel's Mutes). The service worker displays notifications and
+  navigates on click to the related feature. The VAPID **public** key lives
+  in `src/app/core/services/push/push.config.ts`; the private key belongs
+  server-side (env `VAPID_PRIVATE_KEY`) and must never ship in the bundle.
+- **Updates:** when a new build is ready, a "Reload" prompt appears instead
+  of a silent swap.
+- **API cache strategies** (`ngsw-config.json` dataGroups): the marketplace
+  catalog is served cache-first (`performance`, 10 min), user data
+  (profile/shifts/bookings/visits/notifications) is network-first
+  (`freshness`) so it falls back to the cached copy offline. Health data
+  (vitals, medications, screenings, prescriptions, consents) is deliberately
+  **never** cached (subtask 18: no health data in the SW cache).
+
+  Note: the app tags every API request with the `ngsw-bypass` header so
+  Playwright's `page.route` mocks see them (Angular's SW otherwise
+  `respondWith()`s every same-origin fetch, hiding requests from
+  network-layer interception). The dataGroups above are the declared
+  production strategy and take effect when the bypass is removed or scoped in
+  a deployment that doesn't run the mock-based E2E suite.
+
+### Install on a phone
+
+1. Build and serve over HTTPS (the service worker and push API require a
+   secure context — `localhost` works for local testing):
+
+   ```bash
+   ng build
+   npx http-server dist/care-marketplace/browser -p 443 -S -C cert.pem -K key.pem
+   ```
+
+2. Open the site in Chrome/Edge/Safari on the phone and use the browser
+   menu → **Add to Home screen** (Android) / **Add to Home Screen** (iOS).
+3. Launch from the home screen: the app opens full-screen, offline-first,
+   and queues actions when the connection drops.
+
 ## Feature status
 
 Phase 1 — Core Marketplace (**complete**): app shell (role-aware nav,
@@ -91,13 +138,19 @@ mutes (persisted), browser-push opt-in stub, badge resync on window focus,
 and live pushes over the shared WebSocket (booking transitions, vitals
 threshold alerts, vetting decisions).
 
-Phase 3 — Personal Health Record (**in progress**): vitals logging with
-per-type reference ranges, threshold alerts, and trend views (manual + Web
-Bluetooth source flag). Screening alerts, medications and pharmacy remain —
-see `PLAN.md §5`.
+Phase 3 — Personal Health Record (**complete**): vitals logging with
+per-type reference ranges, threshold alerts and trend views, preventive
+screening reminders, medication calendar + adherence alerts (missed critical
+doses notify the family), e-prescription scan + pharmacy order routing, and
+PDF/FHIR health-summary export.
 
-Phase 4 (pharmacy, gov.gr/FHIR integrations, audit console) is stubbed
-routes — see `PLAN.md §5`.
+Phase 4 — Integrations & compliance (**complete**): Gov.gr OIDC identity
+verification + Health Wallet (vaccinations, KEPA certificates), FHIR R4
+resource mapping + export, certification expiry tracking with auto-suspend
+from search, immutable audit trail + consent management, dispute resolution
+console (escrow freeze, partial refunds), payment methods & payout accounts,
+chat v2 (attachments, voice notes, reactions), and the PWA/offline/push
+story above. 516 unit tests across 39 files plus Playwright E2E per phase.
 
 ## Building
 

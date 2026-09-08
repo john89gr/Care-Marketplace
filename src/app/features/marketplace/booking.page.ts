@@ -3,6 +3,7 @@ import { Router } from '@angular/router';
 import { Subscription } from 'rxjs';
 import { SessionStore } from '../../core/auth/session';
 import { WebSocketClient } from '../../core/services/ws/websocket.client';
+import { PushService } from '../../core/services/push/push.service';
 import { BookingStore, BookingRecord } from './booking.store';
 import { ReviewsStore } from './reviews.store';
 import { EscrowStore } from '../payments/escrow.store';
@@ -21,6 +22,9 @@ function formatDate(ms: number): string {
     minute: '2-digit',
   });
 }
+
+/** One-time prompt key (§20 subtask 9: after the first completed booking). */
+const PUSH_PROMPT_KEY = 'cm.push.prompted.v1';
 
 /**
  * Booking request + lifecycle dashboard (FEATURE_PLAN.md §3). The action set
@@ -54,6 +58,20 @@ function formatDate(ms: number): string {
           <p class="error" role="alert">{{ store.lastError() }}</p>
         }
       </form>
+
+      @if (showPushPrompt()) {
+        <div class="push-prompt" role="status">
+          <p>
+            <strong>Never miss a booking update.</strong>
+            Allow push notifications so you hear about acceptances, reminders and alerts
+            even when the app is closed.
+          </p>
+          <p class="actions">
+            <button type="button" (click)="acceptPushPrompt()">Enable notifications</button>
+            <button type="button" class="secondary" (click)="dismissPushPrompt()">Not now</button>
+          </p>
+        </div>
+      }
 
       <h2>Your bookings</h2>
       @if (store.conflict()) {
@@ -165,6 +183,8 @@ function formatDate(ms: number): string {
   `,
   styles: `
     h2 { margin: 1.5rem 0 0.75rem; font-size: 1.15rem; }
+    .push-prompt { border: 1px solid var(--border, #d9dee7); border-radius: 0.75rem; padding: 0.9rem 1rem; background: var(--accent-soft, #e3f0fa); margin-bottom: 1rem; }
+    .push-prompt p { margin: 0; }
     .row { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; }
     .chip.ok { background: var(--success, #1d7a3d); color: #fff; }
     .chip.warn { background: var(--warning, #b45309); color: #fff; }
@@ -182,7 +202,11 @@ export class BookingPage implements OnInit, OnDestroy {
   private readonly session = inject(SessionStore);
   private readonly router = inject(Router);
   private readonly ws = inject(WebSocketClient);
+  private readonly push = inject(PushService);
   private wsSub: Subscription | null = null;
+
+  /** One-time push opt-in prompt after the first completed booking (§20 subtask 9). */
+  protected readonly showPushPrompt = signal(false);
 
   readonly FREE_CANCEL_HOURS = FREE_CANCEL_HOURS;
   /** Booking id whose cancellation quote is displayed (null = none). */
@@ -228,6 +252,7 @@ export class BookingPage implements OnInit, OnDestroy {
       if (envelope.type === 'visit.status' && envelope.payload?.['status'] === 'completed') {
         this.store.load();
         this.reviews.loadAll();
+        this.maybePromptPush();
       }
     });
   }
@@ -281,6 +306,7 @@ export class BookingPage implements OnInit, OnDestroy {
         break;
       case 'complete':
         this.store.complete(booking.id);
+        this.maybePromptPush();
         break;
       case 'dispute':
         this.store.dispute(booking.id);
@@ -293,6 +319,47 @@ export class BookingPage implements OnInit, OnDestroy {
         return;
     }
     this.focusBooking(booking.id);
+  }
+
+  /**
+   * Push opt-in (§20 subtask 9): prompt once, only after the first completed
+   * booking, and only while the browser permission is still undecided — never
+   * on load. Accepting goes through PushService (permission → subscription).
+   */
+  private maybePromptPush(): void {
+    if (typeof window === 'undefined' || !('Notification' in window)) {
+      return;
+    }
+    if (Notification.permission !== 'default') {
+      return;
+    }
+    try {
+      if (localStorage.getItem(PUSH_PROMPT_KEY)) {
+        return;
+      }
+    } catch {
+      // Storage unavailable — still allow the prompt this session.
+    }
+    this.showPushPrompt.set(true);
+  }
+
+  protected async acceptPushPrompt(): Promise<void> {
+    this.showPushPrompt.set(false);
+    try {
+      localStorage.setItem(PUSH_PROMPT_KEY, '1');
+    } catch {
+      // Storage unavailable — prompt just won't re-arm next session.
+    }
+    await this.push.requestPush();
+  }
+
+  protected dismissPushPrompt(): void {
+    this.showPushPrompt.set(false);
+    try {
+      localStorage.setItem(PUSH_PROMPT_KEY, '1');
+    } catch {
+      // Storage unavailable.
+    }
   }
 
   /** Confirm the other party's reschedule proposal (dual-confirmation). */

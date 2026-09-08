@@ -187,3 +187,67 @@ form {
   background: var(--success);
   color: #fff;
 }
+
+/* Offline + sync banners (FEATURE_PLAN.md §20 subtask 4) */
+.offline-banner {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  padding: 0.5rem 1rem;
+  background: var(--danger);
+  color: #fff;
+  font-size: 0.9rem;
+  text-align: center;
+}
+
+.offline-banner strong {
+  margin-right: 0.25rem;
+}
+
+.sync-strip {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.4rem 1rem;
+  background: var(--accent-soft);
+  color: var(--text);
+  border-bottom: 1px solid var(--border);
+  font-size: 0.9rem;
+}
+
+.sync-strip .sync-failed {
+  color: var(--danger);
+  font-weight: 600;
+}
+
+.sync-strip button {
+  padding: 0.25rem 0.7rem;
+  font-size: 0.85rem;
+}
+
+/* New-version prompt (FEATURE_PLAN.md §20 subtask 10) */
+.update-banner {
+  position: fixed;
+  bottom: 1rem;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.6rem 1rem;
+  border-radius: 0.5rem;
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border);
+  box-shadow: 0 4px 14px rgb(0 0 0 / 0.18);
+  font-size: 0.95rem;
+  z-index: 90;
+}
+
+.update-banner button {
+  padding: 0.25rem 0.7rem;
+  font-size: 0.85rem;
+}

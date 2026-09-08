@@ -228,6 +228,14 @@ interface DemoAdherenceLog {
   loggedBy: string;
 }
 
+/** Browser push subscription, one per user (FEATURE_PLAN.md §20 subtask 7). */
+interface DemoPushSubscription {
+  endpoint: string;
+  /** P-256 keys from PushSubscription.toJSON() — server sends via web-push. */
+  keys: { p256dh: string; auth: string } | null;
+  subscribedAtMs: number;
+}
+
 /** Smart-reminder channel prefs, one record per user (FEATURE_PLAN.md §8). */
 interface DemoReminderPreferences {
   userId: string;
@@ -401,6 +409,7 @@ const state: {
   walletDocs: DemoWalletDocument[];
   audit: { id: string; actorId: string; action: string; resourceType: string; resourceId: string; atMs: number; meta?: Record<string, unknown> }[];
   consents: Record<string, DemoConsentState>;
+  pushSubscriptions: Record<string, DemoPushSubscription>;
   session: DemoUser | null;
 } = {
   users: [
@@ -718,6 +727,8 @@ const state: {
   },
   // Smart-reminder channel prefs per user (FEATURE_PLAN.md §8 subtask 3).
   reminderPreferences: {},
+  // PWA push subscriptions (FEATURE_PLAN.md §20 subtask 7).
+  pushSubscriptions: {},
   notifications: [
     {
       id: 'ntf-1',
@@ -1766,6 +1777,39 @@ export const demoApi: HttpInterceptorFn = (req: HttpRequest<unknown>, next: Http
           n.readAtMs = n.readAtMs ?? now();
         }
       }
+      return json({ ok: true });
+    }
+  }
+
+  // ---- PWA push subscription (FEATURE_PLAN.md §20 subtask 7) ----
+  // The demo persists the browser subscription in-memory; a real deployment
+  // stores it server-side and sends pushes via web-push (VAPID private key
+  // stays server-side, never in the bundle). POST also flips the seeded
+  // profile's pushEnabled flag so the reminders settings reflect it.
+  if (parts[0] === 'me' && parts[1] === 'push-subscription' && parts.length === 2) {
+    const userId = state.session?.userId ?? 'u-client';
+    if (method === 'GET') {
+      const sub = state.pushSubscriptions[userId];
+      return json({ endpoint: sub?.endpoint ?? null, subscribed: !!sub });
+    }
+    if (method === 'POST') {
+      const body = req.body as { endpoint?: string; keys?: { p256dh?: string; auth?: string } | null };
+      if (!body?.endpoint) {
+        return of(new HttpResponse({ status: 422, body: { message: 'Push subscription endpoint is required.' } }));
+      }
+      state.pushSubscriptions[userId] = {
+        endpoint: body.endpoint,
+        keys: body.keys && body.keys.p256dh ? { p256dh: body.keys.p256dh, auth: body.keys.auth ?? '' } : null,
+        subscribedAtMs: now(),
+      };
+      const prefs = state.reminderPreferences[userId];
+      if (prefs) {
+        prefs.pushEnabled = true;
+      }
+      return json({ ok: true, endpoint: body.endpoint });
+    }
+    if (method === 'DELETE') {
+      delete state.pushSubscriptions[userId];
       return json({ ok: true });
     }
   }

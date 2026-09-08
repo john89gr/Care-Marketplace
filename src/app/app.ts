@@ -7,10 +7,12 @@ import {
   signal,
 } from '@angular/core';
 import { Router, RouterLink, RouterLinkActive, RouterOutlet } from '@angular/router';
+import { SwUpdate, VersionReadyEvent } from '@angular/service-worker';
 import { SessionStore } from './core/auth/session';
 import { AuthApi } from './core/auth/auth.api';
 import { ROLES, Role } from './core/auth/roles';
 import { WebSocketClient } from './core/services/ws/websocket.client';
+import { OfflineQueueService } from './core/services/offline/offline-queue.service';
 import {
   NotificationsService,
   AppNotification,
@@ -64,6 +66,11 @@ export class App {
   protected readonly notifications = inject(NotificationsService);
   private readonly ws = inject(WebSocketClient);
   private readonly host = inject(ElementRef);
+  /** Offline banner + outbox indicators (§20 subtask 4). */
+  protected readonly offline = inject(OfflineQueueService);
+  /** PWA update prompt — only present in production (SW-enabled) builds. */
+  private readonly swUpdate = inject(SwUpdate, { optional: true });
+  protected readonly updateAvailable = signal(false);
 
   protected toastTone(t: AppToast): string {
     return `toast ${t.tone}`;
@@ -98,6 +105,13 @@ export class App {
 
   constructor() {
     this.applyTheme(this.theme());
+    // New-version prompt (§20 subtask 10): when the SW has downloaded a new
+    // build, offer a one-click reload instead of silently swapping.
+    this.swUpdate?.versionUpdates.subscribe((event) => {
+      if ((event as VersionReadyEvent).type === 'VERSION_READY') {
+        this.updateAvailable.set(true);
+      }
+    });
     // Badge sync: initial load when logged in; the service also reloads on
     // window focus and on panel open (subtask 11).
     if (this.session.isLoggedIn()) {
@@ -241,6 +255,20 @@ export class App {
     this.closePanel();
     this.notifications.clear();
     this.router.navigateByUrl('/marketplace');
+  }
+
+  /** Retry any failed/queued outbox entries (offline banner "Retry now"). */
+  retrySync(): void {
+    this.offline.retryFailed();
+    void this.offline.retryAll();
+  }
+
+  /** Activate the newly downloaded build and reload (subtask 10). */
+  async reloadForUpdate(): Promise<void> {
+    const ok = this.swUpdate ? await this.swUpdate.activateUpdate() : false;
+    if (ok) {
+      location.reload();
+    }
   }
 
   private loadTheme(): 'light' | 'dark' {

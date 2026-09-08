@@ -230,6 +230,41 @@ describe('OfflineQueueService', () => {
     });
   });
 
+  describe('stored handler + retryAll (offline banner)', () => {
+    it('retryAll no-ops when no handler is installed yet', async () => {
+      service.enqueue('vitals', 'create', { a: 1 });
+      const summary = await service.retryAll();
+      expect(summary).toEqual({ succeeded: 0, failed: 0, remaining: 1 });
+      expect(service.pendingCount()).toBe(1);
+    });
+
+    it('retryAll flushes through the handler installed by OfflineSyncService', async () => {
+      const handler: FlushHandler = vi.fn().mockResolvedValue(ok(77));
+      service.setHandler(handler);
+      service.enqueue('vitals', 'create', { a: 1 });
+      const summary = await service.retryAll();
+      expect(summary.succeeded).toBe(1);
+      expect(service.entries()[0].syncedAtMs).toBe(77);
+      expect(handler).toHaveBeenCalledTimes(1);
+    });
+
+    it('retryAll retries previously failed entries (banner Retry now)', async () => {
+      const handler: FlushHandler = vi
+        .fn()
+        .mockResolvedValueOnce(fail('transient'))
+        .mockResolvedValue(ok(5));
+      service.setHandler(handler);
+      service.enqueue('chat', 'create', { text: 'hi' });
+      await service.retryAll();
+      expect(service.failedCount()).toBe(1);
+      // Banner path: retryFailed() moves entries back to pending, then retryAll().
+      service.retryFailed();
+      await service.retryAll();
+      expect(service.syncedCount()).toBe(1);
+      expect(service.failedCount()).toBe(0);
+    });
+  });
+
   describe('flushWithRetry (fake timers)', () => {
     it('schedules a retry for a failed entry and eventually succeeds', async () => {
       let calls = 0;
