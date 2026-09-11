@@ -6,6 +6,7 @@ import {
   ReminderChannelPrefsComponent,
   ReminderSettingsComponent,
 } from './reminders-settings.component';
+import { MedicineInstructionsComponent } from './medicine-instructions.component';
 import { SessionStore } from '../../core/auth/session';
 import {
   Medication,
@@ -28,7 +29,11 @@ import {
 @Component({
   selector: 'app-medications',
   standalone: true,
-  imports: [ReminderChannelPrefsComponent, ReminderSettingsComponent],
+  imports: [
+    ReminderChannelPrefsComponent,
+    ReminderSettingsComponent,
+    MedicineInstructionsComponent,
+  ],
   template: `
     <section class="medications">
       <h1>Medications</h1>
@@ -135,6 +140,7 @@ import {
               @if (store.interaction()?.medicationId === entry.med.id) {
                 <p class="meta" role="status">{{ store.interaction()!.message }}</p>
               }
+              <app-medicine-instructions [medication]="entry.med" />
               <app-reminder-channel-prefs [medication]="entry.med" />
             </li>
           }

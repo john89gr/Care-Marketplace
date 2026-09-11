@@ -203,6 +203,19 @@ screening reminders, medication calendar + adherence alerts (missed critical
 doses notify the family), e-prescription scan + pharmacy order routing, and
 PDF/FHIR health-summary export.
 
+Health-record extensions (HEALTH_RECORDS_PLAN.md — **complete**): a contact
+phone manager (`/contacts`) with emergency/ICE and care-team groups, one-tap
+`tel:` calling, a single primary per group, and ICE contacts printed on the
+health-summary PDF and exported as FHIR `Patient.contact`; structured per-pill
+medicine instructions (dose form, route, food relation, max daily doses,
+warnings, side effects, storage) printed on the PDF medication rows and
+surfaced on the FHIR `MedicationRequest` dosage (`text`, `route`,
+`additionalInstruction`) and `note` fields, with a curated Greek-first catalog
+that auto-fills only after confirmation; and pill reminders derived from a
+prescription's free-text frequency (Greek + English), confirmed in a
+adjust-schedule wizard that creates the linked medication and persists the
+reminder channels.
+
 Phase 4 — Integrations & compliance (**complete**): Gov.gr OIDC identity
 verification + Health Wallet (vaccinations, KEPA certificates), FHIR R4
 resource mapping + export, certification expiry tracking with auto-suspend

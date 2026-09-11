@@ -14,6 +14,18 @@ import {
 } from './export.types';
 import type { HealthSummaryPayload } from './export.payload';
 import { VITAL_LABELS, VITAL_UNITS } from './vitals.store';
+import { icd11Label } from './icd11';
+import {
+  ALLERGY_KIND_LABELS,
+  ALLERGY_SEVERITY_LABELS,
+  CONDITION_STATUS_LABELS,
+  EVENT_KIND_LABELS,
+  PRESCRIPTION_STATUS_LABELS,
+  SYMPTOM_SEVERITY_LABELS,
+  SYMPTOM_STATUS_LABELS,
+  historyLabel,
+} from './history.models';
+import { hasInstructions, instructionsSummary, normalizeInstructions } from './medicine.info';
 
 function isoDate(ms: number): string {
   return new Date(ms).toISOString().slice(0, 10);
@@ -68,6 +80,39 @@ export function generateHealthSummaryPdf(payload: HealthSummaryPayload): Uint8Ar
     other.disclaimer,
   ];
 
+  // Safety-allergy warning (subtask 9): drug / severe allergies are printed
+  // right after the header, never color-only — label text + entries. (No
+  // emoji: non-ASCII forces the whole line into hex and breaks PDF
+  // searchability of the ASCII label.)
+  if (payload.safetyAllergies.length > 0) {
+    blocks.push({ kind: 'text', text: `${labels.allergyWarning}:`, size: 'heading' });
+    for (const a of payload.safetyAllergies) {
+      blocks.push({
+        kind: 'text',
+        text: `  ${a.substance} (${historyLabel(ALLERGY_SEVERITY_LABELS, a.severity, payload.locale)})`,
+        size: 'body',
+      });
+    }
+    blocks.push({ kind: 'gap' });
+  }
+
+  // Emergency / ICE contacts (contact phone manager): who to call, printed
+  // before the clinical sections so a physician can find it immediately.
+  if (payload.emergencyContacts.length > 0) {
+    blocks.push({ kind: 'text', text: `${labels.emergencyContacts}:`, size: 'heading' });
+    for (const contact of payload.emergencyContacts) {
+      // No parentheses — ASCII parentheses would need escaping in the PDF
+      // content stream (see the labels note in export.types.ts).
+      const role = contact.relationship ? ` - ${contact.relationship}` : '';
+      blocks.push({
+        kind: 'text',
+        text: `  ${contact.name}${role} - ${contact.phone}`,
+        size: 'body',
+      });
+    }
+    blocks.push({ kind: 'gap' });
+  }
+
   // Vitals section (+ sparkline vector for the richest series, subtask 7).
   bilingualHeading(blocks, labels.vitals, other.vitals);
   const typeKeys = Object.keys(payload.vitalsByType).sort();
@@ -107,6 +152,30 @@ export function generateHealthSummaryPdf(payload: HealthSummaryPayload): Uint8Ar
       text: `${med.name}, ${med.dose}, ${scheduleText(med.schedule)}${flag}${prescriber}`,
       size: 'body',
     });
+    // Medicine instructions manager: print the *user-saved* structured sheet
+    // only. The curated catalog is a suggestion and is intentionally NOT
+    // printed as if it were the treating physician's record.
+    if (!med.instructions || !hasInstructions(med.instructions)) {
+      continue;
+    }
+    const instructions = normalizeInstructions(med.instructions);
+    // ASCII separator keeps the line in the PDF's searchable ASCII encoding.
+    const summary = instructionsSummary(instructions, payload.locale, '; ');
+    if (summary) {
+      blocks.push({ kind: 'text', text: `  ${labels.howToTake}: ${summary}`, size: 'small' });
+    }
+    for (const warning of instructions.warnings) {
+      blocks.push({ kind: 'text', text: `    ! ${warning}`, size: 'small' });
+    }
+    if (instructions.specialInstructions) {
+      blocks.push({ kind: 'text', text: `    ${instructions.specialInstructions}`, size: 'small' });
+    }
+    if (instructions.sideEffects) {
+      blocks.push({ kind: 'text', text: `    ${instructions.sideEffects}`, size: 'small' });
+    }
+    if (instructions.storage) {
+      blocks.push({ kind: 'text', text: `    ${labels.storage}: ${instructions.storage}`, size: 'small' });
+    }
   }
   blocks.push({ kind: 'gap' });
 
@@ -137,6 +206,91 @@ export function generateHealthSummaryPdf(payload: HealthSummaryPayload): Uint8Ar
         size: 'small',
       });
     }
+  }
+  blocks.push({ kind: 'gap' });
+
+  // Medical-history register (§21 subtask 13): conditions (ICD-11 Greek
+  // labels), allergies, immunizations, events, symptoms, prescriptions.
+  const loc = payload.locale;
+
+  bilingualHeading(blocks, labels.conditions, other.conditions);
+  if (payload.conditions.length === 0) {
+    blocks.push({ kind: 'text', text: labels.noData, size: 'body' });
+  }
+  for (const c of payload.conditions) {
+    const code = c.icd11Code ? `, ${icd11Label(c.icd11Code, loc)}` : '';
+    blocks.push({
+      kind: 'text',
+      text: `${c.name}${code} [${historyLabel(CONDITION_STATUS_LABELS, c.status, loc)}], ${isoDate(c.diagnosedAtMs)}`,
+      size: 'body',
+    });
+  }
+  blocks.push({ kind: 'gap' });
+
+  bilingualHeading(blocks, labels.allergies, other.allergies);
+  if (payload.allergies.length === 0) {
+    blocks.push({ kind: 'text', text: labels.noData, size: 'body' });
+  }
+  for (const a of payload.allergies) {
+    const reaction = a.reaction ? `, ${a.reaction}` : '';
+    blocks.push({
+      kind: 'text',
+      text: `${a.substance} (${historyLabel(ALLERGY_KIND_LABELS, a.kind, loc)}, ${historyLabel(ALLERGY_SEVERITY_LABELS, a.severity, loc)})${reaction}, ${isoDate(a.confirmedAtMs)}`,
+      size: 'body',
+    });
+  }
+  blocks.push({ kind: 'gap' });
+
+  bilingualHeading(blocks, labels.immunizations, other.immunizations);
+  if (payload.immunizations.length === 0) {
+    blocks.push({ kind: 'text', text: labels.noData, size: 'body' });
+  }
+  for (const im of payload.immunizations) {
+    const dose = im.doseNumber ? ` (dose ${im.doseNumber})` : '';
+    blocks.push({ kind: 'text', text: `${im.vaccine}${dose}, ${isoDate(im.administeredAtMs)}`, size: 'body' });
+  }
+  blocks.push({ kind: 'gap' });
+
+  bilingualHeading(blocks, labels.events, other.events);
+  if (payload.events.length === 0) {
+    blocks.push({ kind: 'text', text: labels.noData, size: 'body' });
+  }
+  for (const e of payload.events) {
+    const facility = e.facility ? `, ${e.facility}` : '';
+    blocks.push({
+      kind: 'text',
+      text: `${e.name} (${historyLabel(EVENT_KIND_LABELS, e.kind, loc)})${facility}, ${isoDate(e.occurredAtMs)}`,
+      size: 'body',
+    });
+  }
+  blocks.push({ kind: 'gap' });
+
+  bilingualHeading(blocks, labels.symptoms, other.symptoms);
+  if (payload.symptoms.length === 0) {
+    blocks.push({ kind: 'text', text: labels.noData, size: 'body' });
+  }
+  for (const s of payload.symptoms) {
+    blocks.push({
+      kind: 'text',
+      text: `${s.name} (${historyLabel(SYMPTOM_SEVERITY_LABELS, s.severity, loc)}, ${historyLabel(SYMPTOM_STATUS_LABELS, s.status, loc)}), ${isoDate(s.onsetAtMs)}`,
+      size: 'body',
+    });
+  }
+  blocks.push({ kind: 'gap' });
+
+  bilingualHeading(blocks, labels.prescriptions, other.prescriptions);
+  if (payload.prescriptions.length === 0) {
+    blocks.push({ kind: 'text', text: labels.noData, size: 'body' });
+  }
+  for (const p of payload.prescriptions) {
+    const dose = p.dose ? `, ${p.dose}` : '';
+    const instructions = p.instructions ? ` — ${p.instructions}` : '';
+    const prescriber = p.prescriber ? `, ${p.prescriber}` : '';
+    blocks.push({
+      kind: 'text',
+      text: `${p.drug}${dose}${instructions}${prescriber} [${historyLabel(PRESCRIPTION_STATUS_LABELS, p.status, loc)}], ${isoDate(p.issuedAtMs)}`,
+      size: 'body',
+    });
   }
 
   return buildPdfBytes({

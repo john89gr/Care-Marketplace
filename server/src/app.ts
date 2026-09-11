@@ -20,9 +20,12 @@ import {
   notifyUser,
 } from './push';
 import { vitalsAlert } from './vitals';
-import { detectMissedDoses, dateKey, minutesSinceMidnight } from './medications';
+import { detectMissedDoses, dateKey, minutesSinceMidnight, validateInstructions } from './medications';
 import { checkScreeningDue, ScreeningType } from './screenings';
 import { checkCertificationExpiry } from './certifications';
+import { historyRouter } from './history';
+import { contactsRouter } from './contacts';
+import { consentsRouter } from './consents';
 
 const hour = 60 * 60 * 1000;
 const now = () => Date.now();
@@ -809,9 +812,19 @@ export function createApp() {
         schedule?: unknown;
         critical?: boolean;
         prescriber?: string;
+        instructions?: unknown;
+        prescriptionId?: string | null;
       };
       if (!body.name || !body.schedule) {
         res.status(422).json({ message: 'Name and schedule are required.' });
+        return;
+      }
+      const instructions =
+        body.instructions === undefined || body.instructions === null
+          ? null
+          : validateInstructions(body.instructions);
+      if (instructions && !instructions.ok) {
+        res.status(422).json({ message: instructions.message });
         return;
       }
       const row = {
@@ -822,14 +835,68 @@ export function createApp() {
         schedule: JSON.stringify(body.schedule),
         critical: Boolean(body.critical),
         prescriber: body.prescriber ?? '',
+        instructions: instructions && instructions.ok ? JSON.stringify(instructions.value) : null,
+        prescription_id: body.prescriptionId ?? null,
         created_at_ms: now(),
       };
       await query(
-        `INSERT INTO medications (id, user_id, name, dose, schedule, critical, prescriber, archived, created_at_ms)
-         VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7, FALSE, $8)`,
-        [row.id, row.user_id, row.name, row.dose, row.schedule, row.critical, row.prescriber, row.created_at_ms]
+        `INSERT INTO medications (id, user_id, name, dose, schedule, critical, prescriber, instructions, prescription_id, archived, created_at_ms)
+         VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7, $8::jsonb, $9, FALSE, $10)`,
+        [
+          row.id,
+          row.user_id,
+          row.name,
+          row.dose,
+          row.schedule,
+          row.critical,
+          row.prescriber,
+          row.instructions,
+          row.prescription_id,
+          row.created_at_ms,
+        ]
       );
       res.status(201).json(medicationFromRow(row));
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  // PATCH /api/me/medications/:id — persist the structured instruction sheet
+  // (medicine instructions manager). `instructions: null` clears it.
+  app.patch('/api/me/medications/:id', requireAuth, async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const me = req.user as AuthedUser;
+      const existing = await queryOne<Row>(
+        `SELECT * FROM medications WHERE id = $1 AND user_id = $2`,
+        [req.params.id, me.userId]
+      );
+      if (!existing) {
+        res.status(404).json({ message: 'Medication not found.' });
+        return;
+      }
+      const body = req.body as { instructions?: unknown };
+      if (!('instructions' in body)) {
+        res.json(medicationFromRow(existing));
+        return;
+      }
+      if (body.instructions === null) {
+        const cleared = await query<Row>(
+          `UPDATE medications SET instructions = NULL WHERE id = $1 RETURNING *`,
+          [req.params.id]
+        );
+        res.json(medicationFromRow(cleared[0]));
+        return;
+      }
+      const validation = validateInstructions(body.instructions);
+      if (!validation.ok) {
+        res.status(422).json({ message: validation.message });
+        return;
+      }
+      const updated = await query<Row>(
+        `UPDATE medications SET instructions = $1::jsonb WHERE id = $2 RETURNING *`,
+        [JSON.stringify(validation.value), req.params.id]
+      );
+      res.json(medicationFromRow(updated[0]));
     } catch (error) {
       next(error);
     }
@@ -1047,6 +1114,15 @@ export function createApp() {
     }
   });
 
+  // ---- Medical history + prescriptions register (FEATURE_PLAN.md §21) ----
+  app.use('/api', historyRouter);
+
+  // ---- Contact phone manager (ICE + care team) ----
+  app.use('/api', contactsRouter);
+
+  // ---- Consent ledger (FEATURE_PLAN.md §16; §21 subtask 16 enforcement) ----
+  app.use('/api', consentsRouter);
+
   // ---- Vitals ----
   app.get('/api/vitals/me', requireAuth, async (req: Request, res: Response, next: NextFunction) => {
     try {
@@ -1209,6 +1285,13 @@ function medicationFromRow(row: Row) {
         : (row.schedule ?? { kind: 'daily', timesMinutes: [] }),
     critical: Boolean(row.critical),
     prescriber: row.prescriber ?? '',
+    instructions:
+      row.instructions == null
+        ? undefined
+        : typeof row.instructions === 'string'
+          ? JSON.parse(row.instructions)
+          : row.instructions,
+    prescriptionId: row.prescription_id ?? null,
     archived: Boolean(row.archived),
     createdAtMs: num(row.created_at_ms),
   };

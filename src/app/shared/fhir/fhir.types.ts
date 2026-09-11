@@ -161,6 +161,19 @@ export interface ContactPoint {
 
 // ---- Patient ----
 
+/**
+ * Emergency contact carried on the Patient (FHIR R4 `Patient.contact`).
+ * Name + relationship + phone only — the ICE directory is never exported into
+ * richer resources.
+ */
+export interface PatientContact {
+  name?: HumanName;
+  relationship?: CodeableConcept[];
+  telecom?: ContactPoint[];
+  gender?: AdministrativeGender;
+  address?: Address;
+}
+
 export interface Patient extends FhirResource {
   resourceType: 'Patient';
   id: string;
@@ -170,6 +183,8 @@ export interface Patient extends FhirResource {
   gender?: AdministrativeGender;
   birthDate?: string;
   address?: Address[];
+  /** Emergency / ICE contacts (contact phone manager). */
+  contact?: PatientContact[];
   active?: boolean;
 }
 
@@ -210,6 +225,8 @@ export interface Observation extends FhirResource {
   valueCodeableConcept?: CodeableConcept;
   valueString?: string;
   component?: ObservationComponent[];
+  /** Comments about the observation (e.g. symptom notes). */
+  note?: Annotation[];
 }
 
 // ---- MedicationRequest ----
@@ -235,6 +252,76 @@ export interface MedicationRequest extends FhirResource {
   authoredOn?: string;
   dosageInstruction?: Dosage[];
   note?: Annotation[];
+}
+
+// ---- Condition (medical history §21) ----
+
+export type ConditionClinicalStatus =
+  | 'active'
+  | 'recurrence'
+  | 'relapse'
+  | 'inactive'
+  | 'remission'
+  | 'resolved';
+
+export interface Condition extends FhirResource {
+  resourceType: 'Condition';
+  id: string;
+  /** active | inactive | resolved (archived maps to inactive). */
+  clinicalStatus?: CodeableConcept;
+  /** Category, e.g. the chronic flag as display text. */
+  category?: CodeableConcept[];
+  code?: CodeableConcept;
+  subject?: Reference;
+  /** When the condition was first diagnosed (FHIR `dateTime`). */
+  onsetDateTime?: string;
+  /** When it was recorded in this system (FHIR `dateTime`). */
+  recordedDate?: string;
+  note?: Annotation[];
+}
+
+// ---- AllergyIntolerance (medical history §21) ----
+
+export type AllergyIntoleranceCategory = 'medication' | 'food' | 'environmental';
+export type AllergyIntoleranceCriticality = 'low' | 'high' | 'unable-to-assess';
+export type AllergyIntoleranceSeverity = 'mild' | 'moderate' | 'severe';
+
+export interface AllergyIntoleranceReaction {
+  /** Observed clinical symptoms (manifestation). */
+  manifestation?: CodeableConcept[];
+  severity?: AllergyIntoleranceSeverity;
+}
+
+export interface AllergyIntolerance extends FhirResource {
+  resourceType: 'AllergyIntolerance';
+  id: string;
+  /** active | inactive | resolved (archived maps to inactive). */
+  clinicalStatus?: CodeableConcept;
+  category?: AllergyIntoleranceCategory[];
+  code?: CodeableConcept;
+  subject?: Reference;
+  criticality?: AllergyIntoleranceCriticality;
+  reaction?: AllergyIntoleranceReaction[];
+  /** When the allergy was confirmed/recorded (FHIR `dateTime`). */
+  recordedDate?: string;
+  note?: Annotation[];
+}
+
+// ---- Immunization (medical history §21) ----
+
+export type ImmunizationStatus = 'completed' | 'entered-in-error' | 'not-done';
+
+export interface Immunization extends FhirResource {
+  resourceType: 'Immunization';
+  id: string;
+  status: ImmunizationStatus;
+  vaccineCode?: CodeableConcept;
+  subject?: Reference;
+  /** When the dose was administered (FHIR `dateTime`). */
+  occurrenceDateTime?: string;
+  /** True when the data comes from the citizen (not an imported wallet record). */
+  primarySource?: boolean;
+  doseNumberPositiveInt?: number;
 }
 
 // ---- CarePlan ----
@@ -304,5 +391,12 @@ export interface Bundle extends FhirResource {
   signature?: Array<unknown>;
 }
 
-/** Any of the four mapped resources. */
-export type MappedResource = Patient | Observation | MedicationRequest | CarePlan;
+/** Any resource the bundle builder can map from the app domain models. */
+export type MappedResource =
+  | Patient
+  | Observation
+  | MedicationRequest
+  | CarePlan
+  | Condition
+  | AllergyIntolerance
+  | Immunization;

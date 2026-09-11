@@ -86,6 +86,14 @@ import { statusLabel, type PharmacyOrder } from './pharmacy.models';
               @if (store.isImported(order.id)) {
                 <span class="meta" role="status">✓ Added to your medications ({{ order.meds.length }} item{{ order.meds.length > 1 ? 's' : '' }}, refill in ~30 days).</span>
               }
+              @if (order.status === 'delivered' && !store.isHistoryImported(order.id)) {
+                <button type="button" class="secondary" (click)="importHistory(order)">
+                  Add to my medical history
+                </button>
+              }
+              @if (store.isHistoryImported(order.id)) {
+                <span class="meta" role="status">✓ In your medical history ({{ order.meds.length }} prescription{{ order.meds.length > 1 ? 's' : '' }}).</span>
+              }
             </div>
           </li>
         }
@@ -145,6 +153,17 @@ export class OrdersPage {
         ok
           ? `Order ${order.id}: ${order.meds.length} medication${order.meds.length > 1 ? 's' : ''} added — review the schedule on the medications page.`
           : `Could not add order ${order.id} to your medications.`
+      );
+    });
+  }
+
+  /** Add a delivered order to the prescriptions register (§21 subtask 12). */
+  importHistory(order: PharmacyOrder): void {
+    this.store.importToHistory(order).subscribe((ok) => {
+      this.feedback.set(
+        ok
+          ? `Order ${order.id}: ${order.meds.length} prescription${order.meds.length > 1 ? 's' : ''} added to your medical history.`
+          : `Could not add order ${order.id} to your medical history.`
       );
     });
   }

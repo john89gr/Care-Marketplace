@@ -1,5 +1,6 @@
 import { Component, computed, inject, OnInit } from '@angular/core';
 import { FormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
+import { RouterLink } from '@angular/router';
 import { ProfileStore } from './profile.store';
 import { SessionStore } from '../../core/auth/session';
 import { ROLES, isVisitProvider } from '../../core/auth/roles';
@@ -12,7 +13,7 @@ import {
 @Component({
   selector: 'app-profile',
   standalone: true,
-  imports: [ReactiveFormsModule],
+  imports: [ReactiveFormsModule, RouterLink],
   template: `
     <section class="profile">
       <h1>My profile</h1>
@@ -26,6 +27,11 @@ import {
           </label>
           <label>Phone
             <input type="tel" formControlName="phone" autocomplete="tel" />
+            <span class="hint">
+              Ο προσωπικός σας αριθμός. Οι επαφές έκτακτης ανάγκης (ICE) και τα
+              τηλέφωνα της ομάδας φροντίδας διαχειρίζονται στις
+              <a routerLink="/contacts">Επαφές &amp; Τηλέφωνα</a>.
+            </span>
           </label>
 
           @if (isClient()) {
@@ -129,6 +135,10 @@ import {
     .saved {
       color: var(--success);
       margin: 0;
+    }
+    .hint {
+      color: var(--text-muted);
+      font-size: 0.8rem;
     }
     .notif-prefs {
       margin-top: 2rem;

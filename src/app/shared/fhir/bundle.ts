@@ -11,6 +11,14 @@ import type { VitalReading } from '../../features/health-record/vitals.store';
 import type { Medication } from '../../features/health-record/medications.logic';
 import type { CarePlan as DomainCarePlan } from '../../features/home-health/care-plan.store';
 import type {
+  Allergy,
+  Immunization,
+  MedicalCondition,
+  PrescriptionRecord,
+  Symptom,
+} from '../../features/health-record/history.models';
+import type { MedicalContact } from '../../features/health-record/contacts.models';
+import type {
   Bundle,
   MappedResource,
   Reference,
@@ -23,6 +31,11 @@ import { toPatient } from './patient.mapper';
 import { toObservation } from './observation.mapper';
 import { toMedicationRequest } from './medication.mapper';
 import { toCarePlan } from './care-plan.mapper';
+import { toCondition } from './condition.mapper';
+import { toAllergyIntolerance } from './allergy.mapper';
+import { toImmunization } from './immunization.mapper';
+import { toSymptomObservation } from './symptom.mapper';
+import { toMedicationRequestFromPrescription } from './prescription.mapper';
 import { validateBundle, ValidationResult } from './validator';
 
 /** Snapshot of the domain models the export needs (sourced from the stores). */
@@ -31,6 +44,14 @@ export interface FhirBundleInput {
   readings: readonly VitalReading[];
   medications: readonly Medication[];
   carePlan: DomainCarePlan | null | undefined;
+  /** Medical-history register (§21 subtask 14: Condition / AllergyIntolerance / Immunization + register MedicationRequest + symptom Observations). */
+  conditions?: readonly MedicalCondition[];
+  allergies?: readonly Allergy[];
+  immunizations?: readonly Immunization[];
+  symptoms?: readonly Symptom[];
+  prescriptions?: readonly PrescriptionRecord[];
+  /** Emergency / ICE contacts → `Patient.contact[]` (contact phone manager). */
+  emergencyContacts?: readonly MedicalContact[];
   /** Optional override of "now" for deterministic exports (meta.lastUpdated). */
   nowMs?: number;
 }
@@ -73,7 +94,7 @@ export function toBundle(
  */
 export function buildFhirBundle(input: FhirBundleInput): FhirExportResult {
   const nowMs = input.nowMs ?? Date.now();
-  const patient = toPatient(input.profile ?? null, nowMs);
+  const patient = toPatient(input.profile ?? null, nowMs, input.emergencyContacts);
   const subject = subjectReference(patient.id);
 
   const resources: MappedResource[] = [patient];
@@ -81,6 +102,23 @@ export function buildFhirBundle(input: FhirBundleInput): FhirExportResult {
   resources.push(...input.medications.map((m) => toMedicationRequest(m, subject, nowMs)));
   if (input.carePlan) {
     resources.push(toCarePlan(input.carePlan, subject, nowMs));
+  }
+  // Medical-history register (§21 subtask 14): archived records are excluded
+  // from the export (their audit trail remains in the register).
+  for (const c of input.conditions ?? []) {
+    if (!c.archived) resources.push(toCondition(c, subject, nowMs));
+  }
+  for (const a of input.allergies ?? []) {
+    if (!a.archived) resources.push(toAllergyIntolerance(a, subject, nowMs));
+  }
+  for (const im of input.immunizations ?? []) {
+    if (!im.archived) resources.push(toImmunization(im, subject, nowMs));
+  }
+  for (const s of input.symptoms ?? []) {
+    if (!s.archived) resources.push(toSymptomObservation(s, subject, nowMs));
+  }
+  for (const rx of input.prescriptions ?? []) {
+    if (!rx.archived) resources.push(toMedicationRequestFromPrescription(rx, subject, nowMs));
   }
 
   const bundle = toBundle(resources, nowMs);

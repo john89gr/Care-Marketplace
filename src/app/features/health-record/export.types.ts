@@ -60,9 +60,20 @@ export interface ExportLabels {
   medications: string;
   screenings: string;
   carePlan: string;
+  conditions: string;
+  allergies: string;
+  immunizations: string;
+  events: string;
+  symptoms: string;
+  prescriptions: string;
+  emergencyContacts: string;
+  allergyWarning: string;
   noData: string;
   critical: string;
   overdue: string;
+  /** Medicine instructions manager: per-medication "how to take" sheet. */
+  howToTake: string;
+  storage: string;
   disclaimer: string;
 }
 
@@ -78,9 +89,21 @@ export const EXPORT_LABELS: Record<ExportLocale, ExportLabels> = {
     medications: 'Medications',
     screenings: 'Preventive care',
     carePlan: 'Care plan',
+    conditions: 'Conditions / Diagnoses',
+    allergies: 'Allergies',
+    immunizations: 'Immunizations',
+    events: 'Medical events',
+    symptoms: 'Symptoms',
+    prescriptions: 'Prescriptions',
+    // NOTE: keep this ASCII label free of parentheses — PDF content streams
+    // must escape them and the plain-text extractor reads unescaped ones raw.
+    emergencyContacts: 'Emergency ICE contacts',
+    allergyWarning: 'Allergies to communicate',
     noData: 'No data in this section.',
     critical: 'critical',
     overdue: 'overdue',
+    howToTake: 'How to take',
+    storage: 'Storage',
     disclaimer: 'Informational summary — not a medical diagnosis.',
   },
   el: {
@@ -93,9 +116,19 @@ export const EXPORT_LABELS: Record<ExportLocale, ExportLabels> = {
     medications: 'Φάρμακα',
     screenings: 'Προληπτικός έλεγχος',
     carePlan: 'Πλάνο φροντίδας',
+    conditions: 'Παθήσεις / Διαγνώσεις',
+    allergies: 'Αλλεργίες',
+    immunizations: 'Εμβολιασμοί',
+    events: 'Ιατρικά συμβάντα',
+    symptoms: 'Συμπτώματα',
+    prescriptions: 'Συνταγές',
+    emergencyContacts: 'Επαφές έκτακτης ανάγκης (ICE)',
+    allergyWarning: 'Αλλεργίες προς γνωστοποίηση',
     noData: 'Δεν υπάρχουν δεδομένα σε αυτή την ενότητα.',
     critical: 'κρίσιμο',
     overdue: 'εκπρόθεσμο',
+    howToTake: 'Οδηγίες λήψης',
+    storage: 'Φύλαξη',
     disclaimer: 'Ενημερωτική σύνοψη — δεν αποτελεί ιατρική διάγνωση.',
   },
 };

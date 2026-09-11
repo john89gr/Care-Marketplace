@@ -5,6 +5,7 @@ import { OrdersStore } from './orders.store';
 import type { PharmacyOrder } from './pharmacy.models';
 import { ApiClient } from '../../core/api/api.client';
 import { WebSocketClient } from '../../core/services/ws/websocket.client';
+import { HistoryStore } from '../health-record/history.store';
 
 /**
  * Orders store tests (FEATURE_PLAN.md §9): transition-guarded advance, live
@@ -48,6 +49,16 @@ function makeWs() {
 
 function makeNotifications() {
   return { notify: vi.fn() };
+}
+
+/** HistoryStore backed by a stub API that accepts register entries. */
+function makeHistoryStore(postImpl = vi.fn(() => of({ id: 'rx-new', drug: 'Atorvastatin', status: 'active', issuedAtMs: 1000, createdAtMs: Date.now() }))) {
+  const api = {
+    get: vi.fn(() => of([])),
+    post: postImpl,
+    patch: vi.fn(() => of(null)),
+  } as unknown as ApiClient;
+  return new HistoryStore(api);
 }
 
 describe('OrdersStore', () => {
@@ -142,5 +153,44 @@ describe('OrdersStore', () => {
     store.importToMedications({ ...ORDER, status: 'delivered' }).subscribe((ok) => expect(ok).toBe(false));
     expect(store.error()).toBe('Nope.');
     expect(store.isImported('po-1')).toBe(false);
+  });
+});
+
+describe('OrdersStore.importToHistory (§21 subtask 12)', () => {
+  it('pre-fills register entries linked to the scanned prescription, exactly once', () => {
+    const post = vi.fn(() => of({ id: 'rx-new', drug: 'Atorvastatin', status: 'active', issuedAtMs: 1000, createdAtMs: Date.now() }));
+    const history = makeHistoryStore(post);
+    const store = new OrdersStore(makeApi(), makeWs(), makeNotifications(), history);
+    store.upsert({ ...ORDER, status: 'delivered' });
+    store.importToHistory({ ...ORDER, status: 'delivered' }).subscribe((ok) => expect(ok).toBe(true));
+    expect(post).toHaveBeenCalledWith('/me/prescriptions', expect.objectContaining({
+      drug: 'Atorvastatin',
+      dose: '20 mg',
+      prescriber: 'Dr. Stavrou',
+      status: 'active',
+      pharmacyPrescriptionId: 'rx-1',
+    }));
+    expect(store.isHistoryImported('po-1')).toBe(true);
+    // Second call is a no-op without further requests.
+    store.importToHistory({ ...ORDER, status: 'delivered' }).subscribe((ok) => expect(ok).toBe(true));
+    expect(post).toHaveBeenCalledTimes(1);
+  });
+
+  it('refuses to import non-delivered orders into the register', () => {
+    const post = vi.fn();
+    const history = makeHistoryStore(post);
+    const store = new OrdersStore(makeApi(), makeWs(), makeNotifications(), history);
+    store.importToHistory(ORDER).subscribe((ok) => expect(ok).toBe(false));
+    expect(post).not.toHaveBeenCalled();
+  });
+
+  it('does not mark the order imported when any entry fails', () => {
+    const history = makeHistoryStore(
+      vi.fn(() => throwError(() => ({ error: { message: 'Down.' } })))
+    );
+    const store = new OrdersStore(makeApi(), makeWs(), makeNotifications(), history);
+    store.importToHistory({ ...ORDER, status: 'delivered' }).subscribe((ok) => expect(ok).toBe(false));
+    expect(store.error()).toBe('Could not add all items to your medical history.');
+    expect(store.isHistoryImported('po-1')).toBe(false);
   });
 });

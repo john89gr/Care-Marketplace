@@ -3,6 +3,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { of, throwError } from 'rxjs';
 import { MedicationsStore } from './medications.store';
 import { Medication, AdherenceLog, ESCALATION_AFTER_MISSES } from './medications.logic';
+import { emptyInstructions } from './medicine.info';
 import { ApiClient } from '../../core/api/api.client';
 
 /**
@@ -153,5 +154,53 @@ describe('MedicationsStore', () => {
     store.load().subscribe();
     store.logDose('med-1', '2026-09-02', 480, 'taken').subscribe((ok) => expect(ok).toBe(false));
     expect(store.error()).toBe('Nope.');
+  });
+});
+
+describe('MedicationsStore.saveInstructions (medicine instructions manager)', () => {
+  function makePatchApi(patch: ReturnType<typeof vi.fn>) {
+    return {
+      get: vi.fn(() => of({ medications: [CRITICAL], logs: [] })),
+      post: vi.fn(() => of(null)),
+      patch,
+    } as unknown as ApiClient;
+  }
+
+  it('optimistically saves the sheet and keeps the server row', () => {
+    const saved = { ...CRITICAL, instructions: { ...emptyInstructions(), foodRelation: 'with' as const } };
+    const store = new MedicationsStore(makePatchApi(vi.fn(() => of(saved))));
+    store.load().subscribe();
+
+    let ok = false;
+    store.saveInstructions('med-1', { ...emptyInstructions(), foodRelation: 'with' }).subscribe((v) => (ok = v));
+
+    expect(ok).toBe(true);
+    expect(store.meds()[0].instructions?.foodRelation).toBe('with');
+    expect(store.actingId()).toBeNull();
+  });
+
+  it('rolls the sheet back when the write fails', () => {
+    const store = new MedicationsStore(
+      makePatchApi(vi.fn(() => throwError(() => ({ error: { message: 'offline' } }))))
+    );
+    store.load().subscribe();
+
+    let ok = true;
+    store.saveInstructions('med-1', { ...emptyInstructions(), warnings: ['x'] }).subscribe((v) => (ok = v));
+
+    expect(ok).toBe(false);
+    expect(store.meds()[0].instructions).toBeUndefined();
+    expect(store.error()).toBe('offline');
+  });
+
+  it('clears the sheet with null instructions', () => {
+    const patch = vi.fn((_url: string, body: { instructions: unknown }) =>
+      of({ ...CRITICAL, instructions: body.instructions ?? undefined })
+    );
+    const store = new MedicationsStore(makePatchApi(patch));
+    store.load().subscribe();
+    store.saveInstructions('med-1', null).subscribe();
+    expect(patch).toHaveBeenCalledWith('/me/medications/med-1', { instructions: null });
+    expect(store.meds()[0].instructions).toBeUndefined();
   });
 });

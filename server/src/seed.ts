@@ -19,6 +19,7 @@ export async function seed(): Promise<void> {
   await ensureUser('anna@example.com', 'Anna Karakosta', ['physio'], 'u-physio');
   await ensureUser('nikos@example.com', 'Nikos Georgiou', ['caregiver'], 'u-nikos');
 
+  await seedMedications();
   await seedCaregivers();
   await seedProfiles();
   await seedVetting();
@@ -27,6 +28,9 @@ export async function seed(): Promise<void> {
   await seedVisitAndEscrow();
   await seedScreenings();
   await seedCarePlan();
+  await seedHistory();
+  await seedContacts();
+  await seedConsents();
 }
 
 async function ensureUser(
@@ -46,6 +50,53 @@ async function ensureUser(
     `INSERT INTO user_accounts (id, display_name, email, password_hash, roles, created_at_ms)
      VALUES ($1, $2, $3, $4, $5, $6)`,
     [id, displayName, email, passwordHash, roles, now()]
+  );
+}
+
+/**
+ * Medication calendar demo rows (FEATURE_PLAN.md §7) with structured
+ * instruction sheets (medicine instructions manager): a critical insulin
+ * (injection) and a nightly statin (oral) — the surface the medications page
+ * and the instructions editor render. Idempotent per fixed id.
+ */
+async function seedMedications(): Promise<void> {
+  const existing = await queryOne(`SELECT id FROM medications WHERE id = 'med-1'`);
+  if (existing) {
+    return;
+  }
+  const nowMs = now();
+  const insulin = {
+    doseForm: 'Πένα ένεσης',
+    route: 'injection',
+    foodRelation: 'any',
+    maxDailyDoses: 1,
+    warnings: [
+      'Ελέγχετε το σάκχαρο πριν από τη δόση.',
+      'Αλλάζετε σημείο ένεσης κάθε φορά.',
+    ],
+    sideEffects: 'Υπογλυκαιμία, αντίδραση στο σημείο της ένεσης.',
+    storage: 'Στο ψυγείο πριν το άνοιγμα.',
+    specialInstructions: '',
+  };
+  const statin = {
+    doseForm: 'Δισκίο',
+    route: 'oral',
+    foodRelation: 'any',
+    maxDailyDoses: 1,
+    warnings: ['Αποφύγετε τον χυμό γκρέιπφρουτ.', 'Αναφέρετε ανεξήγητο μυϊκό πόνο.'],
+    sideEffects: 'Μυϊκός πόνος, κεφαλαλγία.',
+    storage: 'Σε ξηρό, δροσερό μέρος.',
+    specialInstructions: 'Λαμβάνεται το βράδυ, την ίδια ώρα.',
+  };
+  await query(
+    `INSERT INTO medications (id, user_id, name, dose, schedule, critical, prescriber, instructions, archived, created_at_ms)
+     VALUES ($1, 'u-client', $2, $3, $4::jsonb, $5, $6, $7::jsonb, FALSE, $8),
+            ($9, 'u-client', $10, $11, $12::jsonb, FALSE, $13, $14::jsonb, FALSE, $15)
+     ON CONFLICT (id) DO NOTHING`,
+    [
+      'med-1', 'Insulin glargine', '10 units', JSON.stringify({ kind: 'daily', timesMinutes: [8 * 60] }), true, 'Dr. Stavrou', JSON.stringify(insulin), nowMs - 30 * 24 * hour,
+      'med-2', 'Atorvastatin', '20 mg', JSON.stringify({ kind: 'daily', timesMinutes: [21 * 60] }), 'Dr. Stavrou', JSON.stringify(statin), nowMs - 60 * 24 * hour,
+    ]
   );
 }
 
@@ -201,6 +252,108 @@ async function seedCarePlan(): Promise<void> {
     ['vt-1', 'u-client', 'bloodPressure', 132, 86, now() - 26 * hour, 'manual',
      'vt-2', 'u-client', 'heartRate', 74, now() - 26 * hour, 'manual',
      'vt-3', 'u-client', 'spo2', 98, now() - 25 * hour, 'manual']
+  );
+}
+
+/**
+ * Consent ledger for the demo client (FEATURE_PLAN.md §16 subtask 6 + §21
+ * subtask 16): family_sharing + data_export pre-granted so the caregiver/nurse
+ * family read of the client's history works out of the box; sms/bluetooth
+ * start ungranted (opt-in). Mirrors the demo.api.ts seed.
+ */
+async function seedConsents(): Promise<void> {
+  await query(
+    `INSERT INTO user_consents (user_id, consents, current_document_version, updated_at_ms)
+     VALUES ($1, $2, 'v1.0', $3)
+     ON CONFLICT (user_id) DO NOTHING`,
+    [
+      'u-client',
+      JSON.stringify([
+        { purpose: 'family_sharing', granted: true, documentVersion: 'v1.0', updatedAtMs: now() - 5 * 24 * hour, updatedBy: 'u-client' },
+        { purpose: 'sms_reminders', granted: false, documentVersion: 'v1.0', updatedAtMs: now() - 5 * 24 * hour, updatedBy: 'u-client' },
+        { purpose: 'bluetooth', granted: false, documentVersion: 'v1.0', updatedAtMs: now() - 5 * 24 * hour, updatedBy: 'u-client' },
+        { purpose: 'data_export', granted: true, documentVersion: 'v1.0', updatedAtMs: now() - 5 * 24 * hour, updatedBy: 'u-client' },
+      ]),
+      now(),
+    ]
+  );
+}
+
+/**
+ * Contact phone manager demo rows: a primary ICE contact (spouse), a secondary
+ * ICE contact (daughter) and two care-team entries (GP + pharmacy) — the
+ * surface the contacts page, the export and the FHIR Patient.contact mapper
+ * render.
+ */
+async function seedContacts(): Promise<void> {
+  const existing = await queryOne(`SELECT id FROM medical_contacts WHERE id = 'contact-ice-1'`);
+  if (existing) {
+    return;
+  }
+  const yearMs = 365 * 24 * hour;
+  const rows: [string, string, string, string, string, boolean, number][] = [
+    ['contact-ice-1', 'emergency', 'Γιώργος Παπαδόπουλος', 'Σύζυγος', '6970000001', true, 10],
+    ['contact-ice-2', 'emergency', 'Ελένη Παπαδοπούλου', 'Κόρη', '6970000002', false, 5],
+    ['contact-care-1', 'care', 'Δρ. Παπαδόπουλος', 'doctor', '2100000000', true, 10],
+    ['contact-care-2', 'care', 'Φαρμακείο Συντάγματος', 'pharmacy', '2100000001', false, 0],
+  ];
+  for (const [rowId, kind, name, relationship, phone, isPrimary, priority] of rows) {
+    await query(
+      `INSERT INTO medical_contacts
+       (id, user_id, kind, name, relationship, phone, is_primary, priority, archived, created_at_ms)
+       VALUES ($1, 'u-client', $2, $3, $4, $5, $6, $7, FALSE, $8)`,
+      [rowId, kind, name, relationship, phone, isPrimary, priority, now() - yearMs]
+    );
+  }
+}
+
+/**
+ * Medical-history demo rows (FEATURE_PLAN.md §21 subtask 4): one severe drug
+ * allergy, one active chronic condition (ICD-11 coded), one immunization, one
+ * surgery event, one ongoing symptom and one active prescription — the exact
+ * surface the history page and the dashboard allergy banner render.
+ */
+async function seedHistory(): Promise<void> {
+  const existing = await queryOne(`SELECT id FROM medical_conditions WHERE id = 'cond-1'`);
+  if (existing) {
+    return;
+  }
+  const yearMs = 365 * 24 * hour;
+  await query(
+    `INSERT INTO medical_conditions
+     (id, user_id, name, icd11_code, status, diagnosed_at_ms, resolved_at_ms, notes, archived, created_at_ms)
+     VALUES ($1, $2, $3, $4, $5, $6, NULL, $7, FALSE, $8)`,
+    ['cond-1', 'u-client', 'Υπέρταση', 'BA00', 'chronic', now() - 8 * yearMs, 'Υπό αγωγή — τακτική παρακολούθηση.', now()]
+  );
+  await query(
+    `INSERT INTO allergies
+     (id, user_id, substance, kind, reaction, severity, confirmed_at_ms, notes, archived, created_at_ms)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, FALSE, $9)`,
+    ['all-1', 'u-client', 'Πενικιλίνη', 'drug', 'Κνίδωση, κίνδυνος αναφυλαξίας', 'severe', now() - 10 * yearMs, 'Αναγράφεται στο βραχιόλι αλλεργίας.', now()]
+  );
+  await query(
+    `INSERT INTO immunizations
+     (id, user_id, vaccine, dose_number, administered_at_ms, source, notes, archived, created_at_ms)
+     VALUES ($1, $2, $3, $4, $5, 'manual', '', FALSE, $6)`,
+    ['imm-1', 'u-client', 'Γρίπη (εποχικό εμβόλιο)', 1, now() - 6 * 30 * 24 * hour, now()]
+  );
+  await query(
+    `INSERT INTO medical_events
+     (id, user_id, kind, name, facility, occurred_at_ms, notes, archived, created_at_ms)
+     VALUES ($1, $2, 'surgery', 'Σκωληκοειδεκτομή', 'Γενικό Νοσοκομείο Αθηνών', $3, 'Ομαλή μετεγχειρητική πορεία.', FALSE, $4)`,
+    ['ev-1', 'u-client', now() - 6 * yearMs, now()]
+  );
+  await query(
+    `INSERT INTO symptoms
+     (id, user_id, name, severity, onset_at_ms, status, notes, archived, created_at_ms)
+     VALUES ($1, $2, $3, 'moderate', $4, 'ongoing', '', FALSE, $5)`,
+    ['sym-1', 'u-client', 'Πονοκέφαλος', now() - 10 * 24 * hour, now()]
+  );
+  await query(
+    `INSERT INTO prescription_records
+     (id, user_id, drug, dose, instructions, prescriber, issued_at_ms, duration_days, status, pharmacy_prescription_id, medication_id, archived, created_at_ms)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, 90, 'active', NULL, NULL, FALSE, $8)`,
+    ['rx-1', 'u-client', 'Ατορβαστατίνη', '20mg ×1', 'Ένα δισκίο το βράδυ.', 'Δρ. Παπαδόπουλος', now() - 30 * 24 * hour, now()]
   );
 }
 

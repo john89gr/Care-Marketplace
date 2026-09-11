@@ -18,6 +18,8 @@ import { NotificationsService } from '../../core/services/notifications/notifica
 import type { PharmacyOrder, PharmacyOrderStatus } from './pharmacy.models';
 import { medicationDraftsFor, statusLabel } from './pharmacy.models';
 import { canTransition } from './order-machine';
+import { HistoryStore } from '../health-record/history.store';
+import type { PrescriptionDraft } from '../health-record/history.models';
 
 export interface PharmacyStatusPush {
   orderId: string;
@@ -32,7 +34,8 @@ export class OrdersStore {
   constructor(
     private readonly api: ApiClient = inject(ApiClient),
     private readonly ws?: WebSocketClient,
-    private readonly notifications?: NotificationsService
+    private readonly notifications?: NotificationsService,
+    private readonly history?: HistoryStore
   ) {
     this.ws?.messages$.subscribe((envelope) => this.handleEnvelope(envelope));
   }
@@ -47,6 +50,11 @@ export class OrdersStore {
    * guard — `importToMedications` is a no-op for ids tracked here).
    */
   private readonly _importedIds = signal<readonly string[]>([]);
+  /**
+   * Orders already staged into the prescriptions register (§21 subtask 12
+   * idempotency guard — `importToHistory` is a no-op for ids tracked here).
+   */
+  private readonly _importedHistoryIds = signal<readonly string[]>([]);
 
   readonly orders = this._orders.asReadonly();
   readonly loading = this._loading.asReadonly();
@@ -54,6 +62,7 @@ export class OrdersStore {
   readonly error = this._error.asReadonly();
   readonly loaded = this._loaded.asReadonly();
   readonly importedIds = this._importedIds.asReadonly();
+  readonly importedHistoryIds = this._importedHistoryIds.asReadonly();
 
   /** Newest first. */
   readonly sorted = computed(() =>
@@ -64,6 +73,10 @@ export class OrdersStore {
 
   isImported(orderId: string): boolean {
     return this._importedIds().includes(orderId);
+  }
+
+  isHistoryImported(orderId: string): boolean {
+    return this._importedHistoryIds().includes(orderId);
   }
 
   load(): Observable<boolean> {
@@ -183,6 +196,64 @@ export class OrdersStore {
         this._error.set(
           (error as { error?: { message?: string } })?.error?.message ??
             'Could not add these medications. Please try again.'
+        );
+        return of(false);
+      })
+    );
+  }
+
+  /**
+   * Filled order → prescriptions register (§21 subtask 12): pre-fills one
+   * register entry per line item (reusing `medicationDraftsFor`), each linked
+   * to the scanned pharmacy prescription via `pharmacyPrescriptionId` so the
+   * register shows what was actually dispensed. Idempotent per order.
+   */
+  importToHistory(order: PharmacyOrder): Observable<boolean> {
+    if (order.status !== 'delivered') {
+      this._error.set('Only delivered orders can be added to your medical history.');
+      return of(false);
+    }
+    if (this.isHistoryImported(order.id)) {
+      return of(true);
+    }
+    if (!this.history) {
+      this._error.set('Medical history is not available right now.');
+      return of(false);
+    }
+    const drafts = medicationDraftsFor(order, order.prescriber);
+    if (drafts.length === 0) {
+      this._error.set('This order has no medications to add to your history.');
+      return of(false);
+    }
+    this._actingId.set(order.id);
+    this._error.set('');
+    const registerDrafts: PrescriptionDraft[] = drafts.map((draft) => ({
+      drug: draft.name,
+      dose: draft.dose || undefined,
+      prescriber: draft.prescriber || undefined,
+      issuedAtMs: order.createdAtMs,
+      status: 'active',
+      pharmacyPrescriptionId: order.prescriptionId,
+    }));
+    const creates = registerDrafts.map((draft) => this.history!.add('prescriptions', draft));
+    return forkJoin(creates).pipe(
+      map((results) => {
+        if (!results.every(Boolean)) {
+          this._actingId.set(null);
+          this._error.set('Could not add all items to your medical history.');
+          return false;
+        }
+        this._importedHistoryIds.update((ids) =>
+          ids.includes(order.id) ? ids : [...ids, order.id]
+        );
+        this._actingId.set(null);
+        return true;
+      }),
+      catchError((error) => {
+        this._actingId.set(null);
+        this._error.set(
+          (error as { error?: { message?: string } })?.error?.message ??
+            'Could not add these prescriptions to your medical history.'
         );
         return of(false);
       })

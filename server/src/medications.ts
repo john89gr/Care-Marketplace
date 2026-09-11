@@ -16,6 +16,82 @@ export type MedicationSchedule =
 /** Grace window (minutes) after the scheduled time before a dose is missed. */
 export const GRACE_MINUTES = 60;
 
+// ---- Medicine instructions manager (mirror of medicine.info.ts) ----
+
+export type MedicineRoute = 'oral' | 'topical' | 'inhalation' | 'injection' | 'other';
+export type FoodRelation = 'before' | 'with' | 'after' | 'any';
+
+export interface MedicineInstructions {
+  doseForm: string;
+  route: MedicineRoute;
+  foodRelation: FoodRelation;
+  maxDailyDoses: number | null;
+  warnings: string[];
+  sideEffects: string;
+  storage: string;
+  specialInstructions: string;
+}
+
+export const MEDICINE_ROUTES: readonly MedicineRoute[] = [
+  'oral',
+  'topical',
+  'inhalation',
+  'injection',
+  'other',
+];
+export const FOOD_RELATIONS: readonly FoodRelation[] = ['before', 'with', 'after', 'any'];
+
+export const MAX_INSTRUCTION_WARNINGS = 8;
+
+const text = (value: unknown, max = 400): string =>
+  typeof value === 'string' ? value.trim().slice(0, max) : '';
+
+type InstructionsResult =
+  | { ok: true; value: MedicineInstructions }
+  | { ok: false; message: string };
+
+/**
+ * Validate + normalize a structured instruction sheet from a request body.
+ * Total by design: unknown enums fall back to the defaults (never a 422) so a
+ * forward-compatible client can add fields without breaking older servers;
+ * only a wildly malformed payload (non-object) is rejected.
+ */
+export function validateInstructions(body: unknown): InstructionsResult {
+  if (body === null || typeof body !== 'object' || Array.isArray(body)) {
+    return { ok: false, message: 'Instructions must be an object.' };
+  }
+  const raw = body as Record<string, unknown>;
+  const warnings = Array.isArray(raw.warnings)
+    ? raw.warnings
+        .map((w) => text(w, 160))
+        .filter((w) => w.length > 0)
+        .slice(0, MAX_INSTRUCTION_WARNINGS)
+    : [];
+  const route = text(raw.route, 20);
+  const foodRelation = text(raw.foodRelation, 20);
+  const maxDaily = raw.maxDailyDoses;
+  return {
+    ok: true,
+    value: {
+      doseForm: text(raw.doseForm, 60),
+      route: MEDICINE_ROUTES.includes(route as MedicineRoute)
+        ? (route as MedicineRoute)
+        : 'oral',
+      foodRelation: FOOD_RELATIONS.includes(foodRelation as FoodRelation)
+        ? (foodRelation as FoodRelation)
+        : 'any',
+      maxDailyDoses:
+        typeof maxDaily === 'number' && Number.isFinite(maxDaily) && maxDaily > 0
+          ? Math.min(24, Math.round(maxDaily))
+          : null,
+      warnings,
+      sideEffects: text(raw.sideEffects),
+      storage: text(raw.storage),
+      specialInstructions: text(raw.specialInstructions),
+    },
+  };
+}
+
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 /** Local yyyy-mm-dd key for a timestamp. */

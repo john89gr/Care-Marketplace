@@ -9,6 +9,26 @@ import {
   hasExportConsent,
   setExportConsent,
 } from './export.types';
+import type { FhirBundleInput } from '../../shared/fhir/bundle';
+
+/** FHIR bundle filename convention: `health-fhir-<yyyy-mm-dd>.json`. */
+function fhirFilename(generatedAtMs: number): string {
+  const date = new Date(generatedAtMs).toISOString().slice(0, 10);
+  return `health-fhir-${date}.json`;
+}
+
+/** Trigger a browser download of pretty-printed JSON (FHIR export). */
+function triggerJsonDownload(bundle: unknown, filename: string): void {
+  const blob = new Blob([JSON.stringify(bundle, null, 2)], { type: 'application/fhir+json' });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = filename;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 5000);
+}
 
 /**
  * Health-summary export service (FEATURE_PLAN.md §10 subtask 5):
@@ -83,6 +103,50 @@ export class HealthSummaryExportService {
       return Promise.resolve(false);
     }
     return this.exportNow(this.lastInput);
+  }
+
+  /**
+   * FHIR R4 bundle export (§11/§21 subtask 14): maps the same store snapshot
+   * (incl. the medical-history register) into one validated `collection`
+   * Bundle and downloads it as JSON. Consent-gated and audit-logged exactly
+   * like the PDF export; the mapper library is a lazy chunk (subtask 4).
+   */
+  async exportFhir(input: FhirBundleInput): Promise<boolean> {
+    if (!hasExportConsent()) {
+      this._error.set('Please confirm the export consent before generating the FHIR bundle.');
+      return false;
+    }
+    this._loading.set(true);
+    this._error.set('');
+    try {
+      const { buildFhirBundle } = await import('../../shared/fhir/bundle');
+      const nowMs = input.nowMs ?? Date.now();
+      const { bundle, validation } = buildFhirBundle({ ...input, nowMs });
+      if (!validation.valid) {
+        this._error.set(`FHIR bundle failed validation: ${validation.errors[0] ?? 'unknown'}`);
+        this._loading.set(false);
+        return false;
+      }
+      const filename = fhirFilename(nowMs);
+      triggerJsonDownload(bundle, filename);
+      this._lastFilename.set(filename);
+      this._lastExportAtMs.set(nowMs);
+      // Consent + audit hook (subtask 11): every export is logged; `export.fhir`
+      // maps to the data_export consent purpose (consent.store.ts).
+      this.audit.log(
+        'fhir.export',
+        'fhir-bundle',
+        filename,
+        { resources: bundle.entry?.length ?? 0, valid: true },
+        input.profile?.userId ?? 'me'
+      );
+      this._loading.set(false);
+      return true;
+    } catch {
+      this._loading.set(false);
+      this._error.set('Could not generate the FHIR bundle. Please try again.');
+      return false;
+    }
   }
 
   /**

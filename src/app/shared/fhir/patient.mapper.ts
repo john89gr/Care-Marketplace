@@ -14,12 +14,14 @@
  * in `patient.mapper` specs.
  */
 import type { UserProfile } from '../../features/profiles/profile.store';
+import type { MedicalContact } from '../../features/health-record/contacts.models';
 import type {
   Patient,
   HumanName,
   ContactPoint,
   Identifier,
   AdministrativeGender,
+  PatientContact,
 } from './fhir.types';
 
 /** Well-known DNS namespace UUID (RFC 4122 §4.2.2) — a stable, public seed. */
@@ -201,6 +203,28 @@ function instantISO(ms: number): string {
   return new Date(ms).toISOString();
 }
 
+/**
+ * Map emergency/ICE contacts → `Patient.contact[]` (contact phone manager).
+ * Archived rows are excluded; name, relationship and phone are carried over,
+ * nothing else.
+ */
+export function buildPatientContacts(
+  contacts: readonly MedicalContact[] | undefined
+): PatientContact[] | undefined {
+  const emergency = (contacts ?? []).filter((c) => !c.archived && c.kind === 'emergency');
+  if (emergency.length === 0) {
+    return undefined;
+  }
+  return emergency.map((contact) => ({
+    name: splitName(contact.name),
+    relationship: contact.relationship
+      ? [{ text: contact.relationship }]
+      : undefined,
+    telecom: buildTelecom(contact.phone),
+    address: contact.address ? { text: contact.address } : undefined,
+  }));
+}
+
 /** Split a display name into { family, given, text }; Greek names: "FirstName FamilyName". */
 function splitName(displayName: string): HumanName {
   const trimmed = (displayName ?? '').trim();
@@ -235,8 +259,14 @@ function buildIdentifier(id: string): Identifier[] | undefined {
  *
  * @param profile  UserProfile (may be null/empty when the profile hasn't loaded yet).
  * @param nowMs    Fixed timestamp for deterministic `meta.lastUpdated` (subtask 12).
+ * @param contacts Optional emergency/ICE contacts → `Patient.contact[]`
+ *                 (contact phone manager; archived rows excluded).
  */
-export function toPatient(profile: UserProfile | null | undefined, nowMs: number = Date.now()): Patient {
+export function toPatient(
+  profile: UserProfile | null | undefined,
+  nowMs: number = Date.now(),
+  contacts?: readonly MedicalContact[]
+): Patient {
   const p = profile ?? EMPTY_PROFILE;
   const id = patientId(p.amka, p.userId);
 
@@ -249,6 +279,7 @@ export function toPatient(profile: UserProfile | null | undefined, nowMs: number
     telecom: buildTelecom(p.phone),
     gender: sexToGender(p.sex),
     birthDate: p.dateOfBirth || undefined,
+    contact: buildPatientContacts(contacts),
     active: true,
   };
 }

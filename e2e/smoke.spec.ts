@@ -16,11 +16,11 @@ const SESSIONS = {
 const ROUTES: Record<string, string[]> = {
   client: [
     '/marketplace', '/bookings', '/live-visit', '/vitals', '/health-record',
-    '/screenings', '/medications', '/reminders', '/health-summary',
+    '/history', '/screenings', '/medications', '/reminders', '/health-summary',
     '/prescriptions', '/pharmacy-orders', '/consents', '/wallet', '/payments',
     '/disputes', '/chat', '/profile',
   ],
-  nurse: ['/onboarding', '/shifts', '/visits', '/clinical-log', '/care-plan', '/vitals', '/chat', '/profile'],
+  nurse: ['/onboarding', '/shifts', '/visits', '/clinical-log', '/care-plan', '/vitals', '/history', '/chat', '/profile'],
   admin: ['/admin', '/admin/audit', '/admin/consents', '/disputes'],
   pharmacy: ['/pharmacy', '/pharmacy-orders'],
 };

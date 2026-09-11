@@ -3,6 +3,7 @@
  * 8, 10, 14). Pure functions only: schedule expansion, missed-dose detection
  * with a grace window, adherence over sliding windows, and refill tracking.
  */
+import type { MedicineInstructions } from './medicine.info';
 
 /** Daily fixed times (minutes from midnight)… */
 export type MedicationSchedule =
@@ -20,6 +21,14 @@ export interface Medication {
   /** Critical meds alert the family when a dose is missed (subtask 9). */
   critical: boolean;
   prescriber?: string;
+  /**
+   * Structured "how to take it" sheet — medicine instructions manager
+   * (see medicine.info.ts). Optional: older rows and the §21 bridge may omit
+   * it, in which case the curated catalog is the fallback suggestion.
+   */
+  instructions?: MedicineInstructions;
+  /** §21 prescription that created this medication, when bridged. */
+  prescriptionId?: string | null;
   /** ISO date the supply runs out; enables refill tracking (subtask 14). */
   refillDueDate?: string | null;
   /** Days of supply per fill, for the days-remaining estimate. */

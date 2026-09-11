@@ -6,6 +6,8 @@ import { ScreeningStore } from './screening.store';
 import { CarePlanStore } from '../home-health/care-plan.store';
 import { ProfileStore } from '../profiles/profile.store';
 import { HealthSummaryExportService } from './export.service';
+import { HistoryStore } from './history.store';
+import { ContactsStore } from './contacts.store';
 import { drawSparkline } from './export.sparkline';
 import {
   EXPORT_LOCALES,
@@ -100,6 +102,13 @@ import {
         >
           {{ exporting.loading() ? (locale() === 'el' ? 'Δημιουργία…' : 'Generating…') : (locale() === 'el' ? 'Εξαγωγή PDF' : 'Export PDF') }}
         </button>
+        <button
+          type="button"
+          [disabled]="exporting.loading()"
+          (click)="runFhirExport()"
+        >
+          {{ locale() === 'el' ? 'Λήψη FHIR R4 (JSON)' : 'Download FHIR R4 (JSON)' }}
+        </button>
         <button type="button" (click)="printFallback()">
           {{ locale() === 'el' ? 'Εκτύπωση' : 'Print' }}
         </button>
@@ -177,6 +186,8 @@ export class HealthSummaryExportPage {
   readonly screening = inject(ScreeningStore);
   readonly carePlan = inject(CarePlanStore);
   readonly profile = inject(ProfileStore);
+  readonly history = inject(HistoryStore);
+  readonly contacts = inject(ContactsStore);
   readonly exporting = inject(HealthSummaryExportService);
 
   readonly ranges = EXPORT_RANGES;
@@ -215,15 +226,37 @@ export class HealthSummaryExportPage {
     () =>
       `Includes ${this.vitals.readings().length} vitals readings, ` +
       `${this.meds.meds().filter((m) => !m.archived).length} medications, ` +
-      `${this.screening.statuses().length} screenings over ${rangeLabel(this.range(), 'en').toLowerCase()}.`
+      `${this.screening.statuses().length} screenings, ` +
+      `${this.historyCounts()} medical-history entries, ` +
+      `${this.contacts.list('emergency').length} emergency contacts ` +
+      `over ${rangeLabel(this.range(), 'en').toLowerCase()}.`
   );
 
   readonly previewTextEl = computed(
     () =>
       `Περιλαμβάνει ${this.vitals.readings().length} μετρήσεις, ` +
       `${this.meds.meds().filter((m) => !m.archived).length} φάρμακα, ` +
-      `${this.screening.statuses().length} ελέγχους — ${rangeLabel(this.range(), 'el')}.`
+      `${this.screening.statuses().length} ελέγχους, ` +
+      `${this.historyCounts()} εγγραφές ιατρικού ιστορικού, ` +
+      `${this.contacts.list('emergency').length} επαφές έκτακτης ανάγκης — ` +
+      `${rangeLabel(this.range(), 'el')}.`
   );
+
+  /** Non-archived history entries across all six register categories. */
+  private historyCounts(): number {
+    let total = 0;
+    for (const kind of [
+      'conditions',
+      'allergies',
+      'immunizations',
+      'events',
+      'symptoms',
+      'prescriptions',
+    ] as const) {
+      total += this.history.records(kind).length;
+    }
+    return total;
+  }
 
   constructor() {
     this.vitals.load();
@@ -231,6 +264,10 @@ export class HealthSummaryExportPage {
     this.screening.load().subscribe();
     this.profile.load().subscribe();
     this.carePlan.load();
+    for (const kind of ['conditions', 'allergies', 'immunizations', 'events', 'symptoms', 'prescriptions'] as const) {
+      this.history.load(kind).subscribe();
+    }
+    this.contacts.load().subscribe();
     effect(() => {
       const canvas = this.chartCanvas()?.nativeElement;
       if (canvas && this.showPreview()) {
@@ -269,8 +306,41 @@ export class HealthSummaryExportPage {
       adherenceLogs: this.meds.logs(),
       screeningStatuses: this.screening.statuses(),
       carePlan: this.carePlan.plan(),
+      conditions: this.history.records('conditions'),
+      allergies: this.history.records('allergies'),
+      immunizations: this.history.records('immunizations'),
+      events: this.history.records('events'),
+      symptoms: this.history.records('symptoms'),
+      prescriptions: this.history.records('prescriptions'),
+      emergencyContacts: this.contacts.list('emergency'),
       range: this.range(),
       locale: this.locale(),
+    });
+  }
+
+  /** FHIR R4 bundle export (§11/§21): same consent gate as the PDF export. */
+  async runFhirExport(): Promise<void> {
+    if (!this.consent()) {
+      this.consentError.set(
+        this.locale() === 'el'
+          ? 'Πρέπει να συναινέσετε στην εξαγωγή για να δημιουργηθεί το αρχείο.'
+          : 'Consent is required before you can export the FHIR bundle.'
+      );
+      return;
+    }
+    this.consentError.set('');
+    const profile = this.profile.profile();
+    await this.exporting.exportFhir({
+      profile,
+      readings: this.vitals.readings(),
+      medications: this.meds.meds(),
+      carePlan: this.carePlan.plan(),
+      conditions: this.history.records('conditions'),
+      allergies: this.history.records('allergies'),
+      immunizations: this.history.records('immunizations'),
+      symptoms: this.history.records('symptoms'),
+      prescriptions: this.history.records('prescriptions'),
+      emergencyContacts: this.contacts.list('emergency'),
     });
   }
 

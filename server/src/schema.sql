@@ -231,6 +231,130 @@ CREATE TABLE IF NOT EXISTS screening_notices (
 ALTER TABLE profiles ADD COLUMN IF NOT EXISTS date_of_birth TEXT NOT NULL DEFAULT '';
 ALTER TABLE profiles ADD COLUMN IF NOT EXISTS sex TEXT NOT NULL DEFAULT '';
 
+-- Medical history register (FEATURE_PLAN.md §21 + extension): conditions
+-- (ICD-11 coded), allergies, immunizations, medical events, symptoms and a
+-- prescriptions register. All rows are soft-archived (`archived`) so history
+-- is never hard-deleted (audit-friendly, mirrors the §7 medication archive).
+CREATE TABLE IF NOT EXISTS medical_conditions (
+  id              TEXT PRIMARY KEY,
+  user_id         TEXT NOT NULL REFERENCES user_accounts(id) ON DELETE CASCADE,
+  name            TEXT NOT NULL,
+  icd11_code      TEXT NOT NULL DEFAULT '',
+  status          TEXT NOT NULL DEFAULT 'active', -- active | chronic | resolved
+  diagnosed_at_ms BIGINT NOT NULL,
+  resolved_at_ms  BIGINT,
+  notes           TEXT NOT NULL DEFAULT '',
+  archived        BOOLEAN NOT NULL DEFAULT FALSE,
+  created_at_ms   BIGINT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_conditions_user ON medical_conditions(user_id);
+
+CREATE TABLE IF NOT EXISTS allergies (
+  id              TEXT PRIMARY KEY,
+  user_id         TEXT NOT NULL REFERENCES user_accounts(id) ON DELETE CASCADE,
+  substance       TEXT NOT NULL,
+  kind            TEXT NOT NULL DEFAULT 'drug', -- drug | food | environmental
+  reaction        TEXT NOT NULL DEFAULT '',
+  severity        TEXT NOT NULL DEFAULT 'moderate', -- mild | moderate | severe
+  confirmed_at_ms BIGINT NOT NULL,
+  notes           TEXT NOT NULL DEFAULT '',
+  archived        BOOLEAN NOT NULL DEFAULT FALSE,
+  created_at_ms   BIGINT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_allergies_user ON allergies(user_id);
+
+CREATE TABLE IF NOT EXISTS immunizations (
+  id               TEXT PRIMARY KEY,
+  user_id          TEXT NOT NULL REFERENCES user_accounts(id) ON DELETE CASCADE,
+  vaccine          TEXT NOT NULL,
+  dose_number      INTEGER,
+  administered_at_ms BIGINT NOT NULL,
+  source           TEXT NOT NULL DEFAULT 'manual', -- manual | wallet
+  notes            TEXT NOT NULL DEFAULT '',
+  archived         BOOLEAN NOT NULL DEFAULT FALSE,
+  created_at_ms    BIGINT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_immunizations_user ON immunizations(user_id);
+
+CREATE TABLE IF NOT EXISTS medical_events (
+  id             TEXT PRIMARY KEY,
+  user_id        TEXT NOT NULL REFERENCES user_accounts(id) ON DELETE CASCADE,
+  kind           TEXT NOT NULL DEFAULT 'other', -- procedure | hospitalization | surgery | other
+  name           TEXT NOT NULL,
+  facility       TEXT NOT NULL DEFAULT '',
+  occurred_at_ms BIGINT NOT NULL,
+  notes          TEXT NOT NULL DEFAULT '',
+  archived       BOOLEAN NOT NULL DEFAULT FALSE,
+  created_at_ms  BIGINT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_medical_events_user ON medical_events(user_id);
+
+CREATE TABLE IF NOT EXISTS symptoms (
+  id            TEXT PRIMARY KEY,
+  user_id       TEXT NOT NULL REFERENCES user_accounts(id) ON DELETE CASCADE,
+  name          TEXT NOT NULL,
+  severity      TEXT NOT NULL DEFAULT 'moderate', -- mild | moderate | severe
+  onset_at_ms   BIGINT NOT NULL,
+  status        TEXT NOT NULL DEFAULT 'ongoing', -- ongoing | resolved
+  notes         TEXT NOT NULL DEFAULT '',
+  archived      BOOLEAN NOT NULL DEFAULT FALSE,
+  created_at_ms BIGINT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_symptoms_user ON symptoms(user_id);
+
+-- Prescriptions register: the lasting record behind a scanned e-prescription
+-- (§9) or a manually entered one; `medication_id` links to the §7 medication
+-- created by the register (POST /me/prescriptions/:id/to-medication).
+CREATE TABLE IF NOT EXISTS prescription_records (
+  id                       TEXT PRIMARY KEY,
+  user_id                  TEXT NOT NULL REFERENCES user_accounts(id) ON DELETE CASCADE,
+  drug                     TEXT NOT NULL,
+  dose                     TEXT NOT NULL DEFAULT '',
+  instructions             TEXT NOT NULL DEFAULT '',
+  prescriber               TEXT NOT NULL DEFAULT '',
+  issued_at_ms             BIGINT NOT NULL,
+  duration_days            INTEGER,
+  status                   TEXT NOT NULL DEFAULT 'active', -- active | completed | cancelled
+  pharmacy_prescription_id TEXT,
+  medication_id            TEXT,
+  archived                 BOOLEAN NOT NULL DEFAULT FALSE,
+  created_at_ms            BIGINT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_prescription_records_user ON prescription_records(user_id);
+
+-- Contact phone manager: ICE (emergency) + care-team contacts per user.
+-- At most one `is_primary` per (user_id, kind) is enforced on write in
+-- server/src/contacts.ts; rows are soft-archived, never hard-deleted.
+CREATE TABLE IF NOT EXISTS medical_contacts (
+  id            TEXT PRIMARY KEY,
+  user_id       TEXT NOT NULL REFERENCES user_accounts(id) ON DELETE CASCADE,
+  kind          TEXT NOT NULL DEFAULT 'emergency', -- emergency | care
+  name          TEXT NOT NULL,
+  relationship  TEXT NOT NULL DEFAULT '',
+  phone         TEXT NOT NULL,
+  alt_phone     TEXT NOT NULL DEFAULT '',
+  email         TEXT NOT NULL DEFAULT '',
+  address       TEXT NOT NULL DEFAULT '',
+  notes         TEXT NOT NULL DEFAULT '',
+  is_primary    BOOLEAN NOT NULL DEFAULT FALSE,
+  priority      INTEGER NOT NULL DEFAULT 0,
+  archived      BOOLEAN NOT NULL DEFAULT FALSE,
+  created_at_ms BIGINT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_medical_contacts_user ON medical_contacts(user_id);
+
+-- Versioned consent ledger (FEATURE_PLAN.md §16 subtask 6). One JSONB
+-- document per user holding per-purpose ConsentRecord[] ({purpose, granted,
+-- documentVersion, updatedAtMs, updatedBy}) matching the frontend contract.
+-- `family_sharing` gates caregiver/nurse reads of another user's health data
+-- (enforced server-side in history.ts, §21 subtask 16).
+CREATE TABLE IF NOT EXISTS user_consents (
+  user_id                  TEXT PRIMARY KEY REFERENCES user_accounts(id) ON DELETE CASCADE,
+  consents                 JSONB NOT NULL DEFAULT '[]',
+  current_document_version TEXT NOT NULL DEFAULT 'v1.0',
+  updated_at_ms            BIGINT NOT NULL
+);
+
 -- Medication calendar + adherence (FEATURE_PLAN.md §7). Schedule is the
 -- frontend MedicationSchedule JSON ({kind, timesMinutes|everyDays|weekdays}).
 CREATE TABLE IF NOT EXISTS medications (
@@ -241,9 +365,17 @@ CREATE TABLE IF NOT EXISTS medications (
   schedule      JSONB NOT NULL,
   critical      BOOLEAN NOT NULL DEFAULT FALSE,
   prescriber    TEXT NOT NULL DEFAULT '',
+  -- Medicine instructions manager: structured "how to take it" sheet.
+  instructions  JSONB,
+  -- §21 prescription that created this medication, when bridged.
+  prescription_id TEXT,
   archived      BOOLEAN NOT NULL DEFAULT FALSE,
   created_at_ms BIGINT NOT NULL
 );
+
+-- Existing databases (idempotent migrations for the instruction columns).
+ALTER TABLE medications ADD COLUMN IF NOT EXISTS instructions JSONB;
+ALTER TABLE medications ADD COLUMN IF NOT EXISTS prescription_id TEXT;
 
 -- One log per dose slot (taken by the user, or auto-inserted missed by the
 -- server's missed-dose detection). Unique per (medication, slot) so a dose is

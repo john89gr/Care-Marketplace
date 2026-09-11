@@ -111,6 +111,16 @@ export const routes: Routes = [
     loadComponent: () => import('./features/health-record/medications.page').then((m) => m.MedicationsPage),
   },
   {
+    path: 'history',
+    canActivate: [roleGuard([ROLES.CLIENT, ROLES.CAREGIVER, ROLES.NURSE])],
+    loadComponent: () => import('./features/health-record/history.page').then((m) => m.HistoryPage),
+  },
+  {
+    path: 'contacts',
+    canActivate: [roleGuard([ROLES.CLIENT, ROLES.CAREGIVER, ROLES.NURSE])],
+    loadComponent: () => import('./features/health-record/contacts.page').then((m) => m.ContactsPage),
+  },
+  {
     path: 'reminders',
     canActivate: [roleGuard([ROLES.CLIENT, ROLES.CAREGIVER, ROLES.NURSE])],
     loadComponent: () =>

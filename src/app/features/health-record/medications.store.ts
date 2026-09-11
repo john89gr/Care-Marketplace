@@ -16,6 +16,7 @@ import {
   AdherenceStats,
   ESCALATION_AFTER_MISSES,
 } from './medications.logic';
+import { MedicineInstructions, normalizeInstructions } from './medicine.info';
 
 /**
  * Medications store (FEATURE_PLAN.md §7 subtasks 2–3, 6–11, 13–14): loads the
@@ -29,6 +30,10 @@ export interface NewMedication {
   schedule: Medication['schedule'];
   critical: boolean;
   prescriber?: string;
+  /** Optional structured sheet (medicine instructions manager). */
+  instructions?: MedicineInstructions;
+  /** Set by the §21 prescription bridge when this med came from the register. */
+  prescriptionId?: string | null;
 }
 
 /** Interaction-check placeholder contract (subtask 12; server-side later). */
@@ -246,6 +251,41 @@ export class MedicationsStore {
           return of(false);
         })
       );
+  }
+
+  /**
+   * Persist a pill's structured instruction sheet (medicine instructions
+   * manager). Optimistic: the sheet renders immediately and is rolled back on
+   * failure. `null` clears the sheet (the catalog remains the fallback).
+   */
+  saveInstructions(id: string, instructions: MedicineInstructions | null): Observable<boolean> {
+    const before = this._meds();
+    const next = instructions ? normalizeInstructions(instructions) : undefined;
+    this._actingId.set(id);
+    this._error.set('');
+    this._meds.update((meds) => meds.map((m) => (m.id === id ? { ...m, instructions: next } : m)));
+    return this.api.patch<Medication>(`/me/medications/${encodeURIComponent(id)}`, {
+      instructions: next ?? null,
+    }).pipe(
+      map((updated) => {
+        this._meds.update((meds) => meds.map((m) => (m.id === id ? updated : m)));
+        this._actingId.set(null);
+        this.audit?.log('medication.instructions', 'medication', id, {
+          warnings: next?.warnings.length ?? 0,
+          correlationId: `meds-instructions-${Date.now().toString(36)}`,
+        });
+        return true;
+      }),
+      catchError((error) => {
+        this._meds.set(before);
+        this._actingId.set(null);
+        this._error.set(
+          (error as { error?: { message?: string } })?.error?.message ??
+            'Could not save the instructions. Please try again.'
+        );
+        return of(false);
+      })
+    );
   }
 
   /** Interaction-check placeholder call (subtask 12). */

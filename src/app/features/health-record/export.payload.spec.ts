@@ -140,7 +140,19 @@ describe('composeHealthSummary', () => {
       NOW
     );
     expect(payload.emptySections.sort()).toEqual(
-      ['carePlan', 'medications', 'screenings', 'vitals'].sort()
+      [
+        'carePlan',
+        'medications',
+        'screenings',
+        'vitals',
+        'conditions',
+        'allergies',
+        'immunizations',
+        'events',
+        'symptoms',
+        'prescriptions',
+        'emergencyContacts',
+      ].sort()
     );
     expect(payload.counts).toEqual({
       vitals: 0,
@@ -148,6 +160,13 @@ describe('composeHealthSummary', () => {
       screeningsDue: 0,
       carePlanGoals: 0,
       carePlanNotes: 0,
+      conditions: 0,
+      allergies: 0,
+      immunizations: 0,
+      events: 0,
+      symptoms: 0,
+      prescriptions: 0,
+      emergencyContacts: 0,
     });
   });
 
@@ -157,6 +176,83 @@ describe('composeHealthSummary', () => {
       NOW
     );
     expect(payload.counts.screeningsDue).toBe(1);
+  });
+
+  it('carries the medical-history register into the payload (snapshot, not range-filtered)', () => {
+    const payload = composeHealthSummary(
+      baseInput({
+        range: 30, // history must NOT be trimmed to 30 days
+        conditions: [
+          { id: 'c-1', name: 'Υπέρταση', icd11Code: 'BA00', status: 'chronic', diagnosedAtMs: NOW - 3000 * DAY, createdAtMs: NOW - 3000 * DAY },
+        ],
+        allergies: [
+          { id: 'a-1', substance: 'Πενικιλίνη', kind: 'drug', severity: 'severe', confirmedAtMs: NOW - 100 * DAY, createdAtMs: NOW - 100 * DAY },
+        ],
+        immunizations: [
+          { id: 'i-1', vaccine: 'Γρίπη', doseNumber: 1, administeredAtMs: NOW - 200 * DAY, source: 'manual', createdAtMs: NOW - 200 * DAY },
+        ],
+        events: [
+          { id: 'e-1', kind: 'surgery', name: 'Σκωληκοειδεκτομή', occurredAtMs: NOW - 400 * DAY, createdAtMs: NOW - 400 * DAY },
+        ],
+        symptoms: [
+          { id: 's-1', name: 'Πονοκέφαλος', severity: 'moderate', onsetAtMs: NOW - 10 * DAY, status: 'ongoing', createdAtMs: NOW - 10 * DAY },
+        ],
+        prescriptions: [
+          { id: 'rx-1', drug: 'Ατορβαστατίνη', dose: '20mg', status: 'active', issuedAtMs: NOW - 30 * DAY, createdAtMs: NOW - 30 * DAY },
+        ],
+      }),
+      NOW
+    );
+    expect(payload.conditions).toHaveLength(1);
+    expect(payload.conditions[0].icd11Code).toBe('BA00');
+    expect(payload.allergies).toHaveLength(1);
+    expect(payload.immunizations).toHaveLength(1);
+    expect(payload.events).toHaveLength(1);
+    expect(payload.symptoms).toHaveLength(1);
+    expect(payload.prescriptions).toHaveLength(1);
+    expect(payload.counts.conditions).toBe(1);
+    expect(payload.counts.prescriptions).toBe(1);
+    expect(payload.emptySections).not.toContain('conditions');
+    expect(payload.emptySections).not.toContain('allergies');
+  });
+
+  it('carries emergency / ICE contacts and drops archived rows', () => {
+    const payload = composeHealthSummary(
+      baseInput({
+        emergencyContacts: [
+          { id: 'ice-1', kind: 'emergency', name: 'Γιώργος', relationship: 'Σύζυγος', phone: '6970000001', isPrimary: true, priority: 0, createdAtMs: NOW },
+          { id: 'ice-old', kind: 'emergency', name: 'Παλιά', relationship: '', phone: '6970000002', isPrimary: false, priority: 0, archived: true, createdAtMs: NOW },
+        ],
+      }),
+      NOW
+    );
+    expect(payload.emergencyContacts.map((c) => c.id)).toEqual(['ice-1']);
+    expect(payload.counts.emergencyContacts).toBe(1);
+    expect(payload.emptySections).not.toContain('emergencyContacts');
+  });
+
+  it('flags drug/severe allergies for the safety warning and hides archived history', () => {
+    const payload = composeHealthSummary(
+      baseInput({
+        allergies: [
+          { id: 'a-1', substance: 'Πενικιλίνη', kind: 'drug', severity: 'severe', confirmedAtMs: 1, createdAtMs: 1 },
+          { id: 'a-2', substance: 'Γύρη', kind: 'environmental', severity: 'mild', confirmedAtMs: 1, createdAtMs: 1 },
+          { id: 'a-3', substance: 'Παλιά', kind: 'drug', severity: 'severe', confirmedAtMs: 1, createdAtMs: 1, archived: true },
+        ],
+        conditions: [
+          { id: 'c-1', name: 'Παλιά πάθηση', status: 'resolved', diagnosedAtMs: 1, createdAtMs: 1, archived: true },
+        ],
+      }),
+      NOW
+    );
+    expect(payload.safetyAllergies.map((a) => a.id)).toEqual(['a-1']);
+    expect(payload.allergies.map((a) => a.id)).toEqual(['a-1', 'a-2']);
+    expect(payload.conditions).toHaveLength(0);
+    expect(payload.emptySections).toContain('conditions');
+    expect(payload.emptySections).toContain('immunizations');
+    expect(payload.emptySections).toContain('events');
+    expect(payload.emptySections).toContain('symptoms');
+    expect(payload.emptySections).toContain('prescriptions');
   });
 });
 

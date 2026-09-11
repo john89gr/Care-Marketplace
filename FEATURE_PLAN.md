@@ -1,9 +1,10 @@
 # Care-Marketplace — Feature Plan (20 features)
 
 > Companion to [`PLAN.md`](./PLAN.md). PLAN.md defines the phase roadmap;
-> this document breaks the **next 20 most valuable features** into 20
-> executable subtasks each. Subtasks reference real files/modules in this
-> repo. Check subtasks off as they land.
+> this document breaks the most valuable features into 20
+> executable subtasks each (§1–§20 at planning time; §21 added later).
+> Subtasks reference real files/modules in this repo. Check subtasks off as
+> they land.
 
 **Status snapshot (Sept 2026):**
 - ✅ Phase 1 (marketplace loop) — complete
@@ -12,6 +13,12 @@
 - ✅ Phase 4 — all features merged: gov.gr OIDC/wallet, FHIR R4 export, audit trail + consent, dispute resolution, payment methods + payout, certification expiry, chat v2, PWA/offline/push, bluetooth pairing, web Bluetooth
 - ✅ §20 (PWA/offline) shipped end-to-end: manifest + icon set (installable), IndexedDB outbox with replay + server-ts conflict policy, offline banner + retry, VAPID push opt-in (post-first-booking) + SW click-routing, new-version reload prompt, ngsw dataGroups (catalog cache-first, user data network-first, health data excluded), server-side push sender (subscription CRUD + /me/push/test) wired to real events (booking accepted/completed, out-of-range vitals, missed critical medication, screening due, certification expiring/expired, dispute opened/resolved/rejected), fullstack E2E (npm run e2e:fullstack) proving a real Web Push is delivered against the Postgres-backed server, E2E covering offline reload → sync, manifest validity and the one-time push prompt
 - ✅ Phase 4 test suite: 516+ unit tests passing across 39+ files (+ push service unit tests) + 90 server tests + fullstack push-delivery E2E
+- ✅ §21 (medical history + prescriptions register) core: conditions coded with a curated **ICD-11 catalog (Greek labels)**, allergies, immunizations, medical events, **symptoms**, prescriptions register with a → medications bridge, all with server CRUD (soft-archive), demo seed, dashboard allergy safety banner, history timeline, 588 frontend + 108 server unit tests passing
+
+- ✅ Health-records increment (see [`HEALTH_RECORDS_PLAN.md`](./HEALTH_RECORDS_PLAN.md)), split across 3 parallel subagent tracks:
+  - **Track 1 — contact phone manager** shipped: `/contacts` (ICE + care team, tap-to-call, single primary), `server/src/contacts.ts` + `medical_contacts`, health-summary PDF ICE block, FHIR `Patient.contact`.
+  - **Track 2 — medicine instructions manager** shipped: structured per-pill sheet (`medicine.info.ts`), curated Greek-first 12-drug catalog (`medicine.catalog.ts`) with diacritic-insensitive lookup + auto-fill editor (confirmation required before it replaces a sheet), server `validateInstructions` + `PATCH /api/me/medications/:id`, demo/Postgres seeds, health-summary PDF medication rows, and FHIR `MedicationRequest` dosage (`route`/`additionalInstruction`) + note fields.
+  - **Track 3 — pill reminders from prescriptions** shipped: Greek + English frequency parser (`prescription.schedule.ts`), parse → medication → reminder bridge (`HistoryStore.setPillReminder`), confirm/adjust wizard (daily / every-N-days / weekly + channel gating), server `validateSchedule` + extended `POST /me/prescriptions/:id/to-medication`.
 
 Priority legend: 🔴 P0 = blocks core trust/loop · 🟡 P1 = completes planned phases · 🟢 P2 = growth & polish
 
@@ -548,6 +555,136 @@ Elderly users on flaky home connections; PLAN.md mentions WebSockets but no offl
 | 3 (records out) | 10, 11, 12 | Exports + devices; independent, can parallelize |
 | 4 (money & compliance) | 13, 14, 15, 16, 17 | PSP decision (open question #2) gates 13 |
 | 5 (platform) | 4, 18, 19, 20 | Notifications benefit from landing before reminders/disputes use them |
+| 6 (history) | 21 | Fills the last PHR gap (§3.C extension); independent of waves 4–5, needs audit/export hooks that already landed |
+
+> Cross-cutting: features 4 (notifications), 16 (audit), 17 (consents) are
+> dependencies for several later features — land them early in their wave.
+
+---
+
+## 21. Medical History, Health History & Prescriptions Register 🟡 (Phase 3 extension)
+The PHR captures point-in-time data (vitals, meds, screenings) but has no
+structured record of **conditions/diagnoses, allergies, immunizations,
+procedures/hospitalizations** or a **prescriptions register** — the first
+thing any physician asks for, the missing safety input (allergies) to the
+health-summary export, and the only way a scanned e-prescription becomes a
+lasting medical record.
+
+**Area:** new `src/app/features/health-record/history.*` +
+`server/src/history.ts`, `server/src/prescriptions.ts` + `server/src/schema.sql`
+extensions. Reuses existing audit (`core/services/audit/`), FHIR
+(`shared/fhir/`), export (`health-record/export.*`) and medications (§7)
+surfaces.
+
+**Status (Sept 2026):** core shipped — §21 subtasks 1–8, 10 (timeline), 15
+(no SW caching of the new endpoints), 17 (store/timeline/ICD-11 tests),
+18 (server validation tests) and the a11y/i18n baseline of 20. The catalog
+uses **ICD-11 codes with Greek labels** (`icd11.ts`, curated + free-text
+fallback) and adds a **Symptoms** category to the §21 contract. Follow-ups
+12–14 landed: a delivered pharmacy order can pre-fill register entries (each
+linked to the scanned prescription via `pharmacyPrescriptionId`) and the
+history page can attach scanned prescriptions to register entries; the
+health-summary PDF prints the full register with an allergy warning block;
+FHIR mappers (Condition / AllergyIntolerance / Immunization / symptom
+Observation / register MedicationRequest) feed `buildFhirBundle` plus a
+“Download FHIR R4 (JSON)” action on the export page. Subtask 16 (consent
+enforcement) also landed: a Postgres `user_consents` ledger +
+`server/src/consents.ts` back `GET/PUT /api/me/consents`, and the history
+reads expose a consent-gated, read-only family path
+(`GET /api/history/:userId/:kind` and `/prescriptions`) — non-owners get a
+403 unless the target user granted `family_sharing`, enforced server-side
+rather than only in the UI. The history page is wired to it: family roles
+resolve their care recipient from their visits (`history.recipient.ts`) and
+load every kind through the family path read-only, naming whose record is
+open. Remaining: wallet-import bridge (11) and E2E (19).
+
+1. Define data contracts in `history.models.ts` (pure types, camelCase like
+   the demo/server row mappers): `MedicalCondition` (name, icd10Code?, status
+   `active | chronic | resolved`, diagnosedAtMs, resolvedAtMs?, notes),
+   `Allergy` (substance, kind `drug | food | environmental`, reaction,
+   severity `mild | moderate | severe`, confirmedAtMs, notes),
+   `Immunization` (vaccine, doseNumber, administeredAtMs, source
+   `manual | wallet`), `MedicalEvent` (kind `procedure | hospitalization |
+   surgery | other`, name, facility?, occurredAtMs, notes),
+   `PrescriptionRecord` (drug, dose, instructions, prescriber, issuedAtMs,
+   durationDays?, status `active | completed | cancelled`, pharmacyPrescriptionId?, medicationId?).
+2. API contract: `GET/POST/PATCH /api/me/history/:kind` (kind = `conditions |
+   allergies | immunizations | events`) and `GET/POST/PATCH
+   /api/me/prescriptions`; soft-archive via PATCH (`archived: true`) so
+   history is never hard-deleted (audit-friendly, mirrors §7 medication
+   archive).
+3. Server modules `server/src/history.ts` + `server/src/prescriptions.ts`
+   following the `screenings.ts`/`medications.ts` route pattern (strict
+   `requireAuth`, per-user scoping, `next(error)`); mount in
+   `server/src/app.ts`; validate enums server-side (422 on unknown
+   kind/severity, mirroring the screening waive/schedule 422s) and keep the
+   BIGINT-ms `num()` coercion convention in the row mappers.
+4. `server/src/schema.sql`: idempotent `CREATE TABLE IF NOT EXISTS` per kind
+   (`medical_conditions`, `allergies`, `immunizations`, `medical_events`,
+   `prescription_records`), each with `user_id` FK + index and `created_at_ms`;
+   seed demo rows in `server/src/seed.ts` (one severe drug allergy, one
+   active chronic condition, one immunization, one active prescription).
+5. `history.store.ts` in the `screening.store.ts` style: signals per category
+   (`loading/error`), CRUD actions with optimistic add + rollback, one
+   `load(kind)` per tab (lazy, per-route `@defer`-friendly).
+6. `prescriptions.store.ts`: list/add/complete/cancel +
+   `addToMedications(record)` → `POST /api/me/medications` (reuses the §7
+   endpoint) with a default daily-morning schedule the user adjusts on the
+   medications page — mirror `MedicationDraft`/`SUPPLY_DAYS` semantics from
+   `pharmacy.models.ts` and stamp the refill estimate.
+7. RBAC + audit: route guards `[ROLES.CLIENT, ROLES.CAREGIVER, ROLES.NURSE]`
+   in `app.routes.ts` matching the other PHR routes (read-only for
+   caregiver/nurse per the PLAN.md §2 matrix; writes CLIENT-only); instrument
+   every read and write with `AuditService` (`core/services/audit/`) — PLAN.md
+   §4 requires "who viewed which medical measurement, when".
+8. `history.page.ts`: category tabs (Conditions / Allergies /
+   Immunizations / Events / Prescriptions) + add/edit forms (typed reactive
+   forms, date inputs, maxlength validators) in an accessible tab panel.
+9. Allergy safety banner: drug/severe allergies render a persistent warning
+   strip on the PHR dashboard (`health-record.page.ts`) and at the top of
+   every health-summary export — never color-only (icon + text label).
+10. Health-history timeline (`history.timeline.ts`, pure merge+sort of all
+    categories + prescriptions + screening completions): one chronological
+    view with kind icons, year grouping and filter chips; unit-testable
+    without DI.
+11. Immunization ↔ wallet bridge: import entries from the Gov.gr Health
+    Wallet (`wallet.store.ts`, category `vaccinations`), deduped by
+    (vaccine, administeredAtMs); manual entries keep `source: 'manual'`.
+12. Prescription ↔ pharmacy link: optionally attach a scanned prescription
+    id (`pharmacy.models.ts` `Prescription`) so the register shows what was
+    actually dispensed, and a filled order can pre-fill a register entry
+    (reuse `medicationDraftsFor` line items).
+13. Health-summary export: extend `export.payload.ts`
+    (`HealthSummaryPayload.allergies/conditions/prescriptions` +
+    corresponding `emptySections` keys) and the PDF layout in `export.pdf.ts`
+    (allergies in the header box, conditions + prescriptions as sections);
+    keep the generator lazy-loaded and the JS budget intact.
+14. FHIR R4: `condition.mapper.ts` (→ `Condition`), `allergy.mapper.ts` (→
+    `AllergyIntolerance`), `immunization.mapper.ts` (→ `Immunization`) in
+    `shared/fhir/`, prescriptions reuse `medication.mapper.ts`
+    (`MedicationRequest`); extend `bundle.ts` + `validator.ts` reference
+    integrity and golden-fixture tests per mapper.
+15. Offline/PWA guardrails: mutations already queue through the offline
+    outbox (`core/services/offline/`); **do not** add the new endpoints to
+    any `ngsw-config.json` dataGroup — health data is never SW-cached
+    (FEATURE_PLAN.md §20 subtask 18 rule).
+16. Consent enforcement: visibility of history to caregiver/nurse roles
+    respects the family-sharing consent in `consent.store.ts` — enforce
+    server-side in the `history.ts` reads (mirror the §16 enforcement
+    matrix), not just in the UI.
+17. Unit tests: store CRUD + optimistic rollback, timeline merge ordering +
+    filter chips, export payload with the new sections (incl. empty-section
+    keys), FHIR mapper golden fixtures, wallet-import dedupe.
+18. Server tests (`server/test/history.spec.ts`): auth, RBAC (caregiver read
+    / client write), CRUD round-trip on the real Postgres schema, 422 enum
+    paths — follow `server/test/screenings.spec.ts` style.
+19. E2E: add allergy + condition + prescription → timeline shows all →
+    health-summary export contains them; fullstack variant
+    (`npm run e2e:fullstack`) proves the Postgres-backed server persists and
+    serves the history endpoints.
+20. A11y/i18n + docs: labelled forms, `aria-live` on save status, neutral
+    medical copy (§6 subtask 18 precedent), keyboard-operable tabs; README
+    feature-status paragraph + PLAN.md §3.C note.
 
 > Cross-cutting: features 4 (notifications), 16 (audit), 17 (consents) are
 > dependencies for several later features — land them early in their wave.

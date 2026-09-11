@@ -3,8 +3,21 @@
  *
  * The schedule is translated into a FHIR `Timing`/`Dosage`; archived medications
  * map to `status: completed` (their history stays available for audit).
+ *
+ * The structured medicine-instructions sheet is surfaced on the dosage
+ * (`text`, `route`, `additionalInstruction` for food relation / max daily
+ * doses) and on the request's free-text `note` (warnings, side effects,
+ * storage, special instructions) together with the prescriber note.
  */
 import type { Medication, MedicationSchedule } from '../../features/health-record/medications.logic';
+import {
+  FOOD_RELATION_LABELS,
+  MEDICINE_ROUTE_LABELS,
+  MedicineInstructions,
+  hasInstructions,
+  medicineLabel,
+  normalizeInstructions,
+} from '../../features/health-record/medicine.info';
 import type {
   MedicationRequest,
   Dosage,
@@ -98,6 +111,84 @@ function prescriberNote(prescriber: string | undefined): Annotation[] | undefine
 }
 
 /**
+ * The medication's saved instruction sheet when it actually carries
+ * information, else null. The curated catalog suggestion is deliberately
+ * never exported: it is a UI convenience, not part of the medical record
+ * (the PDF export applies the same rule).
+ */
+function savedInstructions(med: Medication): MedicineInstructions | null {
+  if (!med.instructions) {
+    return null;
+  }
+  const normalized = normalizeInstructions(med.instructions);
+  return hasInstructions(normalized) ? normalized : null;
+}
+
+/**
+ * One-line "how to take it" suffix for the dosage text. Scaffolding labels are
+ * English (like the rest of the generated FHIR text) while the medication's
+ * own free-text fields stay verbatim.
+ */
+function howToTake(instructions: MedicineInstructions): string {
+  const parts: string[] = [];
+  if (instructions.doseForm) {
+    parts.push(instructions.doseForm);
+  }
+  if (instructions.route) {
+    parts.push(medicineLabel(MEDICINE_ROUTE_LABELS, instructions.route, 'en'));
+  }
+  if (instructions.foodRelation !== 'any') {
+    parts.push(medicineLabel(FOOD_RELATION_LABELS, instructions.foodRelation, 'en'));
+  }
+  if ((instructions.maxDailyDoses ?? null) !== null) {
+    parts.push(`max ${instructions.maxDailyDoses}/day`);
+  }
+  return parts.join('; ');
+}
+
+/** `dosage.route` from the sheet's route (text-only; no terminology server). */
+function instructionsRoute(instructions: MedicineInstructions): CodeableConcept | undefined {
+  return instructions.route
+    ? { text: medicineLabel(MEDICINE_ROUTE_LABELS, instructions.route, 'en') }
+    : undefined;
+}
+
+/** Food relation + max daily doses as `dosage.additionalInstruction`. */
+function additionalInstructions(
+  instructions: MedicineInstructions
+): CodeableConcept[] | undefined {
+  const out: CodeableConcept[] = [];
+  if (instructions.foodRelation !== 'any') {
+    out.push({ text: medicineLabel(FOOD_RELATION_LABELS, instructions.foodRelation, 'en') });
+  }
+  if ((instructions.maxDailyDoses ?? null) !== null) {
+    out.push({ text: `Up to ${instructions.maxDailyDoses} dose(s) per day` });
+  }
+  return out.length > 0 ? out : undefined;
+}
+
+/** Warnings, side effects, storage and special instructions as free-text notes. */
+function instructionsNotes(instructions: MedicineInstructions): Annotation[] {
+  const notes: Annotation[] = instructions.warnings.map((w) => ({ text: `Warning: ${w}` }));
+  if (instructions.sideEffects) {
+    notes.push({ text: `Possible side effects: ${instructions.sideEffects}` });
+  }
+  if (instructions.storage) {
+    notes.push({ text: `Storage: ${instructions.storage}` });
+  }
+  if (instructions.specialInstructions) {
+    notes.push({ text: `Special instructions: ${instructions.specialInstructions}` });
+  }
+  return notes;
+}
+
+/** Merge note lists, returning undefined when there is nothing to say. */
+function mergeNotes(...lists: (Annotation[] | undefined)[]): Annotation[] | undefined {
+  const merged = lists.flatMap((list) => list ?? []);
+  return merged.length > 0 ? merged : undefined;
+}
+
+/**
  * Map a `Medication` to a `MedicationRequest` resource.
  *
  * @throws when the medication is missing an id or name (subtask 16-equivalent).
@@ -115,6 +206,8 @@ export function toMedicationRequest(
 
   const dosage = dosageFromSchedule(med.schedule);
   const text = `${med.name}${med.dose ? ` ${med.dose}` : ''}`.trim();
+  const instructions = savedInstructions(med);
+  const howTo = instructions ? howToTake(instructions) : '';
 
   return {
     resourceType: 'MedicationRequest',
@@ -129,11 +222,16 @@ export function toMedicationRequest(
     authoredOn: new Date(med.createdAtMs).toISOString(),
     dosageInstruction: [
       {
-        text: `${text} — ${dosage.text}`,
+        text: howTo ? `${text} — ${dosage.text} — ${howTo}` : `${text} — ${dosage.text}`,
         timing: dosage.dosage.timing,
+        route: instructions ? instructionsRoute(instructions) : undefined,
+        additionalInstruction: instructions ? additionalInstructions(instructions) : undefined,
       },
     ],
-    note: prescriberNote(med.prescriber),
+    note: mergeNotes(
+      prescriberNote(med.prescriber),
+      instructions ? instructionsNotes(instructions) : undefined
+    ),
     meta: { lastUpdated: new Date(nowMs).toISOString() },
   };
 }

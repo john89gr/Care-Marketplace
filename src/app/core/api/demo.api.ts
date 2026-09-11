@@ -202,6 +202,18 @@ interface DemoConsentState {
   currentDocumentVersion: string;
 }
 
+/** Structured instruction sheet (medicine instructions manager). */
+interface DemoMedicineInstructions {
+  doseForm?: string;
+  route?: string;
+  foodRelation?: string;
+  maxDailyDoses?: number | null;
+  warnings?: string[];
+  sideEffects?: string;
+  storage?: string;
+  specialInstructions?: string;
+}
+
 interface DemoMedication {
   id: string;
   name: string;
@@ -212,6 +224,10 @@ interface DemoMedication {
     | { kind: 'weekly'; weekdays: number[]; timeMinutes: number };
   critical: boolean;
   prescriber?: string;
+  /** Medicine instructions manager sheet; absent → catalog suggestion. */
+  instructions?: DemoMedicineInstructions | null;
+  /** §21 prescription that created this medication, when bridged. */
+  prescriptionId?: string | null;
   refillDueDate?: string | null;
   supplyDays?: number | null;
   archived?: boolean;
@@ -369,6 +385,123 @@ interface DemoWalletDocument {
   verified: boolean;
 }
 
+/**
+ * Medical-history register (FEATURE_PLAN.md §21): the demo twin of the
+ * Postgres tables behind server/src/history.ts — conditions (ICD-11 coded),
+ * allergies, immunizations, medical events, symptoms and a prescriptions
+ * register, all soft-archived and scoped per user.
+ */
+type DemoHistoryKind = 'conditions' | 'allergies' | 'immunizations' | 'events' | 'symptoms';
+
+type DemoMedicalCondition = {
+  id: string;
+  name: string;
+  icd11Code?: string;
+  status: 'active' | 'chronic' | 'resolved';
+  diagnosedAtMs: number;
+  resolvedAtMs?: number | null;
+  notes?: string;
+  archived?: boolean;
+  createdAtMs: number;
+};
+
+type DemoAllergy = {
+  id: string;
+  substance: string;
+  kind: 'drug' | 'food' | 'environmental';
+  reaction?: string;
+  severity: 'mild' | 'moderate' | 'severe';
+  confirmedAtMs: number;
+  notes?: string;
+  archived?: boolean;
+  createdAtMs: number;
+};
+
+type DemoImmunization = {
+  id: string;
+  vaccine: string;
+  doseNumber?: number;
+  administeredAtMs: number;
+  source: 'manual' | 'wallet';
+  notes?: string;
+  archived?: boolean;
+  createdAtMs: number;
+};
+
+type DemoMedicalEvent = {
+  id: string;
+  kind: 'procedure' | 'hospitalization' | 'surgery' | 'other';
+  name: string;
+  facility?: string;
+  occurredAtMs: number;
+  notes?: string;
+  archived?: boolean;
+  createdAtMs: number;
+};
+
+type DemoSymptom = {
+  id: string;
+  name: string;
+  severity: 'mild' | 'moderate' | 'severe';
+  onsetAtMs: number;
+  status: 'ongoing' | 'resolved';
+  notes?: string;
+  archived?: boolean;
+  createdAtMs: number;
+};
+
+type DemoPrescriptionRecord = {
+  id: string;
+  drug: string;
+  dose?: string;
+  instructions?: string;
+  prescriber?: string;
+  issuedAtMs: number;
+  durationDays?: number;
+  status: 'active' | 'completed' | 'cancelled';
+  pharmacyPrescriptionId?: string;
+  medicationId?: string | null;
+  archived?: boolean;
+  createdAtMs: number;
+};
+
+type DemoHistoryRow =
+  | DemoMedicalCondition
+  | DemoAllergy
+  | DemoImmunization
+  | DemoMedicalEvent
+  | DemoSymptom
+  | DemoPrescriptionRecord;
+
+interface DemoHistory {
+  conditions: DemoMedicalCondition[];
+  allergies: DemoAllergy[];
+  immunizations: DemoImmunization[];
+  events: DemoMedicalEvent[];
+  symptoms: DemoSymptom[];
+  prescriptions: DemoPrescriptionRecord[];
+}
+
+/**
+ * Contact phone manager (demo twin of server/src/contacts.ts): ICE + care-team
+ * contacts per user, soft-archived and scoped like the rest of the PHR data.
+ */
+type DemoContact = {
+  id: string;
+  kind: 'emergency' | 'care';
+  name: string;
+  relationship: string;
+  phone: string;
+  altPhone?: string;
+  email?: string;
+  address?: string;
+  notes?: string;
+  isPrimary: boolean;
+  priority: number;
+  archived?: boolean;
+  createdAtMs: number;
+};
+
 const now = () => Date.now();
 const hour = 60 * 60 * 1000;
 const dayMs = 24 * 60 * 60 * 1000;
@@ -409,6 +542,10 @@ const state: {
   walletDocs: DemoWalletDocument[];
   audit: { id: string; actorId: string; action: string; resourceType: string; resourceId: string; atMs: number; meta?: Record<string, unknown> }[];
   consents: Record<string, DemoConsentState>;
+  /** Medical-history register per user (FEATURE_PLAN.md §21). */
+  history: Record<string, DemoHistory>;
+  /** Contact phone manager directory per user (ICE + care team). */
+  contacts: Record<string, DemoContact[]>;
   pushSubscriptions: Record<string, DemoPushSubscription>;
   session: DemoUser | null;
 } = {
@@ -664,6 +801,20 @@ const state: {
       schedule: { kind: 'daily', timesMinutes: [8 * 60] },
       critical: true,
       prescriber: 'Dr. Stavrou',
+      instructions: {
+        doseForm: 'Πένα ένεσης',
+        route: 'injection',
+        foodRelation: 'any',
+        maxDailyDoses: 1,
+        warnings: [
+          'Ελέγχετε το σάκχαρο πριν από τη δόση.',
+          'Αλλάζετε σημείο ένεσης κάθε φορά.',
+          'Διατηρήστε τη στο ψυγείο πριν το άνοιγμα.',
+        ],
+        sideEffects: 'Υπογλυκαιμία, αντίδραση στο σημείο της ένεσης.',
+        storage: 'Στο ψυγείο πριν το άνοιγμα· μετά σε θερμοκρασία δωματίου έως 28 ημέρες.',
+        specialInstructions: '',
+      },
       refillDueDate: demoDateKey(now() + 12 * dayMs),
       supplyDays: 30,
       archived: false,
@@ -676,6 +827,19 @@ const state: {
       schedule: { kind: 'daily', timesMinutes: [21 * 60] },
       critical: false,
       prescriber: 'Dr. Stavrou',
+      instructions: {
+        doseForm: 'Δισκίο',
+        route: 'oral',
+        foodRelation: 'any',
+        maxDailyDoses: 1,
+        warnings: [
+          'Αποφύγετε τον χυμό γκρέιπφρουτ.',
+          'Αναφέρετε ανεξήγητο μυϊκό πόνο.',
+        ],
+        sideEffects: 'Μυϊκός πόνος, κεφαλαλγία.',
+        storage: 'Σε ξηρό, δροσερό μέρος.',
+        specialInstructions: 'Λαμβάνεται το βράδυ, την ίδια ώρα.',
+      },
       // Low-supply demo (subtask 14): refill due within the warning window.
       refillDueDate: demoDateKey(now() + 3 * dayMs),
       supplyDays: 30,
@@ -725,6 +889,11 @@ const state: {
       currentDocumentVersion: 'v1.0',
     },
   },
+  // Medical-history register: seeded rows for the demo client only, so a
+  // family role's consent-gated read (and the owner's own read) both work.
+  history: seededHistory(),
+  // Contact phone manager: seeded ICE + care-team rows for the demo client.
+  contacts: seededContacts(),
   // Smart-reminder channel prefs per user (FEATURE_PLAN.md §8 subtask 3).
   reminderPreferences: {},
   // PWA push subscriptions (FEATURE_PLAN.md §20 subtask 7).
@@ -968,6 +1137,587 @@ function seededWalletDocs(): DemoWalletDocument[] {
       verified: true,
     },
   ];
+}
+
+// ---- Medical-history register (FEATURE_PLAN.md §21) ----
+// Mirrors server/src/seed.ts + server/src/history.ts so the history page,
+// the dashboard allergy banner and the prescriptions↔medications bridge all
+// work in demo mode (no backend).
+
+const DEMO_HISTORY_KINDS: readonly DemoHistoryKind[] = [
+  'conditions',
+  'allergies',
+  'immunizations',
+  'events',
+  'symptoms',
+];
+const DEMO_HISTORY_KEYS: readonly (DemoHistoryKind | 'prescriptions')[] = [
+  ...DEMO_HISTORY_KINDS,
+  'prescriptions',
+];
+
+const HISTORY_ID_PREFIX: Record<DemoHistoryKind, string> = {
+  conditions: 'cond',
+  allergies: 'all',
+  immunizations: 'imm',
+  events: 'ev',
+  symptoms: 'sym',
+};
+
+function emptyHistory(): DemoHistory {
+  return { conditions: [], allergies: [], immunizations: [], events: [], symptoms: [], prescriptions: [] };
+}
+
+/** A user's register — an empty (never persisted) bucket when they have none. */
+function historyFor(userId: string): DemoHistory {
+  return state.history[userId] ?? emptyHistory();
+}
+
+/** Mutable register for writes — creates the bucket on first write. */
+function mutableHistoryFor(userId: string): DemoHistory {
+  if (!state.history[userId]) {
+    state.history[userId] = emptyHistory();
+  }
+  return state.history[userId];
+}
+
+/** Rows of one kind as a homogeneous list (the register is heterogeneous). */
+function historyRows(userId: string, key: DemoHistoryKind | 'prescriptions'): DemoHistoryRow[] {
+  return mutableHistoryFor(userId)[key] as DemoHistoryRow[];
+}
+
+/** Seeded register for the demo client (mirrors the server seed). */
+/** Seeded contact directory for the demo client (mirrors server/src/seed.ts). */
+function seededContacts(): Record<string, DemoContact[]> {
+  const yearMs = 365 * 24 * hour;
+  return {
+    'u-client': [
+      {
+        id: 'contact-ice-1',
+        kind: 'emergency',
+        name: 'Γιώργος Παπαδόπουλος',
+        relationship: 'Σύζυγος',
+        phone: '6970000001',
+        altPhone: '',
+        email: '',
+        address: '',
+        notes: 'Πρώτη επαφή σε έκτακτη ανάγκη.',
+        isPrimary: true,
+        priority: 10,
+        archived: false,
+        createdAtMs: now() - yearMs,
+      },
+      {
+        id: 'contact-ice-2',
+        kind: 'emergency',
+        name: 'Ελένη Παπαδοπούλου',
+        relationship: 'Κόρη',
+        phone: '6970000002',
+        altPhone: '+302100000003',
+        email: 'eleni@example.com',
+        address: 'Αθήνα',
+        notes: '',
+        isPrimary: false,
+        priority: 5,
+        archived: false,
+        createdAtMs: now() - yearMs,
+      },
+      {
+        id: 'contact-care-1',
+        kind: 'care',
+        name: 'Δρ. Παπαδόπουλος',
+        relationship: 'doctor',
+        phone: '2100000000',
+        altPhone: '',
+        email: 'iatros@example.com',
+        address: 'Ιατρείο Αθηνών',
+        notes: 'Θεράπων ιατρός — καρδιολόγος.',
+        isPrimary: true,
+        priority: 10,
+        archived: false,
+        createdAtMs: now() - yearMs,
+      },
+      {
+        id: 'contact-care-2',
+        kind: 'care',
+        name: 'Φαρμακείο Συντάγματος',
+        relationship: 'pharmacy',
+        phone: '2100000001',
+        altPhone: '',
+        email: '',
+        address: 'Πλατεία Συντάγματος, Αθήνα',
+        notes: '',
+        isPrimary: false,
+        priority: 0,
+        archived: false,
+        createdAtMs: now() - yearMs,
+      },
+    ],
+  };
+}
+
+const CONTACT_KINDS = ['emergency', 'care'] as const;
+
+/** A user's contacts — an empty (never persisted) bucket when they have none. */
+function contactsFor(userId: string): DemoContact[] {
+  return state.contacts[userId] ?? [];
+}
+
+/** Mutable contacts bucket for writes — creates it on first write. */
+function mutableContactsFor(userId: string): DemoContact[] {
+  if (!state.contacts[userId]) {
+    state.contacts[userId] = [];
+  }
+  return state.contacts[userId];
+}
+
+/** Draft/PATCH validation — mirrors the 422 contract in server/src/contacts.ts. */
+function contactDraft(body: Record<string, unknown>): DemoWrite {
+  const kind = trimmed(body['kind']) as DemoContact['kind'];
+  if (!CONTACT_KINDS.includes(kind as never)) {
+    return { ok: false, message: `Invalid contact kind: ${kind}.` };
+  }
+  const name = trimmed(body['name']);
+  if (!name) return { ok: false, message: 'Name is required for a contact.' };
+  const phone = trimmed(body['phone']);
+  if (phone.replace(/\D/g, '').length < 6) {
+    return { ok: false, message: 'A phone number with at least 6 digits is required.' };
+  }
+  const email = trimmed(body['email']);
+  if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    return { ok: false, message: 'Invalid email.' };
+  }
+  return {
+    ok: true,
+    value: {
+      kind,
+      name,
+      relationship: trimmed(body['relationship']),
+      phone,
+      altPhone: trimmed(body['altPhone']),
+      email,
+      address: trimmed(body['address']),
+      notes: trimmed(body['notes']),
+      isPrimary: body['isPrimary'] === true,
+      priority:
+        typeof body['priority'] === 'number' && Number.isFinite(body['priority'])
+          ? Math.max(0, Math.round(body['priority']))
+          : 0,
+    },
+  };
+}
+
+/** PATCH keeps only supplied fields; `isPrimary` demotes siblings (single primary). */
+function contactPatch(body: Record<string, unknown>): DemoWrite {
+  const patch: Record<string, unknown> = {};
+  const stringFields = ['name', 'relationship', 'phone', 'altPhone', 'email', 'address', 'notes'];
+  for (const field of stringFields) {
+    if (body[field] !== undefined) {
+      patch[field] = trimmed(body[field]);
+    }
+  }
+  if (body['phone'] !== undefined && String(patch['phone']).replace(/\D/g, '').length < 6) {
+    return { ok: false, message: 'A phone number with at least 6 digits is required.' };
+  }
+  if (body['isPrimary'] !== undefined) {
+    patch['isPrimary'] = body['isPrimary'] === true;
+  }
+  if (body['priority'] !== undefined) {
+    const priority = Number(body['priority']);
+    if (!Number.isFinite(priority)) return { ok: false, message: 'Invalid priority.' };
+    patch['priority'] = Math.max(0, Math.round(priority));
+  }
+  if (body['archived'] !== undefined) {
+    patch['archived'] = body['archived'] === true;
+  }
+  return { ok: true, value: patch };
+}
+
+function seededHistory(): Record<string, DemoHistory> {
+  const yearMs = 365 * 24 * hour;
+  const monthMs = 30 * 24 * hour;
+  return {
+    'u-client': {
+      conditions: [
+        {
+          id: 'cond-1',
+          name: 'Υπέρταση',
+          icd11Code: 'BA00',
+          status: 'chronic',
+          diagnosedAtMs: now() - 8 * yearMs,
+          resolvedAtMs: null,
+          notes: 'Υπό αγωγή — τακτική παρακολούθηση.',
+          archived: false,
+          createdAtMs: now(),
+        },
+      ],
+      allergies: [
+        {
+          id: 'all-1',
+          substance: 'Πενικιλίνη',
+          kind: 'drug',
+          reaction: 'Κνίδωση, κίνδυνος αναφυλαξίας',
+          severity: 'severe',
+          confirmedAtMs: now() - 10 * yearMs,
+          notes: 'Αναγράφεται στο βραχιόλι αλλεργίας.',
+          archived: false,
+          createdAtMs: now(),
+        },
+      ],
+      immunizations: [
+        {
+          id: 'imm-1',
+          vaccine: 'Γρίπη (εποχικό εμβόλιο)',
+          doseNumber: 1,
+          administeredAtMs: now() - 6 * monthMs,
+          source: 'manual',
+          notes: '',
+          archived: false,
+          createdAtMs: now(),
+        },
+        {
+          // Wallet-imported row (§21 subtask 11) so the "από Gov.gr Wallet"
+          // label has something to show out of the box.
+          id: 'imm-2',
+          vaccine: 'COVID-19 (αναμνηστική δόση)',
+          doseNumber: 3,
+          administeredAtMs: now() - 548 * 24 * hour,
+          source: 'wallet',
+          notes: 'Εισαγωγή από το Gov.gr Wallet.',
+          archived: false,
+          createdAtMs: now(),
+        },
+      ],
+      events: [
+        {
+          id: 'ev-1',
+          kind: 'surgery',
+          name: 'Σκωληκοειδεκτομή',
+          facility: 'Γενικό Νοσοκομείο Αθηνών',
+          occurredAtMs: now() - 6 * yearMs,
+          notes: 'Ομαλή μετεγχειρητική πορεία.',
+          archived: false,
+          createdAtMs: now(),
+        },
+      ],
+      symptoms: [
+        {
+          id: 'sym-1',
+          name: 'Πονοκέφαλος',
+          severity: 'moderate',
+          onsetAtMs: now() - 10 * 24 * hour,
+          status: 'ongoing',
+          notes: '',
+          archived: false,
+          createdAtMs: now(),
+        },
+      ],
+      prescriptions: [
+        {
+          id: 'rx-rec-1',
+          drug: 'Ατορβαστατίνη',
+          dose: '20mg ×1',
+          instructions: 'Ένα δισκίο το βράδυ.',
+          prescriber: 'Δρ. Παπαδόπουλος',
+          issuedAtMs: now() - 30 * 24 * hour,
+          durationDays: 90,
+          status: 'active',
+          medicationId: null,
+          archived: false,
+          createdAtMs: now(),
+        },
+      ],
+    },
+  };
+}
+
+// Draft/PATCH validation — compact mirrors of the 422 contract in
+// server/src/history.ts (the demo must reject the same malformed writes).
+
+type DemoWrite = { ok: true; value: Record<string, unknown> } | { ok: false; message: string };
+
+const isMs = (value: unknown): value is number =>
+  typeof value === 'number' && Number.isFinite(value) && value > 0;
+const trimmed = (value: unknown): string => (typeof value === 'string' ? value.trim() : '');
+
+function historyDraft(kind: DemoHistoryKind, body: Record<string, unknown>): DemoWrite {
+  switch (kind) {
+    case 'conditions': {
+      const name = trimmed(body['name']);
+      if (!name) return { ok: false, message: 'Name is required for a condition.' };
+      const status = trimmed(body['status']) || 'active';
+      if (!['active', 'chronic', 'resolved'].includes(status)) {
+        return { ok: false, message: `Invalid condition status: ${status}.` };
+      }
+      if (!isMs(body['diagnosedAtMs'])) return { ok: false, message: 'A valid diagnosis date is required.' };
+      return {
+        ok: true,
+        value: {
+          name,
+          icd11Code: trimmed(body['icd11Code']) || undefined,
+          status,
+          diagnosedAtMs: body['diagnosedAtMs'],
+          resolvedAtMs: null,
+          notes: trimmed(body['notes']),
+        },
+      };
+    }
+    case 'allergies': {
+      const substance = trimmed(body['substance']);
+      if (!substance) return { ok: false, message: 'Substance is required for an allergy.' };
+      const kindValue = trimmed(body['kind']) || 'drug';
+      if (!['drug', 'food', 'environmental'].includes(kindValue)) {
+        return { ok: false, message: `Invalid allergy kind: ${kindValue}.` };
+      }
+      const severity = trimmed(body['severity']) || 'moderate';
+      if (!['mild', 'moderate', 'severe'].includes(severity)) {
+        return { ok: false, message: `Invalid allergy severity: ${severity}.` };
+      }
+      if (!isMs(body['confirmedAtMs'])) return { ok: false, message: 'A valid confirmation date is required.' };
+      return {
+        ok: true,
+        value: {
+          substance,
+          kind: kindValue,
+          reaction: trimmed(body['reaction']),
+          severity,
+          confirmedAtMs: body['confirmedAtMs'],
+          notes: trimmed(body['notes']),
+        },
+      };
+    }
+    case 'immunizations': {
+      const vaccine = trimmed(body['vaccine']);
+      if (!vaccine) return { ok: false, message: 'Vaccine name is required.' };
+      if (!isMs(body['administeredAtMs'])) {
+        return { ok: false, message: 'A valid administration date is required.' };
+      }
+      const source = trimmed(body['source']) || 'manual';
+      if (source !== 'manual' && source !== 'wallet') {
+        return { ok: false, message: `Invalid source: ${source}.` };
+      }
+      const doseNumber = body['doseNumber'] == null ? null : Number(body['doseNumber']);
+      if (doseNumber !== null && (!Number.isInteger(doseNumber) || doseNumber < 1)) {
+        return { ok: false, message: 'Dose number must be a positive integer.' };
+      }
+      return {
+        ok: true,
+        value: {
+          vaccine,
+          doseNumber: doseNumber ?? undefined,
+          administeredAtMs: body['administeredAtMs'],
+          source,
+          notes: trimmed(body['notes']),
+        },
+      };
+    }
+    case 'events': {
+      const name = trimmed(body['name']);
+      if (!name) return { ok: false, message: 'Name is required for a medical event.' };
+      const eventKind = trimmed(body['kind']) || 'other';
+      if (!['procedure', 'hospitalization', 'surgery', 'other'].includes(eventKind)) {
+        return { ok: false, message: `Invalid event kind: ${eventKind}.` };
+      }
+      if (!isMs(body['occurredAtMs'])) return { ok: false, message: 'A valid date is required.' };
+      return {
+        ok: true,
+        value: {
+          kind: eventKind,
+          name,
+          facility: trimmed(body['facility']),
+          occurredAtMs: body['occurredAtMs'],
+          notes: trimmed(body['notes']),
+        },
+      };
+    }
+    case 'symptoms': {
+      const name = trimmed(body['name']);
+      if (!name) return { ok: false, message: 'Symptom name is required.' };
+      const severity = trimmed(body['severity']) || 'moderate';
+      if (!['mild', 'moderate', 'severe'].includes(severity)) {
+        return { ok: false, message: `Invalid symptom severity: ${severity}.` };
+      }
+      if (!isMs(body['onsetAtMs'])) return { ok: false, message: 'A valid onset date is required.' };
+      const status = trimmed(body['status']) || 'ongoing';
+      if (!['ongoing', 'resolved'].includes(status)) {
+        return { ok: false, message: `Invalid symptom status: ${status}.` };
+      }
+      return {
+        ok: true,
+        value: { name, severity, onsetAtMs: body['onsetAtMs'], status, notes: trimmed(body['notes']) },
+      };
+    }
+  }
+}
+
+interface PatchSpec {
+  kind: 'text' | 'ms' | 'int' | 'enum';
+  values?: readonly string[];
+}
+
+const HISTORY_PATCH_SPECS: Record<DemoHistoryKind, Record<string, PatchSpec>> = {
+  conditions: {
+    name: { kind: 'text' },
+    icd11Code: { kind: 'text' },
+    status: { kind: 'enum', values: ['active', 'chronic', 'resolved'] },
+    diagnosedAtMs: { kind: 'ms' },
+    resolvedAtMs: { kind: 'ms' },
+    notes: { kind: 'text' },
+  },
+  allergies: {
+    substance: { kind: 'text' },
+    kind: { kind: 'enum', values: ['drug', 'food', 'environmental'] },
+    reaction: { kind: 'text' },
+    severity: { kind: 'enum', values: ['mild', 'moderate', 'severe'] },
+    confirmedAtMs: { kind: 'ms' },
+    notes: { kind: 'text' },
+  },
+  immunizations: {
+    vaccine: { kind: 'text' },
+    doseNumber: { kind: 'int' },
+    administeredAtMs: { kind: 'ms' },
+    source: { kind: 'enum', values: ['manual', 'wallet'] },
+    notes: { kind: 'text' },
+  },
+  events: {
+    kind: { kind: 'enum', values: ['procedure', 'hospitalization', 'surgery', 'other'] },
+    name: { kind: 'text' },
+    facility: { kind: 'text' },
+    occurredAtMs: { kind: 'ms' },
+    notes: { kind: 'text' },
+  },
+  symptoms: {
+    name: { kind: 'text' },
+    severity: { kind: 'enum', values: ['mild', 'moderate', 'severe'] },
+    onsetAtMs: { kind: 'ms' },
+    status: { kind: 'enum', values: ['ongoing', 'resolved'] },
+    notes: { kind: 'text' },
+  },
+};
+
+function historyPatch(kind: DemoHistoryKind, body: Record<string, unknown>): DemoWrite {
+  if (body['archived'] !== undefined) {
+    if (typeof body['archived'] !== 'boolean') return { ok: false, message: 'archived must be a boolean.' };
+    return { ok: true, value: { archived: body['archived'] } };
+  }
+  const specs = HISTORY_PATCH_SPECS[kind];
+  const patch: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(body)) {
+    if (value === undefined || value === '') continue;
+    const spec = specs[key];
+    if (!spec) return { ok: false, message: `Unknown field: ${key}.` };
+    if (spec.kind === 'ms' && !isMs(value)) return { ok: false, message: `Invalid ${key}.` };
+    if (spec.kind === 'int' && !(Number.isInteger(Number(value)) && Number(value) >= 1)) {
+      return { ok: false, message: `Invalid ${key}.` };
+    }
+    if (spec.kind === 'enum' && !(spec.values ?? []).includes(String(value))) {
+      return { ok: false, message: `Invalid ${key}.` };
+    }
+    patch[key] = value;
+  }
+  return { ok: true, value: patch };
+}
+
+function prescriptionDraft(body: Record<string, unknown>): DemoWrite {
+  const drug = trimmed(body['drug']);
+  if (!drug) return { ok: false, message: 'Drug name is required.' };
+  if (!isMs(body['issuedAtMs'])) return { ok: false, message: 'A valid issue date is required.' };
+  const status = trimmed(body['status']) || 'active';
+  if (!['active', 'completed', 'cancelled'].includes(status)) {
+    return { ok: false, message: `Invalid prescription status: ${status}.` };
+  }
+  const durationDays = body['durationDays'] == null || body['durationDays'] === '' ? null : Number(body['durationDays']);
+  if (durationDays !== null && (!Number.isInteger(durationDays) || durationDays < 1)) {
+    return { ok: false, message: 'Duration must be a positive number of days.' };
+  }
+  return {
+    ok: true,
+    value: {
+      drug,
+      dose: trimmed(body['dose']),
+      instructions: trimmed(body['instructions']),
+      prescriber: trimmed(body['prescriber']),
+      issuedAtMs: body['issuedAtMs'],
+      durationDays: durationDays ?? undefined,
+      status,
+      pharmacyPrescriptionId: trimmed(body['pharmacyPrescriptionId']) || undefined,
+    },
+  };
+}
+
+const PRESCRIPTION_PATCH_SPECS: Record<string, PatchSpec> = {
+  drug: { kind: 'text' },
+  dose: { kind: 'text' },
+  instructions: { kind: 'text' },
+  prescriber: { kind: 'text' },
+  issuedAtMs: { kind: 'ms' },
+  durationDays: { kind: 'int' },
+  status: { kind: 'enum', values: ['active', 'completed', 'cancelled'] },
+  pharmacyPrescriptionId: { kind: 'text' },
+};
+
+function prescriptionPatch(body: Record<string, unknown>): DemoWrite {
+  if (body['archived'] !== undefined) {
+    if (typeof body['archived'] !== 'boolean') return { ok: false, message: 'archived must be a boolean.' };
+    return { ok: true, value: { archived: body['archived'] } };
+  }
+  const patch: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(body)) {
+    if (value === undefined || value === '') continue;
+    const spec = PRESCRIPTION_PATCH_SPECS[key];
+    if (!spec) return { ok: false, message: `Unknown field: ${key}.` };
+    if (spec.kind === 'ms' && !isMs(value)) return { ok: false, message: `Invalid ${key}.` };
+    if (spec.kind === 'int' && !(Number.isInteger(Number(value)) && Number(value) >= 1)) {
+      return { ok: false, message: `Invalid ${key}.` };
+    }
+    if (spec.kind === 'enum' && !(spec.values ?? []).includes(String(value))) {
+      return { ok: false, message: `Invalid ${key}.` };
+    }
+    patch[key] = value;
+  }
+  return { ok: true, value: patch };
+}
+
+/** 403 mirror of the RBAC read-only contract (family roles can't mutate). */
+function demoReadOnly() {
+  return of(new HttpResponse({ status: 403, body: { message: 'This view is read-only for your role.' } }));
+}
+
+/**
+ * Normalize a structured instruction sheet (medicine instructions manager) —
+ * mirrors the total normalizer in medicine.info.ts so the demo rejects nothing
+ * but never stores a malformed shape.
+ */
+const DEMO_MED_ROUTES = ['oral', 'topical', 'inhalation', 'injection', 'other'];
+const DEMO_FOOD_RELATIONS = ['before', 'with', 'after', 'any'];
+/** Reminder channels the Track 3 wizard may send (validated only). */
+const DEMO_REMINDER_CHANNELS = ['inapp', 'push', 'sms', 'voice'];
+
+function demoInstructions(input: DemoMedicineInstructions): DemoMedicineInstructions {
+  const text = (value: unknown, max = 400): string =>
+    typeof value === 'string' ? value.trim().slice(0, max) : '';
+  const warnings = Array.isArray(input?.warnings)
+    ? input.warnings
+        .map((w) => text(w, 160))
+        .filter((w) => w.length > 0)
+        .slice(0, 8)
+    : [];
+  const maxDaily = input?.maxDailyDoses;
+  return {
+    doseForm: text(input?.doseForm, 60),
+    route: DEMO_MED_ROUTES.includes(String(input?.route)) ? String(input.route) : 'oral',
+    foodRelation: DEMO_FOOD_RELATIONS.includes(String(input?.foodRelation))
+      ? String(input.foodRelation)
+      : 'any',
+    maxDailyDoses:
+      typeof maxDaily === 'number' && Number.isFinite(maxDaily) && maxDaily > 0
+        ? Math.min(24, Math.round(maxDaily))
+        : null,
+    warnings,
+    sideEffects: text(input?.sideEffects),
+    storage: text(input?.storage),
+    specialInstructions: text(input?.specialInstructions),
+  };
 }
 
 interface DemoClinicalEntry {
@@ -1429,6 +2179,8 @@ export const demoApi: HttpInterceptorFn = (req: HttpRequest<unknown>, next: Http
         schedule?: DemoMedication['schedule'];
         critical?: boolean;
         prescriber?: string;
+        instructions?: DemoMedicineInstructions;
+        prescriptionId?: string | null;
       };
       if (!String(body.name ?? '').trim() || !String(body.dose ?? '').trim() || !body.schedule) {
         return of(
@@ -1442,6 +2194,8 @@ export const demoApi: HttpInterceptorFn = (req: HttpRequest<unknown>, next: Http
         schedule: body.schedule,
         critical: Boolean(body.critical),
         prescriber: body.prescriber ? String(body.prescriber).slice(0, 120) : undefined,
+        instructions: body.instructions ? demoInstructions(body.instructions) : undefined,
+        prescriptionId: body.prescriptionId ?? null,
         refillDueDate: null,
         supplyDays: 30,
         archived: false,
@@ -1449,6 +2203,21 @@ export const demoApi: HttpInterceptorFn = (req: HttpRequest<unknown>, next: Http
       };
       state.medications.unshift(created);
       return json(created);
+    }
+    // PATCH /me/medications/:id — persist the structured instruction sheet
+    // (medicine instructions manager). `null` clears it.
+    if (method === 'PATCH' && parts.length === 3) {
+      const med = state.medications.find((m) => m.id === parts[2]);
+      if (!med) {
+        return of(new HttpResponse({ status: 404, body: { message: 'Unknown medication.' } }));
+      }
+      const body = req.body as { instructions?: DemoMedicineInstructions | null };
+      if (body.instructions === null) {
+        med.instructions = undefined;
+      } else if (body.instructions !== undefined) {
+        med.instructions = demoInstructions(body.instructions);
+      }
+      return json(med);
     }
   }
 
@@ -2330,6 +3099,221 @@ export const demoApi: HttpInterceptorFn = (req: HttpRequest<unknown>, next: Http
      }
    }
 
+
+  // ---- Medical history + prescriptions register (FEATURE_PLAN.md §21) ----
+  // Demo twin of server/src/history.ts: the owner reads/writes their register
+  // via /me/history/:kind + /me/prescriptions; family roles read another
+  // user's register through the consent-gated /history/:userId/* routes.
+  if (parts[0] === 'me' && parts[1] === 'history' && parts.length >= 3) {
+    const kind = parts[2] as DemoHistoryKind;
+    if (!DEMO_HISTORY_KINDS.includes(kind)) {
+      return of(new HttpResponse({ status: 404, body: { message: 'Unknown history kind.' } }));
+    }
+    const userId = state.session?.userId ?? 'u-client';
+    if (method === 'GET' && parts.length === 3) {
+      return json(historyFor(userId)[kind]);
+    }
+    // Writes are CLIENT-only (§21 subtask 7 RBAC); family roles are read-only.
+    const canWrite = !state.session || state.session.roles.includes('client');
+    if (method === 'POST' && parts.length === 3) {
+      if (!canWrite) return demoReadOnly();
+      const draft = historyDraft(kind, (req.body ?? {}) as Record<string, unknown>);
+      if (!draft.ok) {
+        return of(new HttpResponse({ status: 422, body: { message: draft.message } }));
+      }
+      const row = {
+        ...draft.value,
+        id: `${HISTORY_ID_PREFIX[kind]}-${Math.random().toString(36).slice(2, 8)}`,
+        archived: false,
+        createdAtMs: now(),
+      } as DemoHistoryRow;
+      historyRows(userId, kind).unshift(row);
+      return json(row);
+    }
+    if (method === 'PATCH' && parts.length === 4) {
+      if (!canWrite) return demoReadOnly();
+      const existing = historyRows(userId, kind).find((r) => r.id === parts[3]);
+      if (!existing) {
+        return of(new HttpResponse({ status: 404, body: { message: 'Record not found.' } }));
+      }
+      const patch = historyPatch(kind, (req.body ?? {}) as Record<string, unknown>);
+      if (!patch.ok) {
+        return of(new HttpResponse({ status: 422, body: { message: patch.message } }));
+      }
+      Object.assign(existing, patch.value);
+      return json(existing);
+    }
+  }
+
+  if (parts[0] === 'me' && parts[1] === 'prescriptions') {
+    const userId = state.session?.userId ?? 'u-client';
+    const canWrite = !state.session || state.session.roles.includes('client');
+    if (method === 'GET' && parts.length === 2) {
+      return json(historyFor(userId).prescriptions);
+    }
+    if (method === 'POST' && parts.length === 2) {
+      if (!canWrite) return demoReadOnly();
+      const draft = prescriptionDraft((req.body ?? {}) as Record<string, unknown>);
+      if (!draft.ok) {
+        return of(new HttpResponse({ status: 422, body: { message: draft.message } }));
+      }
+      const row: DemoPrescriptionRecord = {
+        ...(draft.value as Omit<DemoPrescriptionRecord, 'id' | 'medicationId' | 'archived' | 'createdAtMs'>),
+        id: `rx-rec-${Math.random().toString(36).slice(2, 8)}`,
+        medicationId: null,
+        archived: false,
+        createdAtMs: now(),
+      };
+      historyRows(userId, 'prescriptions').unshift(row);
+      return json(row);
+    }
+    if (method === 'PATCH' && parts.length === 3) {
+      if (!canWrite) return demoReadOnly();
+      const existing = historyRows(userId, 'prescriptions').find((r) => r.id === parts[2]) as
+        | DemoPrescriptionRecord
+        | undefined;
+      if (!existing) {
+        return of(new HttpResponse({ status: 404, body: { message: 'Prescription not found.' } }));
+      }
+      const patch = prescriptionPatch((req.body ?? {}) as Record<string, unknown>);
+      if (!patch.ok) {
+        return of(new HttpResponse({ status: 422, body: { message: patch.message } }));
+      }
+      Object.assign(existing, patch.value);
+      return json(existing);
+    }
+    // Prescription → medication bridge (§21 subtask 6): default daily 08:00
+    // schedule, prescriber carried over — the user adjusts it on /medications.
+    if (method === 'POST' && parts.length === 4 && parts[3] === 'to-medication') {
+      if (!canWrite) return demoReadOnly();
+      const rx = historyRows(userId, 'prescriptions').find((r) => r.id === parts[2]) as
+        | DemoPrescriptionRecord
+        | undefined;
+      if (!rx) {
+        return of(new HttpResponse({ status: 404, body: { message: 'Prescription not found.' } }));
+      }
+      if (rx.medicationId) {
+        return of(
+          new HttpResponse({
+            status: 409,
+            body: { message: 'This prescription is already linked to a medication.' },
+          })
+        );
+      }
+      // Track 3: the reminder wizard may supply a parsed schedule + sheet;
+      // an empty body keeps the legacy default daily-morning behaviour.
+      const body = (req.body ?? {}) as {
+        schedule?: DemoMedication['schedule'];
+        instructions?: DemoMedicineInstructions;
+        channels?: string[];
+      };
+      if (
+        body.channels !== undefined &&
+        (!Array.isArray(body.channels) ||
+          body.channels.some((c) => !DEMO_REMINDER_CHANNELS.includes(c)))
+      ) {
+        return of(new HttpResponse({ status: 422, body: { message: 'Invalid reminder channel.' } }));
+      }
+      const medicationId = `med-${Math.random().toString(36).slice(2, 8)}`;
+      state.medications.unshift({
+        id: medicationId,
+        name: rx.drug,
+        dose: rx.dose ?? '',
+        schedule: body.schedule ?? { kind: 'daily', timesMinutes: [8 * 60] },
+        critical: false,
+        prescriber: rx.prescriber,
+        instructions: body.instructions ? demoInstructions(body.instructions) : undefined,
+        prescriptionId: rx.id,
+        refillDueDate: null,
+        supplyDays: 30,
+        archived: false,
+        createdAtMs: now(),
+      });
+      rx.medicationId = medicationId;
+      return json({ prescription: rx, medicationId });
+    }
+  }
+
+  // ---- Contact phone manager (ICE + care team) ----
+  // Demo twin of server/src/contacts.ts: per-user directory, soft-archive,
+  // single primary per kind; writes are CLIENT-only (family roles read).
+  if (parts[0] === 'me' && parts[1] === 'contacts') {
+    const userId = state.session?.userId ?? 'u-client';
+    const canWrite = !state.session || state.session.roles.includes('client');
+    if (method === 'GET' && parts.length === 2) {
+      return json(contactsFor(userId));
+    }
+    if (method === 'POST' && parts.length === 2) {
+      if (!canWrite) return demoReadOnly();
+      const draft = contactDraft((req.body ?? {}) as Record<string, unknown>);
+      if (!draft.ok) {
+        return of(new HttpResponse({ status: 422, body: { message: draft.message } }));
+      }
+      const row: DemoContact = {
+        ...(draft.value as Omit<DemoContact, 'id' | 'archived' | 'createdAtMs'>),
+        id: `contact-${Math.random().toString(36).slice(2, 8)}`,
+        archived: false,
+        createdAtMs: now(),
+      };
+      const list = mutableContactsFor(userId);
+      if (row.isPrimary) {
+        for (const c of list) {
+          if (c.kind === row.kind) {
+            c.isPrimary = false;
+          }
+        }
+      }
+      list.unshift(row);
+      return json(row);
+    }
+    if (method === 'PATCH' && parts.length === 3) {
+      if (!canWrite) return demoReadOnly();
+      const list = mutableContactsFor(userId);
+      const existing = list.find((c) => c.id === parts[2]);
+      if (!existing) {
+        return of(new HttpResponse({ status: 404, body: { message: 'Contact not found.' } }));
+      }
+      const patch = contactPatch((req.body ?? {}) as Record<string, unknown>);
+      if (!patch.ok) {
+        return of(new HttpResponse({ status: 422, body: { message: patch.message } }));
+      }
+      Object.assign(existing, patch.value);
+      if (patch.value['isPrimary'] === true) {
+        for (const c of list) {
+          if (c.kind === existing.kind && c.id !== existing.id) {
+            c.isPrimary = false;
+          }
+        }
+      }
+      return json(existing);
+    }
+  }
+
+  // ---- History for a specific user (subtask 16: consent enforcement) ----
+  // A nurse/caregiver viewing another user's register requires the target's
+  // family_sharing consent; the owner always reads their own /me routes above.
+  if (parts[0] === 'history' && parts.length === 3) {
+    const targetUserId = parts[1];
+    const key = parts[2] as DemoHistoryKind | 'prescriptions';
+    if (!DEMO_HISTORY_KEYS.includes(key)) {
+      return of(new HttpResponse({ status: 404, body: { message: 'Unknown history kind.' } }));
+    }
+    const me = state.session;
+    const familySharing = (state.consents[targetUserId]?.consents ?? []).find(
+      (c) => c.purpose === 'family_sharing'
+    );
+    if (me?.userId !== targetUserId && !(familySharing?.granted ?? false)) {
+      return of(
+        new HttpResponse({
+          status: 403,
+          body: { message: 'This person has not granted family-sharing consent.' },
+        })
+      );
+    }
+    if (method === 'GET') {
+      return json(historyFor(targetUserId)[key]);
+    }
+  }
 
   if (parts[0] === 'clinical-log') {
     if (method === 'GET') {

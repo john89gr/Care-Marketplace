@@ -8,9 +8,12 @@
  * system.
  */
 import type {
+  AllergyIntolerance,
   Bundle,
   CarePlan,
+  Condition,
   FhirResource,
+  Immunization,
   MedicationRequest,
   Observation,
   Patient,
@@ -134,6 +137,39 @@ export function validateResource(resource: FhirResource): ValidationResult {
       }
       if (!c.subject) {
         errors.push(`${l}: missing subject`);
+      }
+      break;
+    }
+    case 'Condition': {
+      const c = resource as Condition;
+      if (!c.code) {
+        errors.push(`${l}: missing code`);
+      }
+      if (!c.clinicalStatus) {
+        errors.push(`${l}: missing clinicalStatus`);
+      }
+      break;
+    }
+    case 'AllergyIntolerance': {
+      const a = resource as AllergyIntolerance;
+      if (!a.code) {
+        errors.push(`${l}: missing code`);
+      }
+      if (!a.clinicalStatus) {
+        errors.push(`${l}: missing clinicalStatus`);
+      }
+      if (!a.category || a.category.length === 0) {
+        errors.push(`${l}: missing category`);
+      }
+      break;
+    }
+    case 'Immunization': {
+      const im = resource as Immunization;
+      if (!im.status) {
+        errors.push(`${l}: missing status`);
+      }
+      if (!im.vaccineCode) {
+        errors.push(`${l}: missing vaccineCode`);
       }
       break;
     }
