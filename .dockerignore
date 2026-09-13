@@ -1,0 +1,13 @@
+# Keep the Angular build context small and deterministic — the image builds
+# `dist/` itself, so a stale local copy must never leak in.
+**/node_modules
+**/dist
+.git
+.gitignore
+.angular
+test-results
+playwright-report
+blob-report
+coverage
+*.log
+**/.DS_Store

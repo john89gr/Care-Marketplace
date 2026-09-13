@@ -16,5 +16,51 @@ services:
       timeout: 2s
       retries: 20
 
+  # Express API: applies schema.sql + seeds on boot, then serves /api/** and
+  # the WebSocket channels. No SPA bundle is baked in — nginx (the `app`
+  # service) is the public entry point and proxies here.
+  server:
+    build:
+      context: ./server
+    image: care-marketplace-server
+    container_name: care-marketplace-server
+    environment:
+      PORT: '3000'
+      DATABASE_URL: postgres://care:care@db:5432/care_marketplace
+      JWT_SECRET: ${JWT_SECRET:-dev-only-change-me}
+      DEMO_PASSWORD: ${DEMO_PASSWORD:-demo1234}
+      VAPID_SUBJECT: ${VAPID_SUBJECT:-mailto:care@caremarketplace.example}
+      # NODE_ENV is deliberately unset: auth.ts marks session cookies `Secure`
+      # when NODE_ENV=production, which browsers then refuse to store unless
+      # the page itself is on HTTPS. Plain-HTTP localhost works everywhere
+      # with the default; set NODE_ENV=production once TLS terminates in front
+      # of this stack (see README → Docker).
+      # Push needs a real key pair to actually deliver; uncomment both and set
+      # them in your environment (the committed demo pair is the fallback, and
+      # an empty value would override it rather than fall back).
+      # VAPID_PUBLIC_KEY: ${VAPID_PUBLIC_KEY}
+      # VAPID_PRIVATE_KEY: ${VAPID_PRIVATE_KEY}
+    ports:
+      - '3000:3000'
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # Angular bundle served by nginx, which proxies /api/** (REST + WebSocket)
+  # to `server` so the app stays single-origin.
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: care-marketplace-app
+    container_name: care-marketplace-app
+    ports:
+      - '8080:8080'
+    depends_on:
+      server:
+        condition: service_healthy
+    restart: unless-stopped
+
 volumes:
   care-db-data:

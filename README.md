@@ -16,11 +16,13 @@ Then open `http://localhost:4200/`.
 
 ## Demo mode (no backend needed)
 
-The backend API does not exist yet, so the app ships with an in-memory demo
-backend that answers every `/api/**` call — including auth, marketplace
-search, booking + escrow, licence vetting, shifts, visits/GPS and payments.
-It is **off by default** so real backends and the Playwright E2E network mocks
-are unaffected.
+Alongside the real Express/Postgres API in `server/`, the app ships with an
+in-memory demo backend that answers every `/api/**` call — auth, marketplace
+search, booking + escrow, licence vetting, shifts, visits/GPS, payments and
+the personal health record (vitals, medications, medical history, contacts,
+consents). It is **off by default** so the real backend and the Playwright E2E
+network mocks are unaffected, and it needs no database — the quickest way to
+explore the app.
 
 Enable it by opening the app with a `demo` query parameter:
 
@@ -47,6 +49,83 @@ peer reply and visit positions are broadcast back to listeners.
 **Where it lives:** `src/app/core/api/demo.api.ts` (HTTP interceptor),
 `src/app/core/api/demo.socket.ts` (WebSocket), `src/app/core/api/demo.mode.ts`
 (enable flag).
+
+## Real API server + Postgres
+
+`server/` is an Express API backed by Postgres: auth/session, marketplace,
+bookings + escrow, vitals, medications + adherence logging, the medical-history
+register and prescriptions, contacts, reminder preferences, consents, audit
+events and push subscriptions. Compose provides the database:
+
+```bash
+npm run db:up      # docker compose up -d db
+npm run server     # tsx watch server/src/index.ts → http://localhost:3000
+npm run db:reset   # recreate the schema + seed the demo data
+```
+
+To run the API *and* the built app *and* the database together in containers,
+see the **Docker** section below.
+
+Server specs run against Postgres (Vitest):
+
+```bash
+npm --prefix server test
+```
+
+## Docker (app + API + Postgres)
+
+`docker-compose.yml` builds and runs the whole stack in containers:
+
+| Service | Built from | Host | Role |
+| --- | --- | --- | --- |
+| `app` | root `Dockerfile` (Node build → nginx) | http://localhost:8080 | production SPA bundle + reverse proxy for `/api` |
+| `server` | `server/Dockerfile` (Express on tsx) | http://localhost:3000 | REST + WebSocket API; applies `schema.sql` and seeds on boot |
+| `db` | `postgres:16-alpine` | 5432 | database (named volume `care-db-data`) |
+
+```bash
+docker compose up -d --build   # build the images and start the stack
+docker compose up --wait       # same, and block until every healthcheck passes
+docker compose logs -f server  # watch the schema/bootstrap + seed + requests
+docker compose down            # stop everything, keep the database volume
+docker compose down -v         # stop and delete the database volume
+```
+
+Then open http://localhost:8080 and log in with a seeded account — e.g.
+`maria@example.com` / `demo1234` (`DEMO_PASSWORD` in `server/src/seed.ts`; the
+"any password" rule in the demo table above applies to **demo mode**, not the
+real API).
+
+The `app` container is the only public entry point: nginx serves the compiled
+bundle and proxies `/api/**` — including the `/api/ws/chat` and
+`/api/ws/visits` WebSocket upgrades — to `server:3000`, so the browser stays on
+a single origin and the httpOnly session cookies work without CORS. The API
+container ships no SPA bundle, so an image built from `server/` alone still
+answers `GET /api/health` and the REST routes.
+
+`npm run db:up` / `npm run db:reset` are unchanged — they start just the `db`
+service for host-run development (`npm run server` + `ng serve`).
+
+### Deployment notes
+
+- **TLS and cookies.** `server/src/auth.ts` marks the session cookies `Secure`
+  when `NODE_ENV=production`, and browsers reject `Secure` cookies over plain
+  HTTP (except on `localhost`). The compose file therefore leaves `NODE_ENV`
+  unset so the stack works out of the box; set `NODE_ENV=production` once TLS
+  terminates in front of it.
+- **Secrets.** Override `JWT_SECRET` (and `DEMO_PASSWORD`) from your
+  environment or a `.env` file — the committed fallbacks are demo-only.
+- **Web Push.** The API falls back to a committed demo VAPID pair, so
+  notifications do not actually deliver until you supply your own keys.
+  Uncomment `VAPID_PUBLIC_KEY` / `VAPID_PRIVATE_KEY` in `docker-compose.yml`
+  and set them; the public key must match the one in
+  `src/app/core/services/push/push.config.ts`. (Leave them commented to keep
+  the demo pair — an empty value would override it rather than fall back.)
+- **Health.** The API exposes `GET /api/health`; both images declare a
+  `HEALTHCHECK` and compose gates startup on it, so `app` only starts once the
+  API can answer.
+- **Caching.** Fingerprinted bundles are served `immutable` for a year, while
+  `index.html`, `ngsw-worker.js`, `ngsw.json` and the web manifest are sent
+  `no-cache` so a deployed app update is picked up on the next load.
 
 ## PWA & offline (FEATURE_PLAN.md §20)
 
@@ -203,6 +282,14 @@ screening reminders, medication calendar + adherence alerts (missed critical
 doses notify the family), e-prescription scan + pharmacy order routing, and
 PDF/FHIR health-summary export.
 
+Medical-history register (FEATURE_PLAN.md §21 — **complete**): a `/history`
+register for conditions (curated ICD-11 catalog with Greek labels + search),
+allergies (kind/severity, feeding the drug-allergy safety banner),
+immunizations, medical events, symptoms and prescriptions, with inline add
+forms, soft-archive, a filterable chronological timeline, family read-only
+recipient views, server CRUD and demo parity. Delivered pharmacy orders can be
+staged into the prescriptions register.
+
 Health-record extensions (HEALTH_RECORDS_PLAN.md — **complete**): a contact
 phone manager (`/contacts`) with emergency/ICE and care-team groups, one-tap
 `tel:` calling, a single primary per group, and ICE contacts printed on the
@@ -222,7 +309,18 @@ resource mapping + export, certification expiry tracking with auto-suspend
 from search, immutable audit trail + consent management, dispute resolution
 console (escrow freeze, partial refunds), payment methods & payout accounts,
 chat v2 (attachments, voice notes, reactions), and the PWA/offline/push
-story above. 516 unit tests across 39 files plus Playwright E2E per phase.
+story above.
+
+## Test suites
+
+- **Frontend unit** — 712 Vitest tests across 55 files (`npm run unit`).
+- **Server** — Vitest specs against Postgres (`npm --prefix server test`);
+  start the database with `npm run db:up` first.
+- **E2E** — 51 Playwright tests across 21 specs (`npm run e2e`), driving the
+  real UI; most run fully against the in-memory demo backend, the rest mock
+  `/api/**` at the network layer.
+- **Fullstack push** — `npm run e2e:fullstack` proves a real Web Push is
+  delivered against the seeded Postgres server.
 
 ## Building
 
@@ -235,17 +333,22 @@ configuration (optimized, budget-checked).
 
 ## Running unit tests
 
-[Vitest](https://vitest.dev/) unit tests for stores and validators:
+[Vitest](https://vitest.dev/) unit tests for stores, pure logic, FHIR mappers
+and validators:
 
 ```bash
-ng test
+npm run unit   # single non-watch run
+ng test        # Angular CLI test runner
 ```
 
 ## Running end-to-end tests
 
-[Playwright](https://playwright.dev/) covers the phase exit criteria (register
-→ find a caregiver → chat, plus Phase 2 onboarding/vetting and shift
-calendar). The backend is mocked at the network layer inside the specs:
+[Playwright](https://playwright.dev/) covers the phase exit criteria through
+the real UI: register → find a caregiver → chat, Phase 2 onboarding/vetting
+and the shift calendar, Phase 3 vitals and the PHR (history, screenings,
+medications, export, pharmacy) and the `phase6-*` contacts,
+medicine-instructions and prescription-reminder flows. Most specs run against
+the in-memory demo backend; the network-mocked ones intercept `/api/**`:
 
 ```bash
 npm run e2e   # builds the app, then runs playwright test
@@ -261,17 +364,20 @@ npx playwright test
 
 ```
 src/app/
-  core/        # auth, api client, demo backend, WebSocket, geolocation
-  shared/      # validators, pipes, directives
+  core/          # auth, api client, demo backend, WebSocket, geolocation
+  shared/        # FHIR R4 mappers + bundle/validator, validators, signature pad, utils
   features/
-    auth/      # login, register, forbidden
-    marketplace/# search, matching, bookings, chat
-    profiles/  # role-aware profile forms
-    vetting/   # licence submission + admin review queue
-    home-health/# shifts, visits, live tracking, clinical log, care plan
-    payments/  # escrow ledger
-    shared/    # validators, signature pad
-    health-record/, pharmacy/, integrations/, admin/   # later phases
+    auth/        # login, register, forbidden
+    marketplace/ # search, matching, bookings, chat
+    profiles/    # role-aware profile forms
+    vetting/     # licence submission + admin review queue
+    home-health/ # shifts, visits, live tracking, clinical log, care plan
+    payments/    # escrow ledger
+    health-record/ # PHR: vitals, screenings, medications, history, contacts, export
+    pharmacy/    # e-prescription scan + order routing/console
+    integrations/# Gov.gr wallet, certification status
+    consents/    # consent ledger views
+    admin/       # vetting / audit / consent administration
 ```
 
 ## Additional Resources

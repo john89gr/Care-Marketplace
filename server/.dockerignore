@@ -1,0 +1,6 @@
+# The API image installs its own dependencies and only needs src/ at runtime.
+node_modules
+test
+vitest.config.ts
+*.log
+.DS_Store
