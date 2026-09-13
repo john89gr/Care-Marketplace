@@ -12,6 +12,11 @@ import { test, expect, Page } from '@playwright/test';
  * would reload the app and reset the in-memory store.
  */
 
+// Runs under a Greek browser locale so the runtime language detection is
+// exercised end-to-end: the history register, the wizard and the reminder
+// channel/settings components must all come up in Greek.
+test.use({ locale: 'el-GR' });
+
 const CLIENT = {
   userId: 'u-client',
   displayName: 'Maria Papadopoulou',
@@ -67,7 +72,7 @@ test('1x3 prescription pre-fills 08/14/20, then creates the medication and remin
 
   // Success names the drug and previews the next reminder.
   await expect(wizard.getByText(/προστέθηκε στα φάρμακα/)).toBeVisible();
-  await expect(wizard.getByText(/next reminder fires/)).toBeVisible();
+  await expect(wizard.getByText(/επόμενη υπενθύμιση/)).toBeVisible();
 
   await wizard.getByRole('button', { name: 'Κλείσιμο' }).click();
   await expect(wizard).toHaveCount(0);
@@ -76,8 +81,8 @@ test('1x3 prescription pre-fills 08/14/20, then creates the medication and remin
   await expect(item.getByText('πρόγραμμα φαρμάκων')).toBeVisible();
 
   // Shell nav = SPA navigation, so the demo medication list is preserved.
-  await page.getByRole('link', { name: 'Medications' }).click();
-  await expect(page.getByRole('heading', { name: 'Medications' })).toBeVisible();
+  await page.getByRole('link', { name: 'Φάρμακα' }).click();
+  await expect(page.getByRole('heading', { name: 'Φάρμακα' })).toBeVisible();
 
   // The medication exists with all three parsed dose times…
   const medCard = page.locator('li').filter({ hasText: 'Μετφορμίνη' });
@@ -85,8 +90,8 @@ test('1x3 prescription pre-fills 08/14/20, then creates the medication and remin
   await expect(medCard.getByText('14:00', { exact: true })).toBeVisible();
 
   // …and its reminders are wired (channel prefs + a next-reminder preview).
-  await expect(medCard.getByText('Reminder channels for Μετφορμίνη')).toBeVisible();
-  await expect(medCard.getByText(/next reminder fires/)).toBeVisible();
+  await expect(medCard.getByText('Κανάλια υπενθύμισης για Μετφορμίνη')).toBeVisible();
+  await expect(medCard.getByText(/επόμενη υπενθύμιση/)).toBeVisible();
 });
 
 test('SOS prescription has no fixed schedule and requires explicit times', async ({ page }) => {

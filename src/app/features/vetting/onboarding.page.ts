@@ -5,6 +5,7 @@ import { SessionStore } from '../../core/auth/session';
 import { ROLES, Role } from '../../core/auth/roles';
 import { licenceNumberValidator } from '../../shared/validators/id.validators';
 import { daysUntilExpiry } from '../../core/services/integrations/certification-status';
+import { I18n } from '../../core/i18n/i18n.service';
 
 /** Specialty options per provider role (PLAN.md §3.A home health services). */
 const SPECIALTIES: Record<string, string[]> = {
@@ -89,7 +90,7 @@ const SPECIALTIES: Record<string, string[]> = {
           </button>
 
           @if (store.error()) {
-            <p class="error" role="alert">{{ store.error() }}</p>
+            <p class="error" role="alert">{{ i18n.message(store.errorSource(), store.error()) }}</p>
           }
         </form>
       }
@@ -126,6 +127,8 @@ const SPECIALTIES: Record<string, string[]> = {
   `,
 })
 export class OnboardingPage implements OnInit {
+  protected readonly i18n = inject(I18n);
+
   readonly store = inject(VettingStore);
   private readonly session = inject(SessionStore);
   private readonly fb = inject(FormBuilder);

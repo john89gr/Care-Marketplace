@@ -1,5 +1,6 @@
-import { Component, computed, inject, OnInit, signal } from '@angular/core';
+import { Component, inject, OnInit, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
+import { I18n } from '../../core/i18n/i18n.service';
 import { ConsentStore, ConsentPurpose, CONSENT_PURPOSES, CONSENT_PURPOSE_LABELS } from '../../core/services/audit/consent.store';
 
 /**
@@ -9,6 +10,9 @@ import { ConsentStore, ConsentPurpose, CONSENT_PURPOSES, CONSENT_PURPOSE_LABELS 
  * document version. Toggles are optimistic: the UI flips immediately and
  * rolls back on API failure. A re-consent banner appears when the consent
  * document version has bumped (subtask 10).
+ *
+ * Purpose names come from the shared bilingual catalog in `consent.store.ts`,
+ * so they follow the active locale rather than being duplicated here.
  */
 @Component({
   selector: 'app-consents',
@@ -16,66 +20,77 @@ import { ConsentStore, ConsentPurpose, CONSENT_PURPOSES, CONSENT_PURPOSE_LABELS 
   imports: [FormsModule],
   template: `
     <section class="consents">
-      <h1>Consent settings</h1>
-
-      <p class="meta">
-        These settings control how your health data is shared. You can withdraw
-        any consent at any time. Withdrawing does not delete data already
-        processed.
-      </p>
+      <header class="page-header">
+        <div>
+          <h1 class="page-title">{{ i18n.t('consents.title') }}</h1>
+          <p class="page-subtitle">{{ i18n.t('consents.intro') }}</p>
+        </div>
+      </header>
 
       @if (store.needsReConsent()) {
-        <div class="banner" role="alert" aria-live="polite">
-          <h2>Action required: new consent terms</h2>
-          <p>
-            The terms for the following purpose(s) have been updated and require
-            your renewed consent:
-          </p>
-          <ul>
+        <div class="card banner" role="alert" aria-live="polite">
+          <h2 class="card-title">{{ i18n.t('consents.reConsentTitle') }}</h2>
+          <p>{{ i18n.t('consents.reConsentBody') }}</p>
+          <ul class="purposes">
             @for (purpose of store.stalePurposes(); track purpose) {
               <li>{{ label(purpose) }}</li>
             }
           </ul>
           <p>
-            <a href="https://care-marketplace.example/consent/v{{ store.documentVersion() }}"
-               target="_blank" rel="noopener">
-              Review the updated document (v{{ store.documentVersion() }})
+            <a
+              href="https://care-marketplace.example/consent/v{{ store.documentVersion() }}"
+              target="_blank"
+              rel="noopener"
+            >
+              {{ i18n.t('consents.reviewDocument', { version: store.documentVersion() }) }}
             </a>
           </p>
-          <button type="button" class="primary" (click)="grantAllStale()">Re-consent now</button>
+          <div class="card-actions">
+            <button type="button" class="btn" (click)="grantAllStale()">
+              {{ i18n.t('consents.reConsentNow') }}
+            </button>
+          </div>
         </div>
       }
 
       @if (store.loading()) {
-        <p>Loading…</p>
+        <p class="meta">{{ i18n.t('common.loading') }}</p>
       } @else if (store.error()) {
-        <p class="error" role="alert">{{ store.error() }}</p>
+        <p class="error" role="alert">{{ i18n.message(store.errorSource(), store.error()) }}</p>
       } @else {
         <ul class="list">
           @for (purpose of purposes; track purpose) {
-            <li [class.granted]="store.isGranted(purpose)">
+            <li class="card consent" [class.granted]="store.isGranted(purpose)">
               <div class="head">
-                <h3>{{ label(purpose) }}</h3>
-                <span class="status">
-                  {{ store.isGranted(purpose) ? 'Active' : 'Not granted' }}
+                <h2 class="card-title">{{ label(purpose) }}</h2>
+                <span class="badge" [class.success]="store.isGranted(purpose)">
+                  {{
+                    store.isGranted(purpose)
+                      ? i18n.t('consents.active')
+                      : i18n.t('consents.notGranted')
+                  }}
                 </span>
               </div>
-              <p class="effective">
-                Effective:
+              <p class="meta">
+                {{ i18n.t('consents.effective') }}
                 @if (byPurpose()[purpose]?.updatedAtMs) {
                   {{ formatDate(byPurpose()[purpose]!.updatedAtMs) }}
                 } @else {
-                  <em>Not yet set</em>
+                  <em>{{ i18n.t('consents.notYetSet') }}</em>
                 }
               </p>
-              <div class="actions">
+              <div class="card-actions">
                 <button
                   type="button"
-                  [class.primary]="store.isGranted(purpose)"
+                  [class]="store.isGranted(purpose) ? 'btn secondary' : 'btn'"
                   (click)="toggle(purpose)"
                   [attr.aria-pressed]="store.isGranted(purpose)"
                 >
-                  {{ store.isGranted(purpose) ? 'Withdraw' : 'Grant' }}
+                  {{
+                    store.isGranted(purpose)
+                      ? i18n.t('consents.withdraw')
+                      : i18n.t('consents.grant')
+                  }}
                 </button>
               </div>
             </li>
@@ -89,39 +104,43 @@ import { ConsentStore, ConsentPurpose, CONSENT_PURPOSES, CONSENT_PURPOSE_LABELS 
     </section>
   `,
   styles: `
-    .consents { max-width: 48rem; }
-    .meta { color: var(--text-muted); }
-    .banner {
-      background: var(--warning-soft, #fff8e1);
-      border: 1px solid var(--warning, #f57f17);
-      border-radius: 0.5rem;
-      padding: 1rem;
-      margin-bottom: 1rem;
+    .consents {
+      max-width: 52rem;
     }
-    .banner h2 { margin: 0 0 0.5rem; font-size: 1.1rem; }
-    .banner ul { margin: 0.5rem 0; padding-left: 1.2rem; }
-    .banner a { font-weight: 600; }
-    .list { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.75rem; }
-    .list li {
-      border: 1px solid var(--border, #d9dee7);
-      border-radius: 0.5rem;
-      padding: 0.75rem 1rem;
+    /* .card for the shared surface, .banner for the warning tone. */
+    .card.banner {
+      border-color: var(--warning);
+      background: var(--warning-soft);
+      color: var(--warning);
+      margin-bottom: var(--space-4);
     }
-    .list li.granted { border-color: var(--success, #1d7a3d); }
-    .head { display: flex; align-items: baseline; justify-content: space-between; gap: 0.5rem; }
-    .head h3 { margin: 0; font-size: 1.05rem; }
-    .status { font-size: 0.85rem; color: var(--text-muted); }
-    .effective { font-size: 0.8rem; color: var(--text-muted); margin: 0.25rem 0; }
-    .actions { margin-top: 0.5rem; }
-    .actions button { min-height: 44px; padding: 0.4rem 0.9rem; border-radius: 0.4rem; border: 1px solid var(--border, #ccc); background: var(--surface, #fff); cursor: pointer; }
-    .actions button.primary { background: var(--accent, #4f7cff); color: #fff; border-color: transparent; font-weight: 600; }
-    .actions button[aria-pressed="true"] { outline: 2px solid var(--success, #1d7a3d); }
-    .error { color: var(--danger, #c62828); font-weight: 600; }
-    .banner button.primary { background: var(--accent, #4f7cff); color: #fff; border: none; border-radius: 0.4rem; min-height: 44px; padding: 0.4rem 1rem; }
+    .card.banner .card-title,
+    .card.banner a {
+      color: var(--warning);
+    }
+    .purposes {
+      margin: var(--space-2) 0;
+      padding-left: 1.2rem;
+    }
+    .head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: var(--space-3);
+    }
+    .card.consent.granted {
+      border-left: 3px solid var(--success);
+    }
+    .status {
+      margin-top: var(--space-4);
+      color: var(--success);
+      font-weight: var(--weight-medium);
+    }
   `,
 })
 export class ConsentsPage implements OnInit {
   protected readonly store = inject(ConsentStore);
+  protected readonly i18n = inject(I18n);
 
   protected readonly purposes = CONSENT_PURPOSES;
   readonly status = signal('');
@@ -135,14 +154,15 @@ export class ConsentsPage implements OnInit {
   toggle(purpose: ConsentPurpose): void {
     const currentlyGranted = this.store.isGranted(purpose);
     this.store.update(purpose, !currentlyGranted).subscribe((ok) => {
+      const purposeName = this.label(purpose);
       if (ok) {
         this.status.set(
           currentlyGranted
-            ? `${this.label(purpose)} withdrawn.`
-            : `${this.label(purpose)} granted.`
+            ? this.i18n.t('consents.status.withdrawn', { purpose: purposeName })
+            : this.i18n.t('consents.status.granted', { purpose: purposeName })
         );
       } else {
-        this.status.set(`Could not update ${this.label(purpose).toLowerCase()}. Please try again.`);
+        this.status.set(this.i18n.t('consents.status.failed', { purpose: purposeName }));
       }
     });
   }
@@ -156,16 +176,16 @@ export class ConsentsPage implements OnInit {
     for (const purpose of stale) {
       this.store.update(purpose, true).subscribe();
     }
-    this.status.set('All updated consents have been re-confirmed.');
+    this.status.set(this.i18n.t('consents.status.reConfirmed'));
   }
 
+  /** Purpose label in the active locale (catalog ships both). */
   label(purpose: ConsentPurpose): string {
-    const labels = CONSENT_PURPOSE_LABELS[purpose];
-    return labels.en;
+    return CONSENT_PURPOSE_LABELS[purpose][this.i18n.language()];
   }
 
   formatDate(ms: number): string {
-    return new Date(ms).toLocaleDateString(undefined, {
+    return new Date(ms).toLocaleDateString(this.i18n.locale(), {
       day: 'numeric',
       month: 'short',
       year: 'numeric',

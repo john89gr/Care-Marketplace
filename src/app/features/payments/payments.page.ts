@@ -1,5 +1,6 @@
 import { Component, inject, OnInit } from '@angular/core';
 import { EscrowStore, EscrowTransaction } from './escrow.store';
+import { I18n } from '../../core/i18n/i18n.service';
 
 function formatDate(ms: number): string {
   return new Date(ms).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
@@ -49,7 +50,7 @@ function formatDate(ms: number): string {
       }
 
       @if (store.error()) {
-        <p class="error" role="alert">{{ store.error() }}</p>
+        <p class="error" role="alert">{{ i18n.message(store.errorSource(), store.error()) }}</p>
       }
     </section>
   `,
@@ -61,6 +62,8 @@ function formatDate(ms: number): string {
   `,
 })
 export class PaymentsPage implements OnInit {
+  protected readonly i18n = inject(I18n);
+
   readonly store = inject(EscrowStore);
 
   ngOnInit(): void {

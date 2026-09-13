@@ -52,8 +52,14 @@ export interface TimelineGroup {
 /**
  * Build one chronology for every history category. Archived records are kept
  * (history is never deleted) but flagged so the UI can render them muted.
+ *
+ * `locale` localizes the generated enum/dose details; it defaults to Greek to
+ * match the module's bilingual catalogs (callers pass the active language).
  */
-export function buildTimeline(input: HistoryInput): TimelineEntry[] {
+export function buildTimeline(
+  input: HistoryInput,
+  locale: 'el' | 'en' = 'el'
+): TimelineEntry[] {
   const entries: TimelineEntry[] = [];
 
   for (const c of input.conditions) {
@@ -63,8 +69,8 @@ export function buildTimeline(input: HistoryInput): TimelineEntry[] {
       atMs: c.diagnosedAtMs,
       title: c.name,
       detail: [
-        c.icd11Code ? icd11Label(c.icd11Code) : '',
-        historyLabel(CONDITION_STATUS_LABELS, c.status),
+        c.icd11Code ? icd11Label(c.icd11Code, locale) : '',
+        historyLabel(CONDITION_STATUS_LABELS, c.status, locale),
       ]
         .filter(Boolean)
         .join(' · '),
@@ -78,7 +84,7 @@ export function buildTimeline(input: HistoryInput): TimelineEntry[] {
       kind: 'allergies',
       atMs: a.confirmedAtMs,
       title: a.substance,
-      detail: [historyLabel(ALLERGY_KIND_LABELS, a.kind), a.reaction ?? '']
+      detail: [historyLabel(ALLERGY_KIND_LABELS, a.kind, locale), a.reaction ?? '']
         .filter(Boolean)
         .join(' · '),
       archived: Boolean(a.archived),
@@ -91,7 +97,9 @@ export function buildTimeline(input: HistoryInput): TimelineEntry[] {
       kind: 'immunizations',
       atMs: im.administeredAtMs,
       title: im.vaccine,
-      detail: im.doseNumber ? `Δόση ${im.doseNumber}` : '',
+      detail: im.doseNumber
+        ? `${locale === 'el' ? 'Δόση' : 'Dose'} ${im.doseNumber}`
+        : '',
       archived: Boolean(im.archived),
     });
   }
@@ -102,7 +110,7 @@ export function buildTimeline(input: HistoryInput): TimelineEntry[] {
       kind: 'events',
       atMs: e.occurredAtMs,
       title: e.name,
-      detail: [historyLabel(EVENT_KIND_LABELS, e.kind), e.facility ?? '']
+      detail: [historyLabel(EVENT_KIND_LABELS, e.kind, locale), e.facility ?? '']
         .filter(Boolean)
         .join(' · '),
       archived: Boolean(e.archived),
@@ -115,7 +123,7 @@ export function buildTimeline(input: HistoryInput): TimelineEntry[] {
       kind: 'symptoms',
       atMs: s.onsetAtMs,
       title: s.name,
-      detail: historyLabel(SYMPTOM_SEVERITY_LABELS, s.severity),
+      detail: historyLabel(SYMPTOM_SEVERITY_LABELS, s.severity, locale),
       archived: Boolean(s.archived),
     });
   }
@@ -126,7 +134,7 @@ export function buildTimeline(input: HistoryInput): TimelineEntry[] {
       kind: 'prescriptions',
       atMs: p.issuedAtMs,
       title: p.drug,
-      detail: [p.dose ?? '', historyLabel(PRESCRIPTION_STATUS_LABELS, p.status)]
+      detail: [p.dose ?? '', historyLabel(PRESCRIPTION_STATUS_LABELS, p.status, locale)]
         .filter(Boolean)
         .join(' · '),
       archived: Boolean(p.archived),

@@ -3,6 +3,8 @@ import { Observable, map, catchError, of } from 'rxjs';
 import { ApiClient } from '../../core/api/api.client';
 import { AuditService } from '../../core/services/audit/audit.service';
 import { NotificationsService } from '../../core/services/notifications/notifications.service';
+import { detectLanguage } from '../../core/i18n/i18n.service';
+import { LocalizedMessage } from '../../core/i18n/localized-message';
 
 /**
  * Personal health record vitals (PLAN.md §3.C / §5 Phase 3 — PHR).
@@ -30,14 +32,23 @@ export interface VitalRange {
   max: number | null;
 }
 
-export const VITAL_LABELS: Record<VitalType, string> = {
-  bloodPressure: 'Blood pressure',
-  glucose: 'Glucose',
-  spo2: 'SpO₂',
-  weight: 'Weight',
-  temperature: 'Temperature',
-  heartRate: 'Heart rate',
+/**
+ * Bilingual vital-type names. The page follows the active locale; the PDF
+ * exporter keeps consuming the English projection below.
+ */
+export const VITAL_LABELS_I18N: Record<VitalType, { en: string; el: string }> = {
+  bloodPressure: { en: 'Blood pressure', el: 'Αρτηριακή πίεση' },
+  glucose: { en: 'Glucose', el: 'Γλυκόζη' },
+  spo2: { en: 'SpO₂', el: 'Κορεσμός οξυγόνου' },
+  weight: { en: 'Weight', el: 'Βάρος' },
+  temperature: { en: 'Temperature', el: 'Θερμοκρασία' },
+  heartRate: { en: 'Heart rate', el: 'Καρδιακή συχνότητα' },
 };
+
+/** English projection for non-localized consumers (PDF export). */
+export const VITAL_LABELS: Record<VitalType, string> = Object.fromEntries(
+  Object.entries(VITAL_LABELS_I18N).map(([type, label]) => [type, label.en])
+) as Record<VitalType, string>;
 
 export const VITAL_UNITS: Record<VitalType, string> = {
   bloodPressure: 'mmHg',
@@ -75,13 +86,15 @@ export class VitalsStore {
   private readonly _readings = signal<VitalReading[]>([]);
   private readonly _loading = signal(false);
   private readonly _saving = signal(false);
-  private readonly _error = signal('');
+  private readonly _error = new LocalizedMessage();
   private readonly _saved = signal(false);
 
   readonly readings = this._readings.asReadonly();
   readonly loading = this._loading.asReadonly();
   readonly saving = this._saving.asReadonly();
-  readonly error = this._error.asReadonly();
+  /** Translatable source of the message (null for server-provided text). */
+  readonly errorSource = this._error.source;
+  readonly error = this._error.value;
   readonly saved = this._saved.asReadonly();
 
   load(): void {
@@ -104,7 +117,7 @@ export class VitalsStore {
   add(reading: Omit<VitalReading, 'id' | 'source'>): Observable<boolean> {
     this._saving.set(true);
     this._saved.set(false);
-    this._error.set('');
+    this._error.clear();
     const payload: VitalReading = { ...reading, id: crypto.randomUUID(), source: 'manual' };
     return this.api.post<VitalReading>('/vitals/me', payload).pipe(
       map((saved) => {
@@ -117,8 +130,14 @@ export class VitalsStore {
         if (this.notifications && isOutOfRange(reading)) {
           this.notifications.notify(
             'vitals.alert',
-            `${VITAL_LABELS[reading.type]} outside reference range`,
-            `Latest reading is outside the expected range — check the trends view.`,
+            {
+              key: 'notify.vitalsTitle',
+              // The vital name comes from the shared bilingual label map, so
+              // there is one source for it (the PDF export uses its `en`
+              // projection). Resolved in the language active at emit time.
+              params: { vital: VITAL_LABELS_I18N[reading.type][detectLanguage()] },
+            },
+            { key: 'notify.vitalsBody' },
             '/vitals'
           );
         }
@@ -134,10 +153,9 @@ export class VitalsStore {
       }),
       catchError((error) => {
         this._saving.set(false);
-        this._error.set(
-          (error as { error?: { message?: string } })?.error?.message ??
-            'Could not save the reading. Please try again.'
-        );
+        this._error.setFromServer((error as { error?: { message?: string } })?.error?.message, {
+            key: 'store.vitals.saveFailed',
+          });
         return of(false);
       })
     );

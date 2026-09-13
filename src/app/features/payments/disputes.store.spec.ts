@@ -108,8 +108,8 @@ describe('DisputesStore', () => {
     expect(escrow.freeze).toHaveBeenCalledWith('e-1');
     expect(notifications.notify).toHaveBeenCalledWith(
       'dispute.opened',
-      expect.any(String),
-      expect.any(String),
+      { key: 'notify.disputeOpened' },
+      { key: 'notify.disputeOpenedBody', params: { booking: 'b-1' } },
       '/disputes'
     );
   });

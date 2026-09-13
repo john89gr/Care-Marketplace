@@ -1,6 +1,7 @@
 import { Injectable, inject, signal } from '@angular/core';
 import { Observable, map, catchError, of } from 'rxjs';
 import { ApiClient } from '../../core/api/api.client';
+import { detectLanguage } from '../../core/i18n/i18n.service';
 import { NotificationsService } from '../../core/services/notifications/notifications.service';
 import { WebSocketClient } from '../../core/services/ws/websocket.client';
 import type { Medication } from './medications.logic';
@@ -18,6 +19,7 @@ import {
   reminderPreview,
   isValidTimeZone,
 } from './reminders.logic';
+import { LocalizedMessage } from '../../core/i18n/localized-message';
 
 /**
  * Smart Reminders store (FEATURE_PLAN.md §8): per-medication channel prefs,
@@ -85,7 +87,7 @@ export class RemindersStore {
   private readonly _prefs = signal<ReminderPreferences>(structuredClone(DEFAULT_PREFERENCES));
   private readonly _loading = signal(false);
   private readonly _saving = signal(false);
-  private readonly _error = signal('');
+  private readonly _error = new LocalizedMessage();
   private readonly _loaded = signal(false);
   private readonly _history = signal<ReminderHistoryEntry[]>([]);
   private readonly _pushState = signal<NotificationPermission | 'unsupported' | 'unknown'>('unknown');
@@ -93,7 +95,9 @@ export class RemindersStore {
   readonly prefs = this._prefs.asReadonly();
   readonly loading = this._loading.asReadonly();
   readonly saving = this._saving.asReadonly();
-  readonly error = this._error.asReadonly();
+  /** Translatable source of the message (null for server-provided text). */
+  readonly errorSource = this._error.source;
+  readonly error = this._error.value;
   readonly loaded = this._loaded.asReadonly();
   readonly history = this._history.asReadonly();
   readonly pushState = this._pushState.asReadonly();
@@ -104,9 +108,9 @@ export class RemindersStore {
   }
 
   /** Preview line "next reminder fires Tue 08:00 via push" (subtask 6). */
-  previewFor(med: Medication, nowMs: number = Date.now()): string {
+  previewFor(med: Medication, nowMs: number = Date.now(), locale: 'el' | 'en' = 'en'): string {
     const prefs = this._prefs();
-    return reminderPreview(med, nowMs, prefs.timezone, this.channelsFor(med.id));
+    return reminderPreview(med, nowMs, prefs.timezone, this.channelsFor(med.id), locale);
   }
 
   /** Quiet-hours state right now in the user's timezone (subtask 7). */
@@ -175,7 +179,7 @@ export class RemindersStore {
   /** Persist a patch (merged client-side, PUT as a full resource). */
   save(patch: Partial<ReminderPreferences>): Observable<boolean> {
     this._saving.set(true);
-    this._error.set('');
+    this._error.clear();
     const merged: ReminderPreferences = normalizePreferences({ ...this._prefs(), ...patch });
     return this.api.put<ReminderPreferences>(PREFS_PATH, merged).pipe(
       map((saved) => {
@@ -185,10 +189,9 @@ export class RemindersStore {
       }),
       catchError((error) => {
         this._saving.set(false);
-        this._error.set(
-          (error as { error?: { message?: string } })?.error?.message ??
-            'Could not save reminder preferences. Please try again.'
-        );
+        this._error.setFromServer((error as { error?: { message?: string } })?.error?.message, {
+            key: 'store.reminders.saveFailed',
+          });
         return of(false);
       })
     );
@@ -212,7 +215,7 @@ export class RemindersStore {
   /** IANA timezone per user (subtask 10); rejects unknown zone names. */
   setTimezone(timezone: string): Observable<boolean> {
     if (!isValidTimeZone(timezone)) {
-      this._error.set(`Unknown timezone "${timezone}". Use an IANA name like Europe/Athens.`);
+      this._error.set({ key: 'store.reminders.unknownTimezone', params: { timezone } });
       return of(false);
     }
     return this.save({ timezone });
@@ -270,10 +273,16 @@ export class RemindersStore {
     );
     const prefs = this._prefs();
     if (med.critical && prefs.caregiverCopy.enabled && entries.some((e) => e.status === 'sent')) {
+      const relationship = prefs.caregiverCopy.relationship;
       this.notifications?.notify(
         'medication.missed',
-        `Caregiver copy: ${med.name}`,
-        `Duplicate reminder${prefs.caregiverCopy.relationship ? ` for ${prefs.caregiverCopy.relationship}` : ''}: time for ${med.dose}.`,
+        { key: 'notify.caregiverCopyTitle', params: { name: med.name } },
+        relationship
+          ? {
+              key: 'notify.caregiverCopyBody',
+              params: { relationship, dose: med.dose },
+            }
+          : { key: 'notify.caregiverCopyBodyPlain', params: { dose: med.dose } },
         '/medications'
       );
       entries.push({
@@ -298,14 +307,14 @@ export class RemindersStore {
   sendTestReminder(med: Medication): void {
     const nowMs = Date.now();
     this.ws?.send({ type: 'reminder.test', payload: { medicationId: med.id, name: med.name, atMs: nowMs } });
-    const preview = this.previewFor(med, nowMs);
+    const preview = this.previewFor(med, nowMs, detectLanguage());
     this.notifications?.notify(
       'medication.missed',
-      `Test reminder: ${med.name}`,
-      `${preview}. This is how your reminder will look.`,
+      { key: 'notify.testReminderTitle', params: { name: med.name } },
+      { key: 'notify.testReminderBody', params: { preview } },
       '/medications'
     );
-    this.notifications?.toast(`Test reminder sent for ${med.name}`, 'success');
+    this.notifications?.toast({ key: 'notify.testReminderToast', params: { name: med.name } }, 'success');
     this._history.update((history) =>
       [
         {
@@ -338,8 +347,11 @@ export class RemindersStore {
         if (med.critical) {
           this.notifications?.notify(
             'medication.missed',
-            `Reminder: ${med.name}`,
-            `Time for ${med.dose} (${this.previewFor(med, nowMs)}).`,
+            { key: 'notify.reminderTitle', params: { name: med.name } },
+            {
+              key: 'notify.reminderBody',
+              params: { dose: med.dose, preview: this.previewFor(med, nowMs, detectLanguage()) },
+            },
             '/medications'
           );
         }

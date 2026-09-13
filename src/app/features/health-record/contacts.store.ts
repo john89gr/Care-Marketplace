@@ -10,6 +10,7 @@ import {
   primaryEmergency,
   withSinglePrimary,
 } from './contacts.models';
+import { LocalizedMessage } from '../../core/i18n/localized-message';
 
 /**
  * Contact phone manager store (FEATURE_PLAN.md — contact phone manager):
@@ -36,14 +37,16 @@ export class ContactsStore {
   private readonly _contacts = signal<MedicalContact[]>([]);
   private readonly _loading = signal(false);
   private readonly _actingKey = signal<string | null>(null);
-  private readonly _error = signal('');
+  private readonly _error = new LocalizedMessage();
   private readonly _loaded = signal(false);
   private readonly _readOnly = signal(false);
 
   readonly contacts = this._contacts.asReadonly();
   readonly loading = this._loading.asReadonly();
   readonly actingKey = this._actingKey.asReadonly();
-  readonly error = this._error.asReadonly();
+  /** Translatable source of the message (null for server-provided text). */
+  readonly errorSource = this._error.source;
+  readonly error = this._error.value;
   readonly loaded = this._loaded.asReadonly();
   readonly readOnly = this._readOnly.asReadonly();
 
@@ -59,7 +62,7 @@ export class ContactsStore {
 
   load(): Observable<boolean> {
     this._loading.set(true);
-    this._error.set('');
+    this._error.clear();
     return this.api.get<MedicalContact[]>(CONTACTS_PATH).pipe(
       map((items) => {
         this._contacts.set(items ?? []);
@@ -73,7 +76,7 @@ export class ContactsStore {
       }),
       catchError((error) => {
         this._loading.set(false);
-        this._error.set(this.message(error, 'Could not load your contacts. Please try again.'));
+        this._error.setFromServer(this.serverMessage(error), { key: 'store.contacts.loadFailed' });
         return of(false);
       })
     );
@@ -84,7 +87,7 @@ export class ContactsStore {
     if (this.rejectWhenReadOnly()) {
       return of(false);
     }
-    this._error.set('');
+    this._error.clear();
     this._actingKey.set('new');
     const optimisticId = `local-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
     const optimistic: MedicalContact = {
@@ -110,7 +113,7 @@ export class ContactsStore {
       catchError((error) => {
         this._contacts.update((all) => all.filter((c) => c.id !== optimisticId));
         this._actingKey.set(null);
-        this._error.set(this.message(error, 'Could not save this contact. Please try again.'));
+        this._error.setFromServer(this.serverMessage(error), { key: 'store.contacts.saveFailed' });
         return of(false);
       })
     );
@@ -122,7 +125,7 @@ export class ContactsStore {
       return of(false);
     }
     this._actingKey.set(id);
-    this._error.set('');
+    this._error.clear();
     return this.api.patch<MedicalContact>(`${CONTACTS_PATH}/${encodeURIComponent(id)}`, patch).pipe(
       map((updated) => {
         this._contacts.update((all) => all.map((c) => (c.id === id ? updated : c)));
@@ -135,7 +138,7 @@ export class ContactsStore {
       }),
       catchError((error) => {
         this._actingKey.set(null);
-        this._error.set(this.message(error, 'Could not update this contact.'));
+        this._error.setFromServer(this.serverMessage(error), { key: 'store.contacts.updateFailed' });
         return of(false);
       })
     );
@@ -160,7 +163,7 @@ export class ContactsStore {
       return of(false);
     }
     this._actingKey.set(id);
-    this._error.set('');
+    this._error.clear();
     this._contacts.set(withSinglePrimary(before, target.kind, id));
     return this.api.patch<MedicalContact>(`${CONTACTS_PATH}/${encodeURIComponent(id)}`, { isPrimary: true }).pipe(
       map((updated) => {
@@ -174,7 +177,7 @@ export class ContactsStore {
       catchError((error) => {
         this._contacts.set(before);
         this._actingKey.set(null);
-        this._error.set(this.message(error, 'Could not set the primary contact.'));
+        this._error.setFromServer(this.serverMessage(error), { key: 'store.contacts.primaryFailed' });
         return of(false);
       })
     );
@@ -189,15 +192,19 @@ export class ContactsStore {
     if (!this._readOnly()) {
       return false;
     }
-    this._error.set('This view is read-only for your role.');
+    this._error.set({ key: 'store.readOnly' });
     return true;
   }
 
-  private message(error: unknown, fallback: string): string {
+  /**
+   * Message the server sent with the failure, if any. The app-authored fallback
+   * is carried separately as a dictionary key so it can be translated.
+   */
+  private serverMessage(error: unknown): string | null {
     return (
       (error as { error?: { message?: string } })?.error?.message ??
       (error as { message?: string })?.message ??
-      fallback
+      null
     );
   }
 }

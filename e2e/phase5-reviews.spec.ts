@@ -112,7 +112,7 @@ test.describe('Feature 1 — Reviews & Ratings', () => {
 
     // 3. The rating and review are visible on the marketplace.
     await page.goto('/marketplace');
-    await expect(page.getByText('1 reviews')).toBeVisible();
+    await expect(page.getByText('1 review', { exact: true })).toBeVisible();
     await page
       .getByRole('button', { name: /Reviews \(1\)/ })
       .click();

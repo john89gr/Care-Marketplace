@@ -9,6 +9,7 @@ import { HealthSummaryExportService } from './export.service';
 import { HistoryStore } from './history.store';
 import { ContactsStore } from './contacts.store';
 import { drawSparkline } from './export.sparkline';
+import { I18n } from '../../core/i18n/i18n.service';
 import {
   EXPORT_LOCALES,
   EXPORT_RANGES,
@@ -129,7 +130,7 @@ import {
       }
       @if (exporting.error()) {
         <p class="error" role="alert">
-          {{ exporting.error() }}
+          {{ i18n.message(exporting.errorSource(), exporting.error()) }}
           <button type="button" (click)="exporting.retry()">
             {{ locale() === 'el' ? 'Επανάληψη' : 'Retry' }}
           </button>
@@ -181,6 +182,8 @@ import {
   `,
 })
 export class HealthSummaryExportPage {
+  protected readonly i18n = inject(I18n);
+
   readonly vitals = inject(VitalsStore);
   readonly meds = inject(MedicationsStore);
   readonly screening = inject(ScreeningStore);

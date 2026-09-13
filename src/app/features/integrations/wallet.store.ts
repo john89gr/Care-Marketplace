@@ -1,6 +1,7 @@
 import { Injectable, inject, signal, computed } from '@angular/core';
 import { Observable, map, catchError, of } from 'rxjs';
 import { ApiClient } from '../../core/api/api.client';
+import { LocalizedMessage } from '../../core/i18n/localized-message';
 
 /**
  * Gov.gr Health Wallet categories (PLAN.md §3.D / FEATURE_PLAN.md §15
@@ -57,7 +58,7 @@ export class WalletStore {
   private readonly _loading = signal(false);
   private readonly _syncState = signal<SyncState>('idle');
   private readonly _syncingCategory = signal<WalletCategory | null>(null);
-  private readonly _error = signal('');
+  private readonly _error = new LocalizedMessage();
   private readonly _loaded = signal(false);
   /** Per-category last-sync epoch; 0 = never synced. */
   private readonly _lastSynced = signal<Record<WalletCategory, number>>({
@@ -71,7 +72,9 @@ export class WalletStore {
   readonly loading = this._loading.asReadonly();
   readonly syncState = this._syncState.asReadonly();
   readonly syncingCategory = this._syncingCategory.asReadonly();
-  readonly error = this._error.asReadonly();
+  /** Translatable source of the message (null for server-provided text). */
+  readonly errorSource = this._error.source;
+  readonly error = this._error.value;
   /** True once the wallet has been loaded at least once. */
   readonly loaded = this._loaded.asReadonly();
   readonly lastSynced = this._lastSynced.asReadonly();
@@ -130,7 +133,7 @@ export class WalletStore {
   private _syncCategory(category: WalletCategory | null): Observable<boolean> {
     this._syncState.set('syncing');
     this._syncingCategory.set(category);
-    this._error.set('');
+    this._error.clear();
     const url = category ? `/me/wallet?category=${encodeURIComponent(category)}` : '/me/wallet';
     return this.api.get<{ documents: WalletDocument[] }>(url).pipe(
       map((payload) => {
@@ -144,10 +147,9 @@ export class WalletStore {
       catchError((error) => {
         this._syncState.set('error');
         this._syncingCategory.set(null);
-        this._error.set(
-          (error as { error?: { message?: string } })?.error?.message ??
-            'Could not sync your health wallet. Please try again.'
-        );
+        this._error.setFromServer((error as { error?: { message?: string } })?.error?.message, {
+            key: 'store.wallet.syncFailed',
+          });
         return of(false);
       })
     );

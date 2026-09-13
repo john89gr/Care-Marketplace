@@ -16,6 +16,7 @@ import {
   AdherenceStats,
   ESCALATION_AFTER_MISSES,
 } from './medications.logic';
+import { LocalizedMessage } from '../../core/i18n/localized-message';
 import { MedicineInstructions, normalizeInstructions } from './medicine.info';
 
 /**
@@ -59,7 +60,7 @@ export class MedicationsStore {
   private readonly _logs = signal<AdherenceLog[]>([]);
   private readonly _loading = signal(false);
   private readonly _actingId = signal<string | null>(null);
-  private readonly _error = signal('');
+  private readonly _error = new LocalizedMessage();
   private readonly _loaded = signal(false);
   private readonly _interaction = signal<InteractionCheck | null>(null);
 
@@ -67,7 +68,9 @@ export class MedicationsStore {
   readonly logs = this._logs.asReadonly();
   readonly loading = this._loading.asReadonly();
   readonly actingId = this._actingId.asReadonly();
-  readonly error = this._error.asReadonly();
+  /** Translatable source of the message (null for server-provided text). */
+  readonly errorSource = this._error.source;
+  readonly error = this._error.value;
   readonly loaded = this._loaded.asReadonly();
   readonly interaction = this._interaction.asReadonly();
 
@@ -157,7 +160,7 @@ export class MedicationsStore {
 
   /** Add a medication (subtask 2: POST /me/medications). */
   add(input: NewMedication): Observable<boolean> {
-    this._error.set('');
+    this._error.clear();
     return this.api.post<Medication>('/me/medications', input).pipe(
        map((created) => {
          this._meds.update((meds) => [created, ...meds]);
@@ -170,10 +173,9 @@ export class MedicationsStore {
          return true;
        }),
       catchError((error) => {
-        this._error.set(
-          (error as { error?: { message?: string } })?.error?.message ??
-            'Could not add the medication. Please try again.'
-        );
+        this._error.setFromServer((error as { error?: { message?: string } })?.error?.message, {
+            key: 'store.medications.addFailed',
+          });
         return of(false);
       })
     );
@@ -188,7 +190,7 @@ export class MedicationsStore {
     loggedBy = 'me'
   ): Observable<boolean> {
     this._actingId.set(medicationId);
-    this._error.set('');
+    this._error.clear();
     return this.api
       .post<AdherenceLog>(`/medications/${encodeURIComponent(medicationId)}/log`, {
         date,
@@ -217,10 +219,9 @@ export class MedicationsStore {
          }),
         catchError((error) => {
           this._actingId.set(null);
-          this._error.set(
-            (error as { error?: { message?: string } })?.error?.message ??
-              'Could not log the dose. Please try again.'
-          );
+          this._error.setFromServer((error as { error?: { message?: string } })?.error?.message, {
+              key: 'store.medications.logDoseFailed',
+            });
           return of(false);
         })
       );
@@ -244,10 +245,9 @@ export class MedicationsStore {
          }),
         catchError((error) => {
           this._actingId.set(null);
-          this._error.set(
-            (error as { error?: { message?: string } })?.error?.message ??
-              'Could not archive the medication.'
-          );
+          this._error.setFromServer((error as { error?: { message?: string } })?.error?.message, {
+              key: 'store.medications.archiveFailed',
+            });
           return of(false);
         })
       );
@@ -262,7 +262,7 @@ export class MedicationsStore {
     const before = this._meds();
     const next = instructions ? normalizeInstructions(instructions) : undefined;
     this._actingId.set(id);
-    this._error.set('');
+    this._error.clear();
     this._meds.update((meds) => meds.map((m) => (m.id === id ? { ...m, instructions: next } : m)));
     return this.api.patch<Medication>(`/me/medications/${encodeURIComponent(id)}`, {
       instructions: next ?? null,
@@ -279,10 +279,9 @@ export class MedicationsStore {
       catchError((error) => {
         this._meds.set(before);
         this._actingId.set(null);
-        this._error.set(
-          (error as { error?: { message?: string } })?.error?.message ??
-            'Could not save the instructions. Please try again.'
-        );
+        this._error.setFromServer((error as { error?: { message?: string } })?.error?.message, {
+            key: 'store.medications.instructionsFailed',
+          });
         return of(false);
       })
     );

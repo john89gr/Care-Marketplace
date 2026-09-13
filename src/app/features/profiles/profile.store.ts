@@ -1,6 +1,7 @@
 import { Injectable, inject, signal } from '@angular/core';
 import { Observable, map, catchError, of } from 'rxjs';
 import { ApiClient } from '../../core/api/api.client';
+import { LocalizedMessage } from '../../core/i18n/localized-message';
 
 /**
  * User profile state (PLAN.md §5 Phase 1 — Profiles). The fields are
@@ -38,13 +39,15 @@ export class ProfileStore {
   private readonly _profile = signal<UserProfile>(EMPTY_PROFILE);
   private readonly _loading = signal(false);
   private readonly _saving = signal(false);
-  private readonly _saveError = signal('');
+  private readonly _saveError = new LocalizedMessage();
   private readonly _saved = signal(false);
 
   readonly profile = this._profile.asReadonly();
   readonly loading = this._loading.asReadonly();
   readonly saving = this._saving.asReadonly();
-  readonly saveError = this._saveError.asReadonly();
+  /** Translatable source of the message (null for server-provided text). */
+  readonly saveErrorSource = this._saveError.source;
+  readonly saveError = this._saveError.value;
   readonly saved = this._saved.asReadonly();
 
   load(): Observable<boolean> {
@@ -65,7 +68,7 @@ export class ProfileStore {
   save(patch: Partial<UserProfile>): Observable<boolean> {
     this._saving.set(true);
     this._saved.set(false);
-    this._saveError.set('');
+    this._saveError.clear();
     return this.api.patch<UserProfile>('/profiles/me', patch).pipe(
       map((profile) => {
         this._profile.set({ ...EMPTY_PROFILE, ...profile });
@@ -75,10 +78,9 @@ export class ProfileStore {
       }),
       catchError((error) => {
         this._saving.set(false);
-        this._saveError.set(
-          (error as { error?: { message?: string } })?.error?.message ??
-            'Could not save your profile. Please try again.'
-        );
+        this._saveError.setFromServer((error as { error?: { message?: string } })?.error?.message, {
+            key: 'store.profile.saveFailed',
+          });
         return of(false);
       })
     );

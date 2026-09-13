@@ -2,6 +2,7 @@ import { Injectable, inject, signal, computed } from '@angular/core';
 import { Observable, map, catchError, of } from 'rxjs';
 import { ApiClient } from '../../api/api.client';
 import { SessionStore } from '../../auth/session';
+import { LocalizedMessage } from '../../i18n/localized-message';
 
 /**
  * Consent management (FEATURE_PLAN.md §16 subtasks 6–10, 15).
@@ -154,13 +155,15 @@ export class ConsentStore {
 
   private readonly _consents = signal<Consent[]>(readLocal());
   private readonly _loading = signal(false);
-  private readonly _error = signal('');
+  private readonly _error = new LocalizedMessage();
   private readonly _loaded = signal(false);
   private readonly _documentVersion = signal(DEFAULT_DOCUMENT_VERSION);
 
   readonly consents = this._consents.asReadonly();
   readonly loading = this._loading.asReadonly();
-  readonly error = this._error.asReadonly();
+  /** Translatable source of the message (null for server-provided text). */
+  readonly errorSource = this._error.source;
+  readonly error = this._error.value;
   readonly loaded = this._loaded.asReadonly();
   readonly documentVersion = this._documentVersion.asReadonly();
 
@@ -203,7 +206,7 @@ export class ConsentStore {
       return of(true);
     }
     this._loading.set(true);
-    this._error.set('');
+    this._error.clear();
     return this.api.get<ConsentState>('/me/consents').pipe(
       map((state) => {
         const list = state?.consents ?? [];
@@ -216,10 +219,9 @@ export class ConsentStore {
       }),
       catchError((error) => {
         this._loading.set(false);
-        this._error.set(
-          (error as { error?: { message?: string } })?.error?.message ??
-            'Could not load your consent settings.'
-        );
+        this._error.setFromServer((error as { error?: { message?: string } })?.error?.message, {
+            key: 'store.auditConsent.loadFailed',
+          });
         return of(false);
       })
     );
@@ -240,7 +242,7 @@ export class ConsentStore {
     const next: Consent[] = existing
       ? current.map((c) => (c.purpose === purpose ? replacement : c))
       : [...current, replacement];
-    this._error.set('');
+    this._error.clear();
     return this.api.put<ConsentState>('/me/consents', {
       userId: me?.userId ?? 'me',
       consents: next,
@@ -253,10 +255,9 @@ export class ConsentStore {
         return true;
       }),
       catchError((error) => {
-        this._error.set(
-          (error as { error?: { message?: string } })?.error?.message ??
-            'Could not save your consent settings. Please try again.'
-        );
+        this._error.setFromServer((error as { error?: { message?: string } })?.error?.message, {
+            key: 'store.auditConsent.saveFailed',
+          });
         return of(false);
       })
     );

@@ -3,6 +3,7 @@ import { Observable, map, catchError, of } from 'rxjs';
 import { ApiClient } from '../../core/api/api.client';
 import { SessionStore } from '../../core/auth/session';
 import { ROLES } from '../../core/auth/roles';
+import { LocalizedMessage } from '../../core/i18n/localized-message';
 
 /**
  * Clinical documentation (PLAN.md §3.A / §5 Phase 2 — Clinical log):
@@ -56,13 +57,15 @@ export class ClinicalLogStore {
   private readonly _entries = signal<ClinicalLogEntry[]>([]);
   private readonly _loading = signal(false);
   private readonly _saving = signal(false);
-  private readonly _error = signal('');
+  private readonly _error = new LocalizedMessage();
   private readonly _saved = signal(false);
 
   readonly entries = this._entries.asReadonly();
   readonly loading = this._loading.asReadonly();
   readonly saving = this._saving.asReadonly();
-  readonly error = this._error.asReadonly();
+  /** Translatable source of the message (null for server-provided text). */
+  readonly errorSource = this._error.source;
+  readonly error = this._error.value;
   readonly saved = this._saved.asReadonly();
 
   /** Whether the current user is a nurse (physio otherwise). */
@@ -84,7 +87,7 @@ export class ClinicalLogStore {
   save(draft: ClinicalLogDraft, signatureDataUrl: string | null): Observable<boolean> {
     this._saving.set(true);
     this._saved.set(false);
-    this._error.set('');
+    this._error.clear();
     const me = this.session.session();
     const entry: ClinicalLogEntry = {
       id: crypto.randomUUID(),
@@ -107,10 +110,9 @@ export class ClinicalLogStore {
       }),
       catchError((error) => {
         this._saving.set(false);
-        this._error.set(
-          (error as { error?: { message?: string } })?.error?.message ??
-            'Could not save the clinical log. Please try again.'
-        );
+        this._error.setFromServer((error as { error?: { message?: string } })?.error?.message, {
+            key: 'store.clinicalLog.saveFailed',
+          });
         return of(false);
       })
     );

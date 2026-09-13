@@ -8,6 +8,7 @@ import { Component, inject, signal } from '@angular/core';
 import { RouterLink } from '@angular/router';
 import { OrdersStore } from './orders.store';
 import { statusLabel, type PharmacyOrder } from './pharmacy.models';
+import { I18n } from '../../core/i18n/i18n.service';
 
 @Component({
   selector: 'app-pharmacy-orders',
@@ -25,7 +26,7 @@ import { statusLabel, type PharmacyOrder } from './pharmacy.models';
       </div>
 
       @if (store.error()) {
-        <p class="error" role="alert">{{ store.error() }}</p>
+        <p class="error" role="alert">{{ i18n.message(store.errorSource(), store.error()) }}</p>
       }
       <p class="meta" aria-live="polite">{{ feedback() }}</p>
 
@@ -123,6 +124,8 @@ import { statusLabel, type PharmacyOrder } from './pharmacy.models';
   `,
 })
 export class OrdersPage {
+  protected readonly i18n = inject(I18n);
+
   readonly store = inject(OrdersStore);
   readonly feedback = signal('');
 

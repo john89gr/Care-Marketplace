@@ -2,6 +2,7 @@ import { Injectable, inject, signal } from '@angular/core';
 import { Observable, map, catchError, of } from 'rxjs';
 import { ApiClient } from '../../core/api/api.client';
 import { AuditService } from '../../core/services/audit/audit.service';
+import { LocalizedMessage } from '../../core/i18n/localized-message';
 
 /**
  * Consent management store (FEATURE_PLAN.md §16 subtasks 6–7, 9, 10).
@@ -93,11 +94,13 @@ export class ConsentStore {
 
   private readonly _consents = signal<ConsentRecord[]>(defaultConsents());
   private readonly _loading = signal(false);
-  private readonly _error = signal('');
+  private readonly _error = new LocalizedMessage();
 
   readonly consents = this._consents.asReadonly();
   readonly loading = this._loading.asReadonly();
-  readonly error = this._error.asReadonly();
+  /** Translatable source of the message (null for server-provided text). */
+  readonly errorSource = this._error.source;
+  readonly error = this._error.value;
 
   /**
    * Returns the consent record for a purpose, or the default (not granted)
@@ -134,7 +137,7 @@ export class ConsentStore {
 
   load(): Observable<boolean> {
     this._loading.set(true);
-    this._error.set('');
+    this._error.clear();
     return this.api.get<ConsentRecord[]>('/me/consents').pipe(
       map((records) => {
         const normalized = (Array.isArray(records) ? records : []).map((r) => ({
@@ -156,10 +159,9 @@ export class ConsentStore {
       }),
       catchError((error) => {
         this._loading.set(false);
-        this._error.set(
-          (error as { error?: { message?: string } })?.error?.message ??
-            'Could not load consent settings.'
-        );
+        this._error.setFromServer((error as { error?: { message?: string } })?.error?.message, {
+            key: 'store.consents.loadFailed',
+          });
         return of(false);
       })
     );
@@ -200,10 +202,9 @@ export class ConsentStore {
       catchError((error) => {
         // Roll back on failure so the UI reflects the saved state.
         this._consents.set(prev);
-        this._error.set(
-          (error as { error?: { message?: string } })?.error?.message ??
-            'Could not save consent.'
-        );
+        this._error.setFromServer((error as { error?: { message?: string } })?.error?.message, {
+            key: 'store.consents.saveFailed',
+          });
         return of(false);
       })
     );

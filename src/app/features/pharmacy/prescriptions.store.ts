@@ -12,6 +12,7 @@ import type {
   Prescription,
   PrescriptionScanResult,
 } from './pharmacy.models';
+import { LocalizedMessage } from '../../core/i18n/localized-message';
 
 export interface ScanRequest {
   barcode: string;
@@ -29,16 +30,18 @@ export class PrescriptionsStore {
 
   private readonly _items = signal<Prescription[]>([]);
   private readonly _scanning = signal(false);
-  private readonly _error = signal('');
+  private readonly _error = new LocalizedMessage();
   private readonly _lastResult = signal<PrescriptionScanResult | null>(null);
 
   readonly items = this._items.asReadonly();
   readonly scanning = this._scanning.asReadonly();
-  readonly error = this._error.asReadonly();
+  /** Translatable source of the message (null for server-provided text). */
+  readonly errorSource = this._error.source;
+  readonly error = this._error.value;
   readonly lastResult = this._lastResult.asReadonly();
 
   clearError(): void {
-    this._error.set('');
+    this._error.clear();
   }
 
   clearResult(): void {
@@ -52,7 +55,7 @@ export class PrescriptionsStore {
    */
   scanBarcode(request: ScanRequest): Observable<boolean> {
     this._scanning.set(true);
-    this._error.set('');
+    this._error.clear();
     return this.api.post<PrescriptionScanResult>('/prescriptions/scan', request).pipe(
       map((result) => {
         this._items.update((items) => [result.prescription, ...items]);
@@ -62,10 +65,9 @@ export class PrescriptionsStore {
       }),
       catchError((error) => {
         this._scanning.set(false);
-        this._error.set(
-          (error as { error?: { message?: string } })?.error?.message ??
-            'The barcode could not be read. Please try again or enter the details manually.'
-        );
+        this._error.setFromServer((error as { error?: { message?: string } })?.error?.message, {
+            key: 'store.prescriptions.scanFailed',
+          });
         return of(false);
       })
     );

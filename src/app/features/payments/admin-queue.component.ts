@@ -8,6 +8,7 @@ import {
   isPastSla,
   quotePartialRefund,
 } from './disputes.store';
+import { I18n } from '../../core/i18n/i18n.service';
 
 /**
  * Admin dispute queue (FEATURE_PLAN.md §17 subtasks 7, 9, 11, 19): the full
@@ -129,7 +130,7 @@ import {
       }
 
       @if (store.error()) {
-        <p class="error" role="alert">{{ store.error() }}</p>
+        <p class="error" role="alert">{{ i18n.message(store.errorSource(), store.error()) }}</p>
       }
     </section>
   `,
@@ -159,6 +160,8 @@ import {
   `,
 })
 export class AdminQueueComponent implements OnInit {
+  protected readonly i18n = inject(I18n);
+
   protected readonly store = inject(DisputesStore);
   protected readonly DISPUTE_REASON_LABELS = DISPUTE_REASON_LABELS;
 

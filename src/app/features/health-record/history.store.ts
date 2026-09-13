@@ -21,6 +21,7 @@ import type {
   Symptom,
   SymptomDraft,
 } from './history.models';
+import { LocalizedMessage } from '../../core/i18n/localized-message';
 
 /**
  * Medical-history store (FEATURE_PLAN.md §21 subtasks 5–7): lazy per-category
@@ -98,7 +99,7 @@ export class HistoryStore {
   private readonly _byKind = signal<Partial<Record<HistoryKind, HistoryRecord[]>>>({});
   private readonly _loadingKinds = signal<HistoryKind[]>([]);
   private readonly _actingKey = signal<string | null>(null);
-  private readonly _error = signal('');
+  private readonly _error = new LocalizedMessage();
   private readonly _readOnly = signal(false);
   /** Family mode: the care recipient whose record the reads target (§21 subtask 16). */
   private readonly _targetUserId = signal<string | null>(null);
@@ -106,7 +107,9 @@ export class HistoryStore {
   readonly byKind = this._byKind.asReadonly();
   readonly loadingKinds = this._loadingKinds.asReadonly();
   readonly actingKey = this._actingKey.asReadonly();
-  readonly error = this._error.asReadonly();
+  /** Translatable source of the message (null for server-provided text). */
+  readonly errorSource = this._error.source;
+  readonly error = this._error.value;
   readonly readOnly = this._readOnly.asReadonly();
   readonly targetUserId = this._targetUserId.asReadonly();
 
@@ -147,10 +150,10 @@ export class HistoryStore {
       }),
       catchError((error) => {
         this._loadingKinds.update((kinds) => kinds.filter((k) => k !== kind));
-        this._error.set(
-          (error as { error?: { message?: string } })?.error?.message ??
-            `Could not load your ${kind}. Please try again.`
-        );
+        this._error.setFromServer((error as { error?: { message?: string } })?.error?.message, {
+          key: 'store.history.loadFailed',
+          params: { kind: { key: `store.history.kind.${kind}` } },
+        });
         return of(false);
       })
     );
@@ -161,7 +164,7 @@ export class HistoryStore {
     if (this.rejectWhenReadOnly()) {
       return of(false);
     }
-    this._error.set('');
+    this._error.clear();
     this._actingKey.set(`${kind}:new`);
     const optimisticId = `local-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
     const optimistic = {
@@ -199,10 +202,10 @@ export class HistoryStore {
           ),
         }));
         this._actingKey.set(null);
-        this._error.set(
-          (error as { error?: { message?: string } })?.error?.message ??
-            `Could not save this ${kind.slice(0, -1)}. Please try again.`
-        );
+        this._error.setFromServer((error as { error?: { message?: string } })?.error?.message, {
+          key: 'store.history.addFailed',
+          params: { kind: { key: `store.history.one.${kind}` } },
+        });
         return of(false);
       })
     );
@@ -218,7 +221,7 @@ export class HistoryStore {
       return of(false);
     }
     this._actingKey.set(`${kind}:${id}`);
-    this._error.set('');
+    this._error.clear();
     return this.api
       .patch<RecordFor<K>>(`${this.pathFor(kind)}/${encodeURIComponent(id)}`, patch)
       .pipe(
@@ -238,10 +241,9 @@ export class HistoryStore {
         }),
         catchError((error) => {
           this._actingKey.set(null);
-          this._error.set(
-            (error as { error?: { message?: string } })?.error?.message ??
-              'Could not update this record.'
-          );
+          this._error.setFromServer((error as { error?: { message?: string } })?.error?.message, {
+              key: 'store.history.updateFailed',
+            });
           return of(false);
         })
       );
@@ -294,7 +296,7 @@ export class HistoryStore {
       return of(null);
     }
     this._actingKey.set(`prescriptions:${id}`);
-    this._error.set('');
+    this._error.clear();
     const body: Record<string, unknown> = {};
     if (plan?.schedule) {
       body['schedule'] = plan.schedule;
@@ -325,10 +327,9 @@ export class HistoryStore {
         }),
         catchError((error) => {
           this._actingKey.set(null);
-          this._error.set(
-            (error as { error?: { message?: string } })?.error?.message ??
-              'Could not add this prescription to medications.'
-          );
+          this._error.setFromServer((error as { error?: { message?: string } })?.error?.message, {
+              key: 'store.history.addToMedsFailed',
+            });
           return of(null);
         })
       );
@@ -359,7 +360,7 @@ export class HistoryStore {
     if (!this._readOnly()) {
       return false;
     }
-    this._error.set('This view is read-only for your role.');
+    this._error.set({ key: 'store.readOnly' });
     return true;
   }
 }

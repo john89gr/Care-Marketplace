@@ -7,6 +7,7 @@ import { WebSocketClient, WsEnvelope } from '../../core/services/ws/websocket.cl
 import { GeoPoint, GeolocationService } from '../../core/services/geo/geolocation.service';
 import { ROLES } from '../../core/auth/roles';
 import { EscrowStore } from '../payments/escrow.store';
+import { LocalizedMessage } from '../../core/i18n/localized-message';
 
 export type VisitStatus = 'scheduled' | 'in-progress' | 'completed' | 'cancelled';
 
@@ -51,16 +52,20 @@ export class VisitStore {
   private readonly _live = signal<Record<string, GeoPoint>>({});
   private readonly _loading = signal(false);
   private readonly _busyId = signal<string | null>(null);
-  private readonly _error = signal('');
-  private readonly _positionError = signal('');
+  private readonly _error = new LocalizedMessage();
+  private readonly _positionError = new LocalizedMessage();
   private readonly _tracking = signal(false);
 
   readonly visits = this._visits.asReadonly();
   readonly live = this._live.asReadonly();
   readonly loading = this._loading.asReadonly();
   readonly busyId = this._busyId.asReadonly();
-  readonly error = this._error.asReadonly();
-  readonly positionError = this._positionError.asReadonly();
+  /** Translatable source of the message (null for server-provided text). */
+  readonly errorSource = this._error.source;
+  readonly error = this._error.value;
+  /** Translatable source of the message (null for server-provided text). */
+  readonly positionErrorSource = this._positionError.source;
+  readonly positionError = this._positionError.value;
   readonly tracking = this._tracking.asReadonly();
 
   readonly isProvider = computed(() =>
@@ -177,7 +182,7 @@ export class VisitStore {
       return;
     }
     this._tracking.set(true);
-    this._positionError.set('');
+    this._positionError.clear();
     this.geo.watchPosition().subscribe({
       next: (position) => {
         this._live.update((all) => ({ ...all, [visitId]: position }));
@@ -187,7 +192,7 @@ export class VisitStore {
         });
       },
       error: () => {
-        this._positionError.set('Live tracking unavailable — GPS error.');
+        this._positionError.set({ key: 'store.visit.gpsUnavailable' });
         this._tracking.set(false);
       },
     });
@@ -219,7 +224,7 @@ export class VisitStore {
 
   private stamp(visitId: string, path: '/check-in' | '/check-out'): Observable<boolean> {
     this._busyId.set(visitId);
-    this._error.set('');
+    this._error.clear();
     return this.geo.currentPosition().pipe(
       switchMap((position) =>
         this.api.post<Visit>(`/visits/${visitId}${path}`, { position }).pipe(
@@ -232,10 +237,9 @@ export class VisitStore {
           }),
           catchError((error) => {
             this._busyId.set(null);
-            this._error.set(
-              (error as { error?: { message?: string } })?.error?.message ??
-                'Could not save the visit. Please try again.'
-            );
+            this._error.setFromServer((error as { error?: { message?: string } })?.error?.message, {
+                key: 'store.visit.saveFailed',
+              });
             return of(false);
           })
         )
@@ -244,8 +248,8 @@ export class VisitStore {
         this._busyId.set(null);
         this._error.set(
           path === '/check-in'
-            ? 'Could not check in — enable location access to stamp your visit.'
-            : 'Could not check out — enable location access to stamp your visit.'
+            ? { key: 'store.visit.checkInLocation' }
+            : { key: 'store.visit.checkOutLocation' }
         );
         return of(false);
       })

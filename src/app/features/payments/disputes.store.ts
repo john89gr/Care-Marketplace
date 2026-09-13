@@ -4,6 +4,8 @@ import { ApiClient } from '../../core/api/api.client';
 import { EscrowStore } from '../payments/escrow.store';
 import { SessionStore } from '../../core/auth/session';
 import { NotificationsService, NotificationKind } from '../../core/services/notifications/notifications.service';
+import { TranslatableMessage } from '../../core/i18n/i18n.service';
+import { LocalizedMessage } from '../../core/i18n/localized-message';
 
 /**
  * Dispute resolution workflow (FEATURE_PLAN.md §17).
@@ -157,29 +159,44 @@ export function quotePartialRefund(refundCents: number, amountCents: number): Pa
   };
 }
 
-function resolveNotification(dispute: Dispute): { kind: NotificationKind; title: string; body: string } {
+/**
+ * Outcome notification for a resolved/rejected dispute. Returns dictionary
+ * keys + params rather than English so the panel renders it per locale.
+ */
+function resolveNotification(dispute: Dispute): {
+  kind: NotificationKind;
+  title: TranslatableMessage;
+  body: TranslatableMessage;
+} {
   if (dispute.state === 'resolved_client') {
     if (dispute.resolution === 'partial_refund' && dispute.refundCents) {
       return {
         kind: 'dispute.resolved',
-        title: 'Dispute resolved in your favour',
-        body: `Partial refund of ${(dispute.refundCents / 100).toFixed(2)}€ processed.`,
+        title: { key: 'notify.disputeResolvedClient' },
+        body: {
+          key: 'notify.partialRefund',
+          params: { amount: (dispute.refundCents / 100).toFixed(2) },
+        },
       };
     }
     return {
       kind: 'dispute.resolved',
-      title: 'Dispute resolved in your favour',
-      body: 'Full refund processed.',
+      title: { key: 'notify.disputeResolvedClient' },
+      body: { key: 'notify.fullRefund' },
     };
   }
   if (dispute.state === 'resolved_provider') {
     return {
       kind: 'dispute.resolved',
-      title: 'Dispute resolved in favour of the provider',
-      body: 'Escrow released to the provider.',
+      title: { key: 'notify.disputeResolvedProvider' },
+      body: { key: 'notify.escrowReleasedProvider' },
     };
   }
-  return { kind: 'dispute.rejected', title: 'Dispute rejected', body: 'The dispute was rejected — escrow released.' };
+  return {
+    kind: 'dispute.rejected',
+    title: { key: 'notify.disputeRejected' },
+    body: { key: 'notify.disputeRejectedBody' },
+  };
 }
 
 @Injectable({ providedIn: 'root' })
@@ -195,13 +212,15 @@ export class DisputesStore {
   private readonly _queue = signal<Dispute[]>([]);
   private readonly _loading = signal(false);
   private readonly _actingId = signal<string | null>(null);
-  private readonly _error = signal('');
+  private readonly _error = new LocalizedMessage();
 
   readonly disputes = this._mine.asReadonly();
   readonly queue = this._queue.asReadonly();
   readonly loading = this._loading.asReadonly();
   readonly actingId = this._actingId.asReadonly();
-  readonly error = this._error.asReadonly();
+  /** Translatable source of the message (null for server-provided text). */
+  readonly errorSource = this._error.source;
+  readonly error = this._error.value;
 
   readonly isAdmin = computed(() => this.session.hasAnyRole(['admin']));
 
@@ -222,14 +241,14 @@ export class DisputesStore {
 
   loadMine(): void {
     this._loading.set(true);
-    this._error.set('');
+    this._error.clear();
     this.api.get<Dispute[]>('/me/disputes').subscribe({
       next: (disputes) => {
         this._mine.set(disputes);
         this._loading.set(false);
       },
       error: () => {
-        this._error.set('Could not load your disputes. Please try again.');
+        this._error.set({ key: 'store.disputes.loadFailed' });
         this._loading.set(false);
       },
     });
@@ -238,14 +257,14 @@ export class DisputesStore {
   /** Admin: load the full dispute queue. */
   loadQueue(): void {
     this._loading.set(true);
-    this._error.set('');
+    this._error.clear();
     this.api.get<Dispute[]>('/disputes').subscribe({
       next: (disputes) => {
         this._queue.set(disputes);
         this._loading.set(false);
       },
       error: () => {
-        this._error.set('Could not load the dispute queue. Please try again.');
+        this._error.set({ key: 'store.disputes.queueFailed' });
         this._loading.set(false);
       },
     });
@@ -253,7 +272,7 @@ export class DisputesStore {
 
   /** Open a new dispute (client/provider side — freezes the held escrow). */
   open(draft: DisputeDraft): Observable<boolean> {
-    this._error.set('');
+    this._error.clear();
     this._actingId.set(draft.bookingId);
     return this.api.post<Dispute>('/disputes', draft).pipe(
       map((dispute) => {
@@ -265,18 +284,17 @@ export class DisputesStore {
         }
         this.notifications.notify(
           'dispute.opened',
-          'Dispute opened',
-          `A dispute has been opened for booking ${draft.bookingId}.`,
+          { key: 'notify.disputeOpened' },
+          { key: 'notify.disputeOpenedBody', params: { booking: draft.bookingId } },
           '/disputes'
         );
         return true;
       }),
       catchError((error) => {
         this._actingId.set(null);
-        this._error.set(
-          (error as { error?: { message?: string } })?.error?.message ??
-            'Could not open the dispute. Please try again.'
-        );
+        this._error.setFromServer((error as { error?: { message?: string } })?.error?.message, {
+            key: 'store.disputes.openFailed',
+          });
         return of(false);
       })
     );
@@ -289,7 +307,7 @@ export class DisputesStore {
 
   /** Admin: resolve with release, partial refund, or full refund. */
   resolve(id: string, input: DisputeResolutionInput): Observable<boolean> {
-    this._error.set('');
+    this._error.clear();
     this._actingId.set(id);
     return this.api
       .post<Dispute>(`/disputes/${encodeURIComponent(id)}/state`, input)
@@ -304,10 +322,9 @@ export class DisputesStore {
         }),
         catchError((error) => {
           this._actingId.set(null);
-          this._error.set(
-            (error as { error?: { message?: string } })?.error?.message ??
-              'Could not resolve the dispute. Please try again.'
-          );
+          this._error.setFromServer((error as { error?: { message?: string } })?.error?.message, {
+              key: 'store.disputes.resolveFailed',
+            });
           return of(false);
         })
       );
@@ -319,7 +336,7 @@ export class DisputesStore {
   }
 
   private transition(id: string, to: DisputeState): Observable<boolean> {
-    this._error.set('');
+    this._error.clear();
     this._actingId.set(id);
     return this.api
       .post<Dispute>(`/disputes/${encodeURIComponent(id)}/state`, { state: to })
@@ -332,10 +349,9 @@ export class DisputesStore {
         }),
         catchError((error) => {
           this._actingId.set(null);
-          this._error.set(
-            (error as { error?: { message?: string } })?.error?.message ??
-              'Could not update the dispute. Please try again.'
-          );
+          this._error.setFromServer((error as { error?: { message?: string } })?.error?.message, {
+              key: 'store.disputes.updateFailed',
+            });
           return of(false);
         })
       );

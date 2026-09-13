@@ -6,13 +6,24 @@ import {
   inject,
   signal,
 } from '@angular/core';
-import { Router, RouterLink, RouterLinkActive, RouterOutlet } from '@angular/router';
+import { toSignal, takeUntilDestroyed } from '@angular/core/rxjs-interop';
+import {
+  NavigationEnd,
+  Router,
+  RouterLink,
+  RouterLinkActive,
+  RouterOutlet,
+} from '@angular/router';
+import { filter, map, startWith } from 'rxjs';
 import { SwUpdate, VersionReadyEvent } from '@angular/service-worker';
 import { SessionStore } from './core/auth/session';
 import { AuthApi } from './core/auth/auth.api';
 import { ROLES, Role } from './core/auth/roles';
 import { WebSocketClient } from './core/services/ws/websocket.client';
 import { OfflineQueueService } from './core/services/offline/offline-queue.service';
+import { isDemoMode } from './core/api/demo.mode';
+import { I18n } from './core/i18n/i18n.service';
+import { Language } from './core/i18n/translations';
 import {
   NotificationsService,
   AppNotification,
@@ -21,34 +32,77 @@ import {
   PANEL_MAX_ITEMS,
 } from './core/services/notifications/notifications.service';
 
+/**
+ * A sidebar entry. `key` is an i18n key rather than a label so the nav
+ * re-renders in whichever language is active, and `icon` is an aria-hidden
+ * glyph (swap for an icon set without touching the nav model).
+ */
 interface NavItem {
-  label: string;
+  key: string;
   href: string;
   exact: boolean;
-  roles: readonly Role[]; // empty = any authenticated user
+  /** Empty = visible to everyone; otherwise any-of these roles. */
+  roles: readonly Role[];
+  /** Requires a session (public pages leave this unset). */
+  auth?: boolean;
+  icon: string;
 }
 
-const NAV_ITEMS: NavItem[] = [
-  { label: 'Marketplace', href: '/marketplace', exact: true, roles: [] },
-  { label: 'Bookings', href: '/bookings', exact: false, roles: [ROLES.CLIENT, ROLES.CAREGIVER, ROLES.NURSE, ROLES.PHYSIO] },
-  { label: 'Live visit', href: '/live-visit', exact: false, roles: [ROLES.CLIENT] },
-  { label: 'Onboarding', href: '/onboarding', exact: false, roles: [ROLES.CAREGIVER, ROLES.NURSE, ROLES.PHYSIO] },
-  { label: 'Shifts', href: '/shifts', exact: false, roles: [ROLES.CAREGIVER, ROLES.NURSE, ROLES.PHYSIO] },
-  { label: 'Visits', href: '/visits', exact: false, roles: [ROLES.CAREGIVER, ROLES.NURSE, ROLES.PHYSIO] },
-  { label: 'Clinical log', href: '/clinical-log', exact: false, roles: [ROLES.NURSE, ROLES.PHYSIO] },
-  { label: 'Care plan', href: '/care-plan', exact: false, roles: [ROLES.CLIENT, ROLES.CAREGIVER, ROLES.NURSE, ROLES.PHYSIO] },
-  { label: 'Vitals', href: '/vitals', exact: false, roles: [ROLES.CLIENT, ROLES.CAREGIVER, ROLES.NURSE] },
-  { label: 'Payments', href: '/payments', exact: false, roles: [ROLES.CLIENT, ROLES.CAREGIVER, ROLES.NURSE, ROLES.PHYSIO] },
-  { label: 'Disputes', href: '/disputes', exact: false, roles: [ROLES.CLIENT, ROLES.CAREGIVER, ROLES.NURSE, ROLES.PHYSIO, ROLES.ADMIN] },
-  { label: 'Health record', href: '/health-record', exact: false, roles: [ROLES.CLIENT, ROLES.CAREGIVER, ROLES.NURSE] },
-  { label: 'Preventive care', href: '/screenings', exact: false, roles: [ROLES.CLIENT, ROLES.CAREGIVER, ROLES.NURSE] },
-   { label: 'Medications', href: '/medications', exact: false, roles: [ROLES.CLIENT, ROLES.CAREGIVER, ROLES.NURSE] },
-   { label: 'Consents', href: '/consents', exact: false, roles: [ROLES.CLIENT, ROLES.CAREGIVER, ROLES.NURSE] },
-  { label: 'Prescriptions', href: '/prescriptions', exact: false, roles: [ROLES.CLIENT, ROLES.CAREGIVER, ROLES.NURSE] },
-  { label: 'Pharmacy orders', href: '/pharmacy-orders', exact: false, roles: [ROLES.CLIENT, ROLES.CAREGIVER, ROLES.NURSE, ROLES.PHARMACY] },
-  { label: 'Pharmacy', href: '/pharmacy', exact: false, roles: [ROLES.PHARMACY] },
-  { label: 'Chat', href: '/chat', exact: false, roles: [] },
-  { label: 'Admin', href: '/admin', exact: false, roles: [ROLES.ADMIN] },
+interface NavSection {
+  key: string;
+  items: NavItem[];
+}
+
+const CARE = [ROLES.CLIENT, ROLES.CAREGIVER, ROLES.NURSE, ROLES.PHYSIO];
+const PROVIDERS = [ROLES.CAREGIVER, ROLES.NURSE, ROLES.PHYSIO];
+const CLINICAL = [ROLES.CLIENT, ROLES.CAREGIVER, ROLES.NURSE];
+
+/** Grouped navigation — the sidebar renders one block per section. */
+const NAV_SECTIONS: NavSection[] = [
+  {
+    key: 'nav.group.care',
+    items: [
+      { key: 'nav.marketplace', href: '/marketplace', exact: true, roles: [], icon: '🔎' },
+      { key: 'nav.bookings', href: '/bookings', exact: false, roles: CARE, icon: '📅' },
+      { key: 'nav.liveVisit', href: '/live-visit', exact: false, roles: [ROLES.CLIENT], icon: '📍' },
+      { key: 'nav.visits', href: '/visits', exact: false, roles: PROVIDERS, icon: '🏠' },
+      { key: 'nav.shifts', href: '/shifts', exact: false, roles: PROVIDERS, icon: '🗓️' },
+      { key: 'nav.carePlan', href: '/care-plan', exact: false, roles: CARE, icon: '🧩' },
+      { key: 'nav.clinicalLog', href: '/clinical-log', exact: false, roles: [ROLES.NURSE, ROLES.PHYSIO], icon: '📝' },
+      { key: 'nav.onboarding', href: '/onboarding', exact: false, roles: PROVIDERS, icon: '✅' },
+    ],
+  },
+  {
+    key: 'nav.group.health',
+    items: [
+      { key: 'nav.healthRecord', href: '/health-record', exact: false, roles: CLINICAL, icon: '🗂️' },
+      { key: 'nav.vitals', href: '/vitals', exact: false, roles: CLINICAL, icon: '❤️' },
+      { key: 'nav.screenings', href: '/screenings', exact: false, roles: CLINICAL, icon: '🛡️' },
+      { key: 'nav.medications', href: '/medications', exact: false, roles: CLINICAL, icon: '💊' },
+      { key: 'nav.prescriptions', href: '/prescriptions', exact: false, roles: CLINICAL, icon: '📄' },
+      { key: 'nav.pharmacyOrders', href: '/pharmacy-orders', exact: false, roles: [...CLINICAL, ROLES.PHARMACY], icon: '📦' },
+      { key: 'nav.consents', href: '/consents', exact: false, roles: CLINICAL, icon: '🔏' },
+    ],
+  },
+  {
+    key: 'nav.group.finance',
+    items: [
+      { key: 'nav.payments', href: '/payments', exact: false, roles: CARE, icon: '💳' },
+      { key: 'nav.disputes', href: '/disputes', exact: false, roles: [...CARE, ROLES.ADMIN], icon: '⚖️' },
+    ],
+  },
+  {
+    key: 'nav.group.account',
+    items: [
+      { key: 'nav.chat', href: '/chat', exact: false, roles: [], auth: true, icon: '💬' },
+      { key: 'nav.profile', href: '/profile', exact: false, roles: [], auth: true, icon: '👤' },
+      { key: 'nav.pharmacy', href: '/pharmacy', exact: false, roles: [ROLES.PHARMACY], icon: '🏥' },
+    ],
+  },
+  {
+    key: 'nav.group.admin',
+    items: [{ key: 'nav.admin', href: '/admin', exact: false, roles: [ROLES.ADMIN], icon: '⚙️' }],
+  },
 ];
 
 const THEME_KEY = 'cm.theme.v1';
@@ -66,19 +120,68 @@ export class App {
   protected readonly notifications = inject(NotificationsService);
   private readonly ws = inject(WebSocketClient);
   private readonly host = inject(ElementRef);
+  /** Runtime i18n — templates call `i18n.t(key)` so they re-render on switch. */
+  protected readonly i18n = inject(I18n);
   /** Offline banner + outbox indicators (§20 subtask 4). */
   protected readonly offline = inject(OfflineQueueService);
   /** PWA update prompt — only present in production (SW-enabled) builds. */
   private readonly swUpdate = inject(SwUpdate, { optional: true });
   protected readonly updateAvailable = signal(false);
 
+  /**
+   * True only when the in-memory demo backend is answering requests. Surfaced
+   * in the shell so a demo session is never mistaken for the real API.
+   */
+  protected readonly demoActive = isDemoMode();
+
   protected toastTone(t: AppToast): string {
     return `toast ${t.tone}`;
   }
 
-  protected readonly navItems = computed(() =>
-    NAV_ITEMS.filter((item) => item.roles.length === 0 || this.session.hasAnyRole(item.roles))
+  /** Sidebar sections filtered by role/session; empty sections are dropped. */
+  protected readonly navSections = computed<NavSection[]>(() =>
+    NAV_SECTIONS.map((section) => ({
+      ...section,
+      items: section.items.filter(
+        (item) =>
+          (!item.auth || this.session.isLoggedIn()) &&
+          (item.roles.length === 0 || this.session.hasAnyRole(item.roles))
+      ),
+    })).filter((section) => section.items.length > 0)
   );
+
+  /** Current URL, kept in a signal so `currentNavKey` recomputes on navigation. */
+  private readonly currentUrl = toSignal(
+    this.router.events.pipe(
+      filter((event): event is NavigationEnd => event instanceof NavigationEnd),
+      map((event) => event.urlAfterRedirects),
+      startWith(this.router.url)
+    ),
+    { initialValue: this.router.url }
+  );
+
+  /**
+   * i18n key of the section the user is in, for the topbar breadcrumb.
+   * Longest matching href wins so /pharmacy-orders beats /pharmacy.
+   */
+  protected readonly currentNavKey = computed<string | null>(() => {
+    const url = this.currentUrl().split('?')[0].split('#')[0];
+    let best: NavItem | null = null;
+    for (const section of this.navSections()) {
+      for (const item of section.items) {
+        const matches = item.exact
+          ? url === item.href
+          : url === item.href || url.startsWith(`${item.href}/`);
+        if (matches && (!best || item.href.length > best.href.length)) {
+          best = item;
+        }
+      }
+    }
+    return best?.key ?? null;
+  });
+
+  /** Off-canvas sidebar state (mobile only). */
+  protected readonly menuOpen = signal(false);
 
   protected readonly theme = signal<'light' | 'dark'>(this.loadTheme());
 
@@ -86,6 +189,19 @@ export class App {
   protected readonly panelOpen = signal(false);
   protected readonly mutesOpen = signal(false);
   protected readonly pushRequested = signal(false);
+
+  /** Initials for the sidebar avatar. */
+  protected readonly initials = computed(() => {
+    const name = this.session.displayName().trim();
+    if (!name) {
+      return '?';
+    }
+    return name
+      .split(/\s+/)
+      .slice(0, 2)
+      .map((part) => part.charAt(0).toUpperCase())
+      .join('');
+  });
 
   /** All notification kinds, for the mute preferences list. */
   protected readonly allKinds: NotificationKind[] = [
@@ -112,6 +228,13 @@ export class App {
         this.updateAvailable.set(true);
       }
     });
+    // Collapse the mobile drawer once a navigation completes.
+    this.router.events
+      .pipe(
+        filter((event): event is NavigationEnd => event instanceof NavigationEnd),
+        takeUntilDestroyed()
+      )
+      .subscribe(() => this.menuOpen.set(false));
     // Badge sync: initial load when logged in; the service also reloads on
     // window focus and on panel open (subtask 11).
     if (this.session.isLoggedIn()) {
@@ -123,6 +246,24 @@ export class App {
       );
     }
   }
+
+  // --- Language -------------------------------------------------------------
+
+  protected setLanguage(language: Language): void {
+    this.i18n.setLanguage(language);
+  }
+
+  // --- Navigation drawer ----------------------------------------------------
+
+  toggleMenu(): void {
+    this.menuOpen.update((open) => !open);
+  }
+
+  closeMenu(): void {
+    this.menuOpen.set(false);
+  }
+
+  // --- Notification panel ---------------------------------------------------
 
   /** Toggle the panel; load on first open (badge syncs on focus too). */
   togglePanel(): void {
@@ -174,6 +315,7 @@ export class App {
   @HostListener('document:keydown.escape')
   onEscape(): void {
     this.closePanel();
+    this.closeMenu();
   }
 
   /** Minimal focus trap: keep Tab cycling inside the open panel (subtask 16). */
@@ -222,12 +364,15 @@ export class App {
       a.getMonth() === b.getMonth() &&
       a.getDate() === b.getDate();
     if (sameDay(date, today)) {
-      return 'Today';
+      return this.i18n.t('notifications.today');
     }
     if (sameDay(date, yesterday)) {
-      return 'Yesterday';
+      return this.i18n.t('notifications.yesterday');
     }
-    return date.toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
+    return date.toLocaleDateString(this.i18n.locale(), {
+      day: 'numeric',
+      month: 'short',
+    });
   }
 
   /** Group the panel items by day (items arrive newest-first). */

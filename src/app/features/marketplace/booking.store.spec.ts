@@ -193,8 +193,15 @@ describe('BookingStore lifecycle', () => {
       expect(deps.escrow.release).toHaveBeenCalledWith('e-1');
     });
     expect(deps.notifications.toast).toHaveBeenCalledWith(
-      'Visit completed — escrow released.',
+      { key: 'notify.escrowReleased' },
       'success'
+    );
+    // Titles/bodies are dictionary keys, so the panel renders them per locale.
+    expect(deps.notifications.notify).toHaveBeenCalledWith(
+      'booking.completed',
+      { key: 'notify.status.completed' },
+      expect.objectContaining({ key: 'notify.bookingBody' }),
+      '/bookings'
     );
   });
 

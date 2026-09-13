@@ -3,6 +3,7 @@ import { FormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
 import { ClinicalLogStore, ClinicalLogEntry } from './clinical-log.store';
 import { VisitStore, Visit } from './visit.store';
 import { SignaturePad } from '../../shared/signature-pad/signature-pad';
+import { I18n } from '../../core/i18n/i18n.service';
 
 @Component({
   selector: 'app-clinical-log',
@@ -81,7 +82,7 @@ import { SignaturePad } from '../../shared/signature-pad/signature-pad';
           </button>
 
           @if (store.error()) {
-            <p class="error" role="alert">{{ store.error() }}</p>
+            <p class="error" role="alert">{{ i18n.message(store.errorSource(), store.error()) }}</p>
           }
         </form>
 
@@ -120,6 +121,8 @@ import { SignaturePad } from '../../shared/signature-pad/signature-pad';
   `,
 })
 export class ClinicalLogPage implements OnInit {
+  protected readonly i18n = inject(I18n);
+
   readonly store = inject(ClinicalLogStore);
   private readonly visitStore = inject(VisitStore);
   private readonly fb = inject(FormBuilder);

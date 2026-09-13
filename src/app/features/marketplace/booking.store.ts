@@ -5,6 +5,8 @@ import { EscrowStore, EscrowTransaction } from '../payments/escrow.store';
 import { SessionStore } from '../../core/auth/session';
 import { ROLES } from '../../core/auth/roles';
 import { NotificationsService } from '../../core/services/notifications/notifications.service';
+import { LocalizedMessage } from '../../core/i18n/localized-message';
+import { activeLocaleTag } from '../../core/i18n/i18n.service';
 import {
   BookingStatus,
   BookingEvent,
@@ -91,17 +93,20 @@ export class BookingStore {
   private readonly _loading = signal(false);
   private readonly _actingId = signal<string | null>(null);
   private readonly _submitting = signal(false);
-  private readonly _lastError = signal('');
-  private readonly _conflict = signal<string | null>(null);
+  private readonly _lastError = new LocalizedMessage();
+  private readonly _conflict = new LocalizedMessage();
 
   readonly draft = this._draft.asReadonly();
   readonly bookings = this._bookings.asReadonly();
   readonly loading = this._loading.asReadonly();
   readonly actingId = this._actingId.asReadonly();
   readonly submitting = this._submitting.asReadonly();
-  readonly lastError = this._lastError.asReadonly();
-  /** Non-null when a 409 was received; the page offers a reload. */
-  readonly conflict = this._conflict.asReadonly();
+  /** Translatable sources (null when the message came from the server). */
+  readonly lastErrorSource = this._lastError.source;
+  readonly conflictSource = this._conflict.source;
+  readonly lastError = this._lastError.value;
+  /** Non-empty when a 409 was received; the page offers a reload. */
+  readonly conflict = this._conflict.value;
   readonly isDraftReady = signal(false);
 
   /** Events of a booking, newest first. */
@@ -139,7 +144,7 @@ export class BookingStore {
 
   load(): void {
     this._loading.set(true);
-    this._lastError.set('');
+    this._lastError.clear();
     this.api.get<BookingRecord[]>('/bookings').subscribe({
       next: (bookings) => {
         this._bookings.set(bookings);
@@ -148,7 +153,7 @@ export class BookingStore {
         // visible until the next successful transition or a page reload.
       },
       error: () => {
-        this._lastError.set('Could not load your bookings. Please try again.');
+        this._lastError.set({ key: 'booking.error.loadFailed' });
         this._loading.set(false);
       },
     });
@@ -178,7 +183,7 @@ export class BookingStore {
 
   clearDraft(): void {
     this._draft.set(EMPTY_DRAFT);
-    this._lastError.set('');
+    this._lastError.clear();
   }
 
   /** Completed bookings the client has not reviewed yet (review targets). */
@@ -205,11 +210,11 @@ export class BookingStore {
   async submit(): Promise<boolean> {
     const draft = this._draft();
     if (!draft.caregiverId || draft.scheduledAtMs === null) {
-      this._lastError.set('Complétez la date avant envoi.');
+      this._lastError.set({ key: 'booking.error.dateRequired' });
       return false;
     }
     this._submitting.set(true);
-    this._lastError.set('');
+    this._lastError.clear();
     try {
       const payload: BookingRequest = {
         caregiverId: draft.caregiverId,
@@ -230,7 +235,7 @@ export class BookingStore {
       this.clearDraft();
       return true;
     } catch (error) {
-      this._lastError.set('Échec de la demande. Réessayez.');
+      this._lastError.set({ key: 'booking.error.sendFailed' });
       return false;
     } finally {
       this._submitting.set(false);
@@ -241,7 +246,7 @@ export class BookingStore {
   accept(bookingId: string): void {
     const me = this.session.session();
     if (!me || !canAcceptBooking(me.roles)) {
-      this._lastError.set('Only the provider can accept this booking.');
+      this._lastError.set({ key: 'booking.error.onlyProviderAccepts' });
       return;
     }
     this.transition(bookingId, 'accepted', '/accept', {});
@@ -266,7 +271,7 @@ export class BookingStore {
     const booking = this._bookings().find((b) => b.id === bookingId);
     const me = this.session.session();
     if (!booking || !isInvolvedParty(booking, me?.userId)) {
-      this._lastError.set('Only the client or provider of this booking can cancel it.');
+      this._lastError.set({ key: 'booking.error.notInvolvedParty' });
       return;
     }
     const held = this.heldFor(bookingId);
@@ -274,10 +279,10 @@ export class BookingStore {
       const quote = quoteCancellation(booking, held.amountCents, nowMs);
       this.notifications.notify(
         'booking.cancelled',
-        'Booking cancelled',
+        { key: 'notify.bookingCancelled' },
         quote.free
-          ? 'Cancelled inside the free window — full refund on its way.'
-          : `Cancelled late — a ${quote.feeCents / 100}€ fee applies.`,
+          ? { key: 'notify.cancelledFree' }
+          : { key: 'notify.cancelledLate', params: { fee: quote.feeCents / 100 } },
         '/bookings'
       );
     }
@@ -292,15 +297,15 @@ export class BookingStore {
   reschedule(bookingId: string, request: RescheduleRequest): void {
     const current = this._bookings().find((b) => b.id === bookingId);
     if (!current) {
-      this._lastError.set('Booking not found.');
+      this._lastError.set({ key: 'booking.error.notFound' });
       return;
     }
     if (current.status === 'completed' || current.status === 'cancelled' || current.status === 'disputed') {
-      this._lastError.set('This booking can no longer be rescheduled.');
+      this._lastError.set({ key: 'booking.error.rescheduleNotAllowed' });
       return;
     }
     this._actingId.set(bookingId);
-    this._lastError.set('');
+    this._lastError.clear();
     this.api
       .post<BookingRecord>(`/bookings/${encodeURIComponent(bookingId)}/reschedule`, request)
       .subscribe({
@@ -311,8 +316,11 @@ export class BookingStore {
           this._actingId.set(null);
           this.notifications.notify(
             'booking.rescheduled',
-            'Reschedule proposed',
-            `New time: ${new Date(booking.scheduledAtMs).toLocaleString()}`,
+            { key: 'notify.rescheduleProposed' },
+            {
+              key: 'notify.newTime',
+              params: { when: new Date(booking.scheduledAtMs).toLocaleString(activeLocaleTag()) },
+            },
             '/bookings'
           );
           this.loadEvents(bookingId);
@@ -320,10 +328,12 @@ export class BookingStore {
         error: (error: { status?: number; error?: { message?: string } }) => {
           this._actingId.set(null);
           if (error?.status === 409) {
-            this._conflict.set(error?.error?.message ?? 'Someone else updated this booking. Refreshing…');
+            this._conflict.setFromServer(error?.error?.message, { key: 'booking.error.stale' });
             this.load();
           } else {
-            this._lastError.set(error?.error?.message ?? 'Could not reschedule. Please try again.');
+            this._lastError.setFromServer(error?.error?.message, {
+              key: 'booking.error.rescheduleFailed',
+            });
           }
         },
       });
@@ -342,15 +352,15 @@ export class BookingStore {
   confirmReschedule(bookingId: string): void {
     const current = this._bookings().find((b) => b.id === bookingId);
     if (!current) {
-      this._lastError.set('Booking not found.');
+      this._lastError.set({ key: 'booking.error.notFound' });
       return;
     }
     if (!current.pendingReschedule) {
-      this._lastError.set('There is no reschedule proposal to confirm.');
+      this._lastError.set({ key: 'booking.error.noProposal' });
       return;
     }
     this._actingId.set(bookingId);
-    this._lastError.set('');
+    this._lastError.clear();
     this.api
       .post<BookingRecord>(`/bookings/${encodeURIComponent(bookingId)}/reschedule/confirm`, {})
       .subscribe({
@@ -361,8 +371,11 @@ export class BookingStore {
           this._actingId.set(null);
           this.notifications.notify(
             'booking.rescheduled',
-            'Reschedule confirmed',
-            `Agreed time: ${new Date(booking.scheduledAtMs).toLocaleString()}`,
+            { key: 'notify.rescheduleConfirmed' },
+            {
+              key: 'notify.agreedTime',
+              params: { when: new Date(booking.scheduledAtMs).toLocaleString(activeLocaleTag()) },
+            },
             '/bookings'
           );
           this.loadEvents(bookingId);
@@ -370,10 +383,12 @@ export class BookingStore {
         error: (error: { status?: number; error?: { message?: string } }) => {
           this._actingId.set(null);
           if (error?.status === 409) {
-            this._conflict.set(error?.error?.message ?? 'Someone else updated this booking. Refreshing…');
+            this._conflict.setFromServer(error?.error?.message, { key: 'booking.error.stale' });
             this.load();
           } else {
-            this._lastError.set(error?.error?.message ?? 'Could not confirm. Please try again.');
+            this._lastError.setFromServer(error?.error?.message, {
+              key: 'booking.error.confirmFailed',
+            });
           }
         },
       });
@@ -402,17 +417,18 @@ export class BookingStore {
   ): void {
     const current = this._bookings().find((b) => b.id === bookingId);
     if (!current) {
-      this._lastError.set('Booking not found.');
+      this._lastError.set({ key: 'booking.error.notFound' });
       return;
     }
     if (!canTransition(current.status, to)) {
-      this._lastError.set(
-        `Cannot move this booking from "${current.status}" to "${to}".`
-      );
+      this._lastError.set({
+        key: 'booking.error.invalidTransition',
+        params: { from: current.status, to },
+      });
       return;
     }
     this._actingId.set(bookingId);
-    this._lastError.set('');
+    this._lastError.clear();
     this.api
       .post<BookingRecord>(
         `/bookings/${encodeURIComponent(bookingId)}${path}`,
@@ -424,7 +440,7 @@ export class BookingStore {
             list.map((b) => (b.id === booking.id ? booking : b))
           );
           this._actingId.set(null);
-          this._conflict.set(null);
+          this._conflict.clear();
           this.notifyTransition(booking);
           this.settleEscrow(booking);
           this.loadEvents(bookingId);
@@ -433,15 +449,14 @@ export class BookingStore {
           this._actingId.set(null);
           if (error?.status === 409) {
             // Concurrent modification: surface + reload the truth.
-            this._conflict.set(
-              error?.error?.message ??
-                'Someone else updated this booking. Refreshing…'
-            );
+            this._conflict.setFromServer(error?.error?.message, {
+              key: 'booking.error.stale',
+            });
             this.load();
           } else {
-            this._lastError.set(
-              error?.error?.message ?? 'Could not update the booking. Please try again.'
-            );
+            this._lastError.setFromServer(error?.error?.message, {
+              key: 'booking.error.updateFailed',
+            });
           }
         },
       });
@@ -461,21 +476,28 @@ export class BookingStore {
                 ? 'booking.disputed'
                 : 'booking.rescheduled';
     const titles: Record<BookingStatus, string> = {
-      requested: 'Reschedule proposed',
-      accepted: 'Booking accepted',
-      in_progress: 'Visit started',
-      completed: 'Visit completed',
-      cancelled: 'Booking cancelled',
-      disputed: 'Dispute opened',
+      requested: 'notify.status.requested',
+      accepted: 'notify.status.accepted',
+      in_progress: 'notify.status.inProgress',
+      completed: 'notify.status.completed',
+      // Shared with the dedicated emit sites — one wording per event.
+      cancelled: 'notify.bookingCancelled',
+      disputed: 'notify.disputeOpened',
     };
     this.notifications.notify(
       kind,
-      titles[booking.status] ?? 'Booking updated',
-      `${booking.caregiverName} · ${new Date(booking.scheduledAtMs).toLocaleString()}`,
+      { key: titles[booking.status] ?? 'notify.bookingUpdated' },
+      {
+        key: 'notify.bookingBody',
+        params: {
+          name: booking.caregiverName,
+          when: new Date(booking.scheduledAtMs).toLocaleString(activeLocaleTag()),
+        },
+      },
       '/bookings'
     );
     if (booking.status === 'completed') {
-      this.notifications.toast('Visit completed — escrow released.', 'success');
+      this.notifications.toast({ key: 'notify.escrowReleased' }, 'success');
     }
   }
 

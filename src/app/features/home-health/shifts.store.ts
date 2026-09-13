@@ -1,6 +1,7 @@
 import { Injectable, inject, signal, computed } from '@angular/core';
 import { Observable, map, catchError, of } from 'rxjs';
 import { ApiClient } from '../../core/api/api.client';
+import { LocalizedMessage } from '../../core/i18n/localized-message';
 
 /**
  * Shift calendar state (PLAN.md §5 Phase 2 — Shift calendar). Providers edit
@@ -53,14 +54,16 @@ export class ShiftsStore {
   private readonly _shifts = signal<Shift[]>([]);
   private readonly _loading = signal(false);
   private readonly _saving = signal(false);
-  private readonly _saveError = signal('');
+  private readonly _saveError = new LocalizedMessage();
 
   readonly availability = this._availability.asReadonly();
   readonly onDemand = this._onDemand.asReadonly();
   readonly shifts = this._shifts.asReadonly();
   readonly loading = this._loading.asReadonly();
   readonly saving = this._saving.asReadonly();
-  readonly saveError = this._saveError.asReadonly();
+  /** Translatable source of the message (null for server-provided text). */
+  readonly saveErrorSource = this._saveError.source;
+  readonly saveError = this._saveError.value;
 
   /** Upcoming confirmed/requested shifts, soonest first. */
   readonly upcomingShifts = computed(() =>
@@ -112,7 +115,7 @@ export class ShiftsStore {
 
   save(): Observable<boolean> {
     this._saving.set(true);
-    this._saveError.set('');
+    this._saveError.clear();
     return this.api
       .patch<{ availability: AvailabilitySlot[]; onDemand: boolean }>('/shifts/me', {
         availability: this._availability(),
@@ -125,10 +128,9 @@ export class ShiftsStore {
         }),
         catchError((error) => {
           this._saving.set(false);
-          this._saveError.set(
-            (error as { error?: { message?: string } })?.error?.message ??
-              'Could not save your availability. Please try again.'
-          );
+          this._saveError.setFromServer((error as { error?: { message?: string } })?.error?.message, {
+              key: 'store.shifts.saveFailed',
+            });
           return of(false);
         })
       );

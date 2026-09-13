@@ -1,159 +1,286 @@
-<header class="shell-header">
-  <a class="brand" routerLink="/marketplace">CareMarketplace</a>
-
-  <nav class="shell-nav" aria-label="Main navigation">
-    @for (item of navItems(); track item.href) {
-      <a
-        [routerLink]="item.href"
-        routerLinkActive="active"
-        [routerLinkActiveOptions]="{ exact: item.exact }"
-      >
-        {{ item.label }}
+<div class="shell" [class.menu-open]="menuOpen()">
+  <!-- ------------------------------------------------------------------ -->
+  <!-- Sidebar                                                             -->
+  <!-- ------------------------------------------------------------------ -->
+  <aside class="sidebar" [attr.aria-label]="i18n.t('nav.mainNavigation')">
+    <div class="sidebar-head">
+      <a class="brand" routerLink="/marketplace">
+        <span class="brand-mark" aria-hidden="true">✚</span>
+        <span class="brand-text">
+          <span class="brand-name">{{ i18n.t('brand.name') }}</span>
+          <span class="brand-tagline">{{ i18n.t('brand.tagline') }}</span>
+        </span>
       </a>
-    }
-  </nav>
-
-  <div class="shell-account">
-    <div class="notif">
       <button
         type="button"
-        class="bell"
-        [attr.aria-label]="
-          notifications.unreadCount() > 0
-            ? 'Notifications, ' + notifications.unreadCount() + ' unread'
-            : 'Notifications'
-        "
-        [attr.aria-expanded]="panelOpen()"
-        (click)="togglePanel()"
+        class="icon-btn sidebar-close"
+        (click)="closeMenu()"
+        [attr.aria-label]="i18n.t('nav.closeMenu')"
       >
-        🔔
-        @if (notifications.unreadCount() > 0) {
-          <span class="badge" aria-hidden="true">{{ notifications.unreadCount() }}</span>
-        }
+        ✕
       </button>
-
-      @if (panelOpen()) {
-        <div class="panel" role="dialog" aria-label="Notifications" aria-modal="false" tabindex="-1">
-          <div class="panel-head">
-            <strong>Notifications</strong>
-            <span class="panel-actions">
-              <button type="button" class="link" (click)="markAllRead()">Mark all read</button>
-              <button
-                type="button"
-                class="link"
-                (click)="mutesOpen.set(!mutesOpen())"
-                [attr.aria-expanded]="mutesOpen()"
-              >
-                Mutes
-              </button>
-              <button type="button" class="link" (click)="closePanel()" aria-label="Close notifications">✕</button>
-            </span>
-          </div>
-
-          @if (mutesOpen()) {
-            <div class="mutes">
-              <p class="meta">Muted kinds won't appear in the panel, toasts or push.</p>
-              @for (kind of allKinds; track kind) {
-                <label class="mute-row">
-                  <input
-                    type="checkbox"
-                    [checked]="notifications.isMuted(kind)"
-                    (change)="notifications.toggleMute(kind)"
-                  />
-                  {{ kind }}
-                </label>
-              }
-              <label class="mute-row">
-                <input type="checkbox" [checked]="pushRequested()" (change)="requestPush()" />
-                Browser push notifications
-              </label>
-            </div>
-          }
-
-          <div class="panel-body">
-            @if (!notifications.loaded() && notifications.loading()) {
-              <p class="meta">Loading…</p>
-            } @else if (notifications.error() && notifications.panelItems().length === 0) {
-              <p class="meta" role="alert">{{ notifications.error() }}</p>
-              <button type="button" class="link more" (click)="retryLoad()">Retry</button>
-            } @else if (notifications.panelItems().length === 0) {
-              <p class="meta">You're all caught up 🎉</p>
-            } @else {
-              @for (group of groupByDay(notifications.panelItems()); track group.label) {
-                <p class="day">{{ group.label }}</p>
-                <ul>
-                  @for (item of group.items; track item.id) {
-                    <li>
-                      <button
-                        type="button"
-                        class="item"
-                        [class.unread]="item.readAtMs === null"
-                        (click)="open(item)"
-                      >
-                        <span class="item-title">{{ item.title }}</span>
-                        <span class="item-body">{{ item.body }}</span>
-                        <span class="item-time">{{ dayLabel(item.createdAtMs) }}</span>
-                      </button>
-                    </li>
-                  }
-                </ul>
-              }
-              @if (notifications.hasMore()) {
-                <button type="button" class="link more" (click)="loadMore()">Load more</button>
-              }
-            }
-          </div>
-        </div>
-      }
     </div>
 
-    <button type="button" class="theme-toggle" (click)="toggleTheme()" [attr.aria-label]="theme() === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'">
-      {{ theme() === 'dark' ? '☀️' : '🌙' }}
-    </button>
+    <nav class="sidebar-nav">
+      @for (section of navSections(); track section.key) {
+        <div class="nav-group">
+          <p class="nav-group-label">{{ i18n.t(section.key) }}</p>
+          <ul>
+            @for (item of section.items; track item.href) {
+              <li>
+                <a
+                  [routerLink]="item.href"
+                  routerLinkActive="active"
+                  [routerLinkActiveOptions]="{ exact: item.exact }"
+                >
+                  <span class="nav-icon" aria-hidden="true">{{ item.icon }}</span>
+                  <span class="nav-label">{{ i18n.t(item.key) }}</span>
+                </a>
+              </li>
+            }
+          </ul>
+        </div>
+      }
+    </nav>
 
-    @if (session.isLoggedIn()) {
-      <a routerLink="/profile" class="who">{{ session.displayName() }}</a>
-      <button type="button" (click)="logout()">Log out</button>
-    } @else {
-      <a routerLink="/login">Log in</a>
+    <div class="sidebar-foot">
+      @if (session.isLoggedIn()) {
+        <a class="account-card" routerLink="/profile">
+          <span class="avatar" aria-hidden="true">{{ initials() }}</span>
+          <span class="account-name">{{ session.displayName() }}</span>
+        </a>
+        <button type="button" class="btn secondary sm block" (click)="logout()">
+          {{ i18n.t('account.logOut') }}
+        </button>
+      } @else {
+        <a class="btn block" routerLink="/login">{{ i18n.t('account.logIn') }}</a>
+      }
+    </div>
+  </aside>
+
+  <!-- Drawer scrim (mobile only) -->
+  <div class="scrim" (click)="closeMenu()" aria-hidden="true"></div>
+
+  <!-- ------------------------------------------------------------------ -->
+  <!-- Main column                                                         -->
+  <!-- ------------------------------------------------------------------ -->
+  <div class="shell-body">
+    <header class="topbar">
+      <button
+        type="button"
+        class="icon-btn menu-btn"
+        (click)="toggleMenu()"
+        [attr.aria-expanded]="menuOpen()"
+        [attr.aria-label]="menuOpen() ? i18n.t('nav.closeMenu') : i18n.t('nav.openMenu')"
+      >
+        ☰
+      </button>
+
+      <!-- Breadcrumb (deliberately not a heading: pages own their own <h1>). -->
+      @if (currentNavKey(); as key) {
+        <nav class="crumbs" [attr.aria-label]="i18n.t('nav.youAreHere')">
+          <span aria-current="page">{{ i18n.t(key) }}</span>
+        </nav>
+      }
+
+      <div class="topbar-actions">
+        <div class="lang-switch" role="group" [attr.aria-label]="i18n.t('account.language')">
+          @for (lang of i18n.languages; track lang.code) {
+            <button
+              type="button"
+              class="lang-option"
+              [class.active]="i18n.language() === lang.code"
+              [attr.aria-pressed]="i18n.language() === lang.code"
+              [attr.title]="lang.code === 'el' ? i18n.t('account.languageEl') : i18n.t('account.languageEn')"
+              (click)="setLanguage(lang.code)"
+            >
+              {{ lang.code === 'el' ? 'ΕΛ' : 'EN' }}
+            </button>
+          }
+        </div>
+
+        <button
+          type="button"
+          class="icon-btn"
+          (click)="toggleTheme()"
+          [attr.aria-label]="
+            theme() === 'dark' ? i18n.t('account.switchToLight') : i18n.t('account.switchToDark')
+          "
+        >
+          {{ theme() === 'dark' ? '☀️' : '🌙' }}
+        </button>
+
+        <div class="notif">
+          <button
+            type="button"
+            class="bell"
+            [attr.aria-label]="
+              notifications.unreadCount() > 0
+                ? i18n.t('notifications.unread', { count: notifications.unreadCount() })
+                : i18n.t('notifications.none')
+            "
+            [attr.aria-expanded]="panelOpen()"
+            (click)="togglePanel()"
+          >
+            🔔
+            @if (notifications.unreadCount() > 0) {
+              <span class="badge" aria-hidden="true">{{ notifications.unreadCount() }}</span>
+            }
+          </button>
+
+          @if (panelOpen()) {
+            <div
+              class="panel"
+              role="dialog"
+              [attr.aria-label]="i18n.t('notifications.title')"
+              aria-modal="false"
+              tabindex="-1"
+            >
+              <div class="panel-head">
+                <strong>{{ i18n.t('notifications.title') }}</strong>
+                <span class="panel-actions">
+                  <button type="button" class="link" (click)="markAllRead()">
+                    {{ i18n.t('notifications.markAllRead') }}
+                  </button>
+                  <button
+                    type="button"
+                    class="link"
+                    (click)="mutesOpen.set(!mutesOpen())"
+                    [attr.aria-expanded]="mutesOpen()"
+                  >
+                    {{ i18n.t('notifications.mutes') }}
+                  </button>
+                  <button
+                    type="button"
+                    class="link"
+                    (click)="closePanel()"
+                    [attr.aria-label]="i18n.t('notifications.close')"
+                  >
+                    ✕
+                  </button>
+                </span>
+              </div>
+
+              @if (mutesOpen()) {
+                <div class="mutes">
+                  <p class="meta">{{ i18n.t('notifications.mutesHint') }}</p>
+                  @for (kind of allKinds; track kind) {
+                    <label class="mute-row">
+                      <input
+                        type="checkbox"
+                        [checked]="notifications.isMuted(kind)"
+                        (change)="notifications.toggleMute(kind)"
+                      />
+                      {{ kind }}
+                    </label>
+                  }
+                  <label class="mute-row">
+                    <input type="checkbox" [checked]="pushRequested()" (change)="requestPush()" />
+                    {{ i18n.t('notifications.browserPush') }}
+                  </label>
+                </div>
+              }
+
+              <div class="panel-body">
+                @if (!notifications.loaded() && notifications.loading()) {
+                  <p class="meta">{{ i18n.t('notifications.loading') }}</p>
+                } @else if (notifications.error() && notifications.panelItems().length === 0) {
+                  <p class="meta" role="alert">
+                    {{ i18n.message(notifications.errorSource(), notifications.error()) }}
+                  </p>
+                  <button type="button" class="link more" (click)="retryLoad()">
+                    {{ i18n.t('notifications.retry') }}
+                  </button>
+                } @else if (notifications.panelItems().length === 0) {
+                  <p class="meta">{{ i18n.t('notifications.allCaughtUp') }}</p>
+                } @else {
+                  @for (group of groupByDay(notifications.panelItems()); track group.label) {
+                    <p class="day">{{ group.label }}</p>
+                    <ul>
+                      @for (item of group.items; track item.id) {
+                        <li>
+                          <button
+                            type="button"
+                            class="item"
+                            [class.unread]="item.readAtMs === null"
+                            (click)="open(item)"
+                          >
+                            <span class="item-title">{{ i18n.message(item.source?.title, item.title) }}</span>
+                            <span class="item-body">{{ i18n.message(item.source?.body, item.body) }}</span>
+                            <span class="item-time">{{ dayLabel(item.createdAtMs) }}</span>
+                          </button>
+                        </li>
+                      }
+                    </ul>
+                  }
+                  @if (notifications.hasMore()) {
+                    <button type="button" class="link more" (click)="loadMore()">
+                      {{ i18n.t('notifications.loadMore') }}
+                    </button>
+                  }
+                }
+              </div>
+            </div>
+          }
+        </div>
+      </div>
+    </header>
+
+    <!-- Demo backend indicator: the real API is the default path.
+         Deliberately role="note" and not role="status": it is static on load,
+         and a live-region role here would shadow feature pages'
+         getByRole('status') assertions in the E2E suite. -->
+    @if (demoActive) {
+      <div class="demo-banner" role="note">
+        <strong>{{ i18n.t('demo.badge') }}</strong>
+        <span>{{ i18n.t('demo.body') }}</span>
+      </div>
     }
-  </div>
-</header>
 
-@if (!offline.isOnline()) {
-  <div class="offline-banner" role="status">
-    <strong>You're offline</strong>
-    <span>Actions you take are queued and will sync automatically when you're back online.</span>
-  </div>
-}
+    @if (!offline.isOnline()) {
+      <div class="offline-banner" role="status">
+        <strong>{{ i18n.t('offline.title') }}</strong>
+        <span>{{ i18n.t('offline.body') }}</span>
+      </div>
+    }
 
-@if (offline.pendingCount() > 0 || offline.failedCount() > 0) {
-  <div class="sync-strip" role="status">
-    <span>
-      @if (offline.pendingCount() > 0) {
-        {{ offline.pendingCount() }} action{{ offline.pendingCount() === 1 ? '' : 's' }} waiting to sync
-      }
-      @if (offline.failedCount() > 0) {
-        <span class="sync-failed">· {{ offline.failedCount() }} failed</span>
-      }
-    </span>
-    <button type="button" class="secondary" (click)="retrySync()">Retry now</button>
+    @if (offline.pendingCount() > 0 || offline.failedCount() > 0) {
+      <div class="sync-strip" role="status">
+        <span>
+          @if (offline.pendingCount() > 0) {
+            {{ i18n.t('offline.pending', { count: offline.pendingCount() }) }}
+          }
+          @if (offline.failedCount() > 0) {
+            <span class="sync-failed">
+              · {{ i18n.t('offline.failed', { count: offline.failedCount() }) }}
+            </span>
+          }
+        </span>
+        <button type="button" class="btn secondary sm" (click)="retrySync()">
+          {{ i18n.t('offline.retryNow') }}
+        </button>
+      </div>
+    }
+
+    <main class="shell-main">
+      <router-outlet />
+    </main>
   </div>
-}
+</div>
 
 @if (updateAvailable()) {
   <div class="update-banner" role="status">
-    <span>A new version is available.</span>
-    <button type="button" class="secondary" (click)="reloadForUpdate()">Reload</button>
+    <span>{{ i18n.t('update.available') }}</span>
+    <button type="button" class="btn secondary sm" (click)="reloadForUpdate()">
+      {{ i18n.t('update.reload') }}
+    </button>
   </div>
 }
 
-<main class="shell-main">
-  <router-outlet />
-</main>
-
 <div class="toast-stack" aria-live="polite">
   @for (toast of notifications.toasts(); track toast.id) {
-    <p class="toast {{ toast.tone }}" role="status">{{ toast.text }}</p>
+    <p [class]="toastTone(toast)" role="status">
+      {{ i18n.message(toast.source, toast.text) }}
+    </p>
   }
 </div>

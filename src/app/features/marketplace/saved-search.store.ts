@@ -2,6 +2,9 @@ import { Injectable, inject, signal, computed } from '@angular/core';
 import { Observable, map, catchError, of } from 'rxjs';
 import { ApiClient } from '../../core/api/api.client';
 import { SearchFilters } from './marketplace.store';
+import { LocalizedMessage } from '../../core/i18n/localized-message';
+import { Language } from '../../core/i18n/translations';
+import { detectLanguage, translateStatic } from '../../core/i18n/i18n.service';
 
 /**
  * Saved searches & favorite caregivers (FEATURE_PLAN.md §2). A saved search
@@ -24,8 +27,15 @@ export interface FavoriteCaregiver {
   savedAtMs: number;
 }
 
-/** Human-readable name from the active filters (save-time auto-naming). */
-export function autoSearchName(filters: SearchFilters): string {
+/**
+ * Human-readable name from the active filters (save-time auto-naming).
+ *
+ * The name is generated once, in the language active at save time, and then
+ * persists as user data — it is never re-translated on a language switch, so
+ * the user keeps seeing the name they saved. Callers pass `detectLanguage()`;
+ * the default keeps the pure function testable without storage.
+ */
+export function autoSearchName(filters: SearchFilters, language: Language = 'en'): string {
   const parts: string[] = [];
   if (filters.query) {
     parts.push(`“${filters.query}”`);
@@ -40,10 +50,10 @@ export function autoSearchName(filters: SearchFilters): string {
     parts.push(`★ ${filters.minRating}+`);
   }
   if (filters.availableNowOnly) {
-    parts.push('available now');
+    parts.push(translateStatic('store.savedSearch.availableNow', undefined, language));
   }
   if (parts.length === 0) {
-    return 'All caregivers';
+    return translateStatic('store.savedSearch.all', undefined, language);
   }
   return parts.join(' · ');
 }
@@ -58,13 +68,15 @@ export class SavedSearchStore {
   private readonly _favorites = signal<FavoriteCaregiver[]>([]);
   private readonly _loading = signal(false);
   private readonly _togglingId = signal<string | null>(null);
-  private readonly _error = signal('');
+  private readonly _error = new LocalizedMessage();
 
   readonly savedSearches = this._savedSearches.asReadonly();
   readonly favorites = this._favorites.asReadonly();
   readonly loading = this._loading.asReadonly();
   readonly togglingId = this._togglingId.asReadonly();
-  readonly error = this._error.asReadonly();
+  /** Translatable source of the error (null for a server-provided message). */
+  readonly errorSource = this._error.source;
+  readonly error = this._error.value;
 
   readonly favoriteIds = computed(
     () => new Set(this._favorites().map((f) => f.caregiverId))
@@ -77,7 +89,7 @@ export class SavedSearchStore {
   /** One backend round-trip fetches both collections. */
   load(): void {
     this._loading.set(true);
-    this._error.set('');
+    this._error.clear();
     this.api
       .get<{ savedSearches: SavedSearch[]; favorites: FavoriteCaregiver[] }>(
         '/me/saved-searches'
@@ -89,7 +101,7 @@ export class SavedSearchStore {
           this._loading.set(false);
         },
         error: () => {
-          this._error.set('Could not load your saved searches. Please try again.');
+          this._error.set({ key: 'market.error.savedLoadFailed' });
           this._loading.set(false);
         },
       });
@@ -97,10 +109,10 @@ export class SavedSearchStore {
 
   /** Persist the current filters as a named search. */
   save(name: string, filters: SearchFilters): Observable<boolean> {
-    this._error.set('');
+    this._error.clear();
     return this.api
       .post<SavedSearch>('/me/saved-searches', {
-        name: name.trim() || autoSearchName(filters),
+        name: name.trim() || autoSearchName(filters, detectLanguage()),
         filters,
       })
       .pipe(
@@ -109,14 +121,14 @@ export class SavedSearchStore {
           return true;
         }),
         catchError(() => {
-          this._error.set('Could not save the search. Please try again.');
+          this._error.set({ key: 'market.error.savedSaveFailed' });
           return of(false);
         })
       );
   }
 
   rename(id: string, name: string): Observable<boolean> {
-    this._error.set('');
+    this._error.clear();
     return this.api
       .patch<SavedSearch>(`/me/saved-searches/${encodeURIComponent(id)}`, { name })
       .pipe(
@@ -127,14 +139,14 @@ export class SavedSearchStore {
           return true;
         }),
         catchError(() => {
-          this._error.set('Could not rename the search. Please try again.');
+          this._error.set({ key: 'market.error.savedRenameFailed' });
           return of(false);
         })
       );
   }
 
   remove(id: string): Observable<boolean> {
-    this._error.set('');
+    this._error.clear();
     return this.api
       .delete<{ ok: boolean }>(`/me/saved-searches/${encodeURIComponent(id)}`)
       .pipe(
@@ -143,7 +155,7 @@ export class SavedSearchStore {
           return true;
         }),
         catchError(() => {
-          this._error.set('Could not delete the search. Please try again.');
+          this._error.set({ key: 'market.error.savedDeleteFailed' });
           return of(false);
         })
       );
@@ -154,7 +166,7 @@ export class SavedSearchStore {
    * API error path rolls it back and surfaces the store error.
    */
   toggleFavorite(caregiverId: string): Observable<boolean> {
-    this._error.set('');
+    this._error.clear();
     const isFav = this.isFavorite(caregiverId);
     // Optimistic flip.
     if (isFav) {
@@ -191,7 +203,7 @@ export class SavedSearchStore {
           );
         }
         this._togglingId.set(null);
-        this._error.set('Could not update favorites. Please try again.');
+        this._error.set({ key: 'market.error.favoriteFailed' });
         return of(false);
       })
     );

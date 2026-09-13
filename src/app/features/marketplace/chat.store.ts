@@ -3,6 +3,8 @@ import { HttpClient, HttpResponse, HttpEventType, type HttpEvent } from '@angula
 import { Observable, of, type Subscription } from 'rxjs';
 import { SessionStore } from '../../core/auth/session';
 import { WebSocketClient, WsEnvelope } from '../../core/services/ws/websocket.client';
+import { TranslatableMessage, translateStatic } from '../../core/i18n/i18n.service';
+import { LocalizedMessage } from '../../core/i18n/localized-message';
 
 export type MessageStatus = 'sending' | 'sent' | 'failed';
 
@@ -60,7 +62,10 @@ export const ALLOWED_ATTACHMENT_TYPES: Readonly<Record<AttachmentKind, readonly 
 
 export interface AttachmentResult {
   valid: boolean;
+  /** English rendering of {@link errorKey} (the reference locale). */
   error: string | null;
+  /** Dictionary key for the rejection, or null when the file is accepted. */
+  errorKey: string | null;
   kind: AttachmentKind | null;
 }
 
@@ -74,20 +79,24 @@ export function attachmentKindFor(type: string): AttachmentKind | null {
   return null;
 }
 
-/** Validates a file for size + type before upload (subtask 3). Pure. */
+/**
+ * Validates a file for size + type before upload (subtask 3). Pure. Rejects
+ * with a dictionary key rather than English so callers can render it per
+ * locale.
+ */
 export function validateAttachment(file: File): AttachmentResult {
   const kind = attachmentKindFor(file.type);
   if (kind === null) {
-    return {
-      valid: false,
-      error: 'Unsupported file type. Allowed: images, PDF, and voice notes.',
-      kind: null,
-    };
+    return rejectAttachment('chat.error.unsupportedType');
   }
   if (file.size > MAX_ATTACHMENT_BYTES) {
-    return { valid: false, error: 'File is larger than the 10 MB limit.', kind };
+    return { ...rejectAttachment('chat.error.fileTooLarge'), kind };
   }
-  return { valid: true, error: null, kind };
+  return { valid: true, error: null, errorKey: null, kind };
+}
+
+function rejectAttachment(errorKey: string): AttachmentResult {
+  return { valid: false, error: translateStatic(errorKey), errorKey, kind: null };
 }
 
 /** Minimal shape the chat needs to render a booking-context card (subtask 6). */
@@ -160,7 +169,7 @@ export class ChatStore {
   private readonly _messages = signal<Record<string, ChatMessage[]>>({});
   private readonly _activeId = signal<string | null>(null);
   private readonly _connected = signal(false);
-  private readonly _sendError = signal('');
+  private readonly _sendError = new LocalizedMessage();
   /** In-flight uploads keyed by the optimistic message id (subtask 3). */
   private readonly _uploads = signal<Record<string, UploadState>>({});
   /** User ids the current user has blocked (subtask 11). */
@@ -174,7 +183,9 @@ export class ChatStore {
   readonly messages = this._messages.asReadonly();
   readonly activeId = this._activeId.asReadonly();
   readonly connected = this._connected.asReadonly();
-  readonly sendError = this._sendError.asReadonly();
+  /** Translatable source of the send error (null for server text). */
+  readonly sendErrorSource = this._sendError.source;
+  readonly sendError = this._sendError.value;
   readonly uploads = this._uploads.asReadonly();
   readonly blockedIds = this._blockedIds.asReadonly();
 
@@ -299,9 +310,9 @@ export class ChatStore {
     });
     this.updateStatus(message.id, delivered ? 'sent' : 'failed');
     if (!delivered) {
-      this._sendError.set('Not connected — message will not reach the caregiver yet.');
+      this._sendError.set({ key: 'chat.error.notConnected' });
     } else {
-      this._sendError.set('');
+      this._sendError.clear();
     }
   }
 
@@ -309,7 +320,7 @@ export class ChatStore {
   sendAttachment(file: File): void {
     const conversationId = this._activeId();
     if (!conversationId) {
-      this._sendError.set('Open a conversation before attaching a file.');
+      this._sendError.set({ key: 'chat.error.noConversationAttachment' });
       return;
     }
     const me = this.session.session();
@@ -318,11 +329,11 @@ export class ChatStore {
     }
     const validation = validateAttachment(file);
     if (!validation.valid || !validation.kind) {
-      this._sendError.set(validation.error ?? 'Invalid file.');
+      this._sendError.set({ key: validation.errorKey ?? 'chat.error.invalidFile' });
       return;
     }
     const kind = validation.kind;
-    this._sendError.set('');
+    this._sendError.clear();
 
     const message: ChatMessage = {
       id: crypto.randomUUID(),
@@ -379,12 +390,12 @@ export class ChatStore {
               );
               this._deliverMessage(message, conversationId);
             } else {
-              this._failUpload(message.id, conversationId, 'Upload did not return a URL.');
+              this._failUpload(message.id, conversationId, { key: 'chat.error.uploadNoUrl' });
             }
           }
         },
         error: () => {
-          this._failUpload(message.id, conversationId, 'Upload failed. Tap to retry.');
+          this._failUpload(message.id, conversationId, { key: 'chat.error.uploadFailed' });
         },
         complete: () => {
           this._uploadSubs.delete(message.id);
@@ -397,7 +408,7 @@ export class ChatStore {
   sendBookingContext(bookingId: string, booking?: BookingContextCard): void {
     const conversationId = this._activeId();
     if (!conversationId) {
-      this._sendError.set('Open a conversation before sharing context.');
+      this._sendError.set({ key: 'chat.error.noConversationContext' });
       return;
     }
     const me = this.session.session();
@@ -448,7 +459,7 @@ export class ChatStore {
       return;
     }
     this.updateStatus(messageId, 'sending');
-    this._sendError.set('');
+    this._sendError.clear();
     if (message.attachment) {
       this._uploads.update((u) =>
         u[message.id] ? { ...u, [message.id]: { progress: 0, status: 'uploading', error: null } } : u
@@ -457,7 +468,7 @@ export class ChatStore {
       // the original file; signal the page so it can re-select. For text-only
       // retries, push through the socket directly.
       if (!message.text) {
-        this._sendError.set('Re-select the attachment to retry sending.');
+        this._sendError.set({ key: 'chat.error.reselectAttachment' });
         this.updateStatus(messageId, 'failed');
         return;
       }
@@ -468,7 +479,7 @@ export class ChatStore {
     });
     this.updateStatus(messageId, delivered ? 'sent' : 'failed');
     if (!delivered) {
-      this._sendError.set('Not connected — message will not reach the caregiver yet.');
+      this._sendError.set({ key: 'chat.error.notConnected' });
     }
   }
 
@@ -706,16 +717,23 @@ export class ChatStore {
     });
     this.updateStatus(message.id, delivered ? 'sent' : 'failed');
     if (!delivered) {
-      this._sendError.set('Not connected — message will not reach the caregiver yet.');
+      this._sendError.set({ key: 'chat.error.notConnected' });
     }
   }
 
-  private _failUpload(messageId: string, conversationId: string, error: string): void {
+  private _failUpload(
+    messageId: string,
+    conversationId: string,
+    source: TranslatableMessage
+  ): void {
     this.updateStatus(messageId, 'failed');
+    // The upload banner shows the English rendering; the page-level alert uses
+    // the translated key.
+    const error = translateStatic(source.key, source.params);
     this._uploads.update((u) =>
       u[messageId] ? { ...u, [messageId]: { progress: 100, status: 'error', error } } : u
     );
-    this._sendError.set(error);
+    this._sendError.set(source);
   }
 
   private _findMessage(messageId: string): ChatMessage | undefined {

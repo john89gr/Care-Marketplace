@@ -3,6 +3,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { of, throwError } from 'rxjs';
 import { ApiClient } from '../../core/api/api.client';
 import { NotificationsService, AppNotification } from '../../core/services/notifications/notifications.service';
+import { TranslatableMessage } from '../../core/i18n/i18n.service';
 import { VitalsStore, VitalReading, isOutOfRange } from './vitals.store';
 
 function makeApi(overrides: Partial<Record<'get' | 'post', unknown>> = {}) {
@@ -67,9 +68,13 @@ describe('VitalsStore', () => {
       store.add({ type: 'bloodPressure', value: 165, value2: 100, measuredAtMs: 2000 }).subscribe(resolve)
     );
     expect(notifications.calls).toHaveLength(1);
-    const [kind, title] = notifications.calls[0] as [AppNotification['kind'], string];
+    const [kind, title] = notifications.calls[0] as [AppNotification['kind'], TranslatableMessage];
     expect(kind).toBe('vitals.alert');
-    expect(title).toContain('Blood pressure');
+    // The title is a dictionary key whose nested param names the vital type.
+    expect(title).toEqual({
+      key: 'notify.vitalsTitle',
+      params: { vital: 'Blood pressure' },
+    });
   });
 
   it('emits no notification for in-range readings', async () => {

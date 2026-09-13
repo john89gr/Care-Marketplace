@@ -1,5 +1,6 @@
 import { Component, computed, inject, OnInit } from '@angular/core';
 import { VisitStore, Visit } from './visit.store';
+import { I18n } from '../../core/i18n/i18n.service';
 
 function formatDate(ms: number): string {
   return new Date(ms).toLocaleString(undefined, {
@@ -59,7 +60,7 @@ function formatDate(ms: number): string {
         @if (store.activeVisit()) {
           <h2>Live tracking</h2>
           @if (store.positionError()) {
-            <p class="error" role="alert">{{ store.positionError() }}</p>
+            <p class="error" role="alert">{{ i18n.message(store.positionErrorSource(), store.positionError()) }}</p>
           } @else if (livePoint()) {
             <p class="meta">📍 {{ position(livePoint()!) }} · accuracy ±{{ livePoint()!.accuracyM.toFixed(0) }} m</p>
           } @else {
@@ -69,7 +70,7 @@ function formatDate(ms: number): string {
       }
 
       @if (store.error()) {
-        <p class="error" role="alert">{{ store.error() }}</p>
+        <p class="error" role="alert">{{ i18n.message(store.errorSource(), store.error()) }}</p>
       }
     </section>
   `,
@@ -80,6 +81,8 @@ function formatDate(ms: number): string {
   `,
 })
 export class VisitsPage implements OnInit {
+  protected readonly i18n = inject(I18n);
+
   readonly store = inject(VisitStore);
 
   readonly livePoint = computed(() => {

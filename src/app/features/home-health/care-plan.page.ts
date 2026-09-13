@@ -1,6 +1,7 @@
 import { Component, inject, OnInit, signal } from '@angular/core';
 import { FormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
 import { CarePlanStore, CareGoal, careGoalStatusLabel } from './care-plan.store';
+import { I18n } from '../../core/i18n/i18n.service';
 
 const NEXT_STATUS: Record<CareGoal['status'], CareGoal['status']> = {
   open: 'in-progress',
@@ -70,7 +71,7 @@ const NEXT_STATUS: Record<CareGoal['status'], CareGoal['status']> = {
         </form>
 
         @if (store.error()) {
-          <p class="error" role="alert">{{ store.error() }}</p>
+          <p class="error" role="alert">{{ i18n.message(store.errorSource(), store.error()) }}</p>
         }
       }
     </section>
@@ -86,6 +87,8 @@ const NEXT_STATUS: Record<CareGoal['status'], CareGoal['status']> = {
   `,
 })
 export class CarePlanPage implements OnInit {
+  protected readonly i18n = inject(I18n);
+
   readonly store = inject(CarePlanStore);
   private readonly fb = inject(FormBuilder);
 

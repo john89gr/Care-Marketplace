@@ -9,6 +9,7 @@ import {
   NotificationsService,
   NotificationKind,
 } from '../../core/services/notifications/notifications.service';
+import { I18n } from '../../core/i18n/i18n.service';
 
 @Component({
   selector: 'app-profile',
@@ -89,7 +90,7 @@ import {
             <p class="saved" role="status">Profile saved.</p>
           }
           @if (store.saveError()) {
-            <p class="error" role="alert">{{ store.saveError() }}</p>
+            <p class="error" role="alert">{{ i18n.message(store.saveErrorSource(), store.saveError()) }}</p>
           }
         </form>
       }
@@ -159,6 +160,8 @@ import {
   `,
 })
 export class ProfilePage implements OnInit {
+  protected readonly i18n = inject(I18n);
+
   readonly store = inject(ProfileStore);
   private readonly session = inject(SessionStore);
   private readonly fb = inject(FormBuilder);

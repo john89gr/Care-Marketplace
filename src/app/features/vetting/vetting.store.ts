@@ -6,6 +6,7 @@ import {
   Certification,
   CertificationStatus,
 } from '../../core/services/integrations/certification-status';
+import { LocalizedMessage } from '../../core/i18n/localized-message';
 
 /**
  * Licence vetting workflow (PLAN.md §5 Phase 2 — Nurse/Physio onboarding):
@@ -51,13 +52,15 @@ export class VettingStore {
   private readonly _queue = signal<LicenceSubmission[]>([]);
   private readonly _loading = signal(false);
   private readonly _submitting = signal(false);
-  private readonly _error = signal('');
+  private readonly _error = new LocalizedMessage();
 
   readonly mine = this._mine.asReadonly();
   readonly queue = this._queue.asReadonly();
   readonly loading = this._loading.asReadonly();
   readonly submitting = this._submitting.asReadonly();
-  readonly error = this._error.asReadonly();
+  /** Translatable source of the message (null for server-provided text). */
+  readonly errorSource = this._error.source;
+  readonly error = this._error.value;
 
   readonly isApproved = computed(() => this._mine()?.status === 'approved');
   readonly isPending = computed(() => this._mine()?.status === 'pending');
@@ -90,7 +93,7 @@ export class VettingStore {
 
   submit(draft: LicenceDraft): Observable<boolean> {
     this._submitting.set(true);
-    this._error.set('');
+    this._error.clear();
     return this.api.post<LicenceSubmission>('/vetting/submissions', draft).pipe(
       map((submission) => {
         this._mine.set(submission);
@@ -99,10 +102,9 @@ export class VettingStore {
       }),
       catchError((error) => {
         this._submitting.set(false);
-        this._error.set(
-          (error as { error?: { message?: string } })?.error?.message ??
-            'Could not submit your licence. Please try again.'
-        );
+        this._error.setFromServer((error as { error?: { message?: string } })?.error?.message, {
+            key: 'store.vetting.submitFailed',
+          });
         return of(false);
       })
     );
@@ -122,17 +124,16 @@ export class VettingStore {
 
   /** Admin: approve or reject a submission. */
   review(id: string, decision: 'approved' | 'rejected', note = ''): Observable<boolean> {
-    this._error.set('');
+    this._error.clear();
     return this.api.post<LicenceSubmission>(`/vetting/submissions/${id}/review`, { decision, note }).pipe(
       map((updated) => {
         this._queue.update((list) => list.map((s) => (s.id === id ? updated : s)));
         return true;
       }),
       catchError((error) => {
-        this._error.set(
-          (error as { error?: { message?: string } })?.error?.message ??
-            'Could not review the submission.'
-        );
+        this._error.setFromServer((error as { error?: { message?: string } })?.error?.message, {
+            key: 'store.vetting.reviewFailed',
+          });
         return of(false);
       })
     );

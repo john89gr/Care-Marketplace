@@ -2,6 +2,7 @@ import { Component, OnDestroy, OnInit, computed, inject, signal } from '@angular
 import { Router } from '@angular/router';
 import { Subscription } from 'rxjs';
 import { SessionStore } from '../../core/auth/session';
+import { I18n } from '../../core/i18n/i18n.service';
 import { WebSocketClient } from '../../core/services/ws/websocket.client';
 import { PushService } from '../../core/services/push/push.service';
 import { BookingStore, BookingRecord } from './booking.store';
@@ -12,16 +13,9 @@ import {
   FREE_CANCEL_HOURS,
   rescheduleConfirmed,
   BookingAction,
+  BookingEventKind,
+  BookingStatus,
 } from './booking.model';
-
-function formatDate(ms: number): string {
-  return new Date(ms).toLocaleDateString(undefined, {
-    day: 'numeric',
-    month: 'short',
-    hour: '2-digit',
-    minute: '2-digit',
-  });
-}
 
 /** One-time prompt key (§20 subtask 9: after the first completed booking). */
 const PUSH_PROMPT_KEY = 'cm.push.prompted.v1';
@@ -31,6 +25,11 @@ const PUSH_PROMPT_KEY = 'cm.push.prompted.v1';
  * is role-aware (client vs provider) and follows the pure state machine in
  * `booking.model.ts`; cancelling previews the policy quote first, and every
  * booking shows its event timeline.
+ *
+ * Bilingual. Status and event-kind chips read from the server as machine
+ * tokens (`in_progress`, `rescheduled`) and are translated per locale; the
+ * English labels deliberately stay the raw tokens so the existing English
+ * specs and the export keep their contract.
  */
 @Component({
   selector: 'app-booking',
@@ -38,58 +37,81 @@ const PUSH_PROMPT_KEY = 'cm.push.prompted.v1';
   imports: [],
   template: `
     <section class="booking">
-      <h1>Booking request</h1>
-      <form (submit)="submit($event)">
-        <label>Date & time
+      <header class="page-header">
+        <h1 class="page-title">{{ i18n.t('booking.title') }}</h1>
+        <p class="page-subtitle">{{ i18n.t('booking.subtitle') }}</p>
+      </header>
+
+      <form class="card request" (submit)="submit($event)">
+        <label class="field">
+          <span class="field-label">{{ i18n.t('booking.dateTime') }}</span>
           <input
             type="datetime-local"
             [value]="isoValue()"
             (change)="onDate($any($event.target).value)"
           />
         </label>
-        <label>Note
-          <textarea rows="3" [value]="store.draft().note"
-            (input)="store.updateDraft({ note: $any($event.target).value })"></textarea>
+        <label class="field">
+          <span class="field-label">{{ i18n.t('booking.note') }}</span>
+          <textarea
+            rows="3"
+            [value]="store.draft().note"
+            (input)="store.updateDraft({ note: $any($event.target).value })"
+          ></textarea>
         </label>
-        <button type="submit" [disabled]="store.submitting() || !store.draft().scheduledAtMs">
-          {{ store.submitting() ? 'Sending…' : 'Send request' }}
-        </button>
+        <div class="card-actions">
+          <button type="submit" class="btn" [disabled]="store.submitting() || !store.draft().scheduledAtMs">
+            {{ store.submitting() ? i18n.t('common.sending') : i18n.t('booking.send') }}
+          </button>
+        </div>
         @if (store.lastError()) {
-          <p class="error" role="alert">{{ store.lastError() }}</p>
+          <p class="error" role="alert">
+            {{ i18n.message(store.lastErrorSource(), store.lastError()) }}
+          </p>
         }
       </form>
 
       @if (showPushPrompt()) {
         <div class="push-prompt" role="status">
           <p>
-            <strong>Never miss a booking update.</strong>
-            Allow push notifications so you hear about acceptances, reminders and alerts
-            even when the app is closed.
+            <strong>{{ i18n.t('booking.pushTitle') }}</strong>
+            {{ i18n.t('booking.pushBody') }}
           </p>
           <p class="actions">
-            <button type="button" (click)="acceptPushPrompt()">Enable notifications</button>
-            <button type="button" class="secondary" (click)="dismissPushPrompt()">Not now</button>
+            <button type="button" class="btn" (click)="acceptPushPrompt()">
+              {{ i18n.t('booking.enableNotifications') }}
+            </button>
+            <button type="button" class="btn secondary" (click)="dismissPushPrompt()">
+              {{ i18n.t('booking.notNow') }}
+            </button>
           </p>
         </div>
       }
 
-      <h2>Your bookings</h2>
+      <h2 class="section-title">{{ i18n.t('booking.yourBookings') }}</h2>
       @if (store.conflict()) {
-        <p class="error" role="alert">{{ store.conflict() }}</p>
+        <p class="error" role="alert">
+          {{ i18n.message(store.conflictSource(), store.conflict()) }}
+        </p>
       }
       @if (store.loading()) {
-        <p>Loading…</p>
+        <p class="meta">{{ i18n.t('common.loading') }}</p>
       } @else if (visibleBookings().length === 0) {
-        <p>No bookings yet. Request one from the marketplace.</p>
+        <p class="empty-state">{{ i18n.t('booking.empty') }}</p>
       } @else {
         <ul class="results">
           @for (booking of visibleBookings(); track booking.id) {
             <li class="card">
               <div class="row">
-                <h3 id="booking-{{ booking.id }}-title" tabindex="-1">{{ booking.caregiverName }}</h3>
-                <span class="chip" [class.ok]="booking.status === 'completed'"
-                  [class.warn]="booking.status === 'disputed'">
-                  {{ booking.status }}
+                <h3 id="booking-{{ booking.id }}-title" tabindex="-1">
+                  {{ booking.caregiverName }}
+                </h3>
+                <span
+                  class="badge"
+                  [class.success]="booking.status === 'completed'"
+                  [class.warning]="booking.status === 'disputed'"
+                >
+                  {{ statusLabel(booking.status) }}
                 </span>
               </div>
               <p class="meta">
@@ -98,74 +120,123 @@ const PUSH_PROMPT_KEY = 'cm.push.prompted.v1';
 
               <p class="actions">
                 @for (action of actionsFor(booking); track action) {
-                  @if (action === 'accept') {
-                    <button type="button" [disabled]="store.actingId() === booking.id"
-                      (click)="run(booking, 'accept')">
-                      Accept
-                    </button>
-                  } @else if (action === 'start') {
-                    <button type="button" [disabled]="store.actingId() === booking.id"
-                      (click)="run(booking, 'start')">
-                      Start visit
-                    </button>
-                  } @else if (action === 'complete') {
-                    <button type="button" [disabled]="store.actingId() === booking.id"
-                      (click)="run(booking, 'complete')">
-                      Complete (releases escrow)
-                    </button>
-                  } @else if (action === 'cancel') {
-                    <button type="button" class="secondary" [disabled]="store.actingId() === booking.id"
-                      (click)="cancelWithQuote(booking)">
-                      Cancel
-                    </button>
-                  } @else if (action === 'reschedule') {
-                    <button type="button" class="secondary" [disabled]="store.actingId() === booking.id"
-                      (click)="rescheduleTomorrow(booking)">
-                      Propose new time
-                    </button>
-                  } @else if (action === 'dispute') {
-                    <button type="button" class="secondary" [disabled]="store.actingId() === booking.id"
-                      (click)="run(booking, 'dispute')">
-                      Open dispute
-                    </button>
+                  @switch (action) {
+                    @case ('accept') {
+                      <button
+                        type="button"
+                        class="btn"
+                        [disabled]="store.actingId() === booking.id"
+                        (click)="run(booking, 'accept')"
+                      >
+                        {{ i18n.t('booking.accept') }}
+                      </button>
+                    }
+                    @case ('start') {
+                      <button
+                        type="button"
+                        class="btn"
+                        [disabled]="store.actingId() === booking.id"
+                        (click)="run(booking, 'start')"
+                      >
+                        {{ i18n.t('booking.start') }}
+                      </button>
+                    }
+                    @case ('complete') {
+                      <button
+                        type="button"
+                        class="btn"
+                        [disabled]="store.actingId() === booking.id"
+                        (click)="run(booking, 'complete')"
+                      >
+                        {{ i18n.t('booking.complete') }}
+                      </button>
+                    }
+                    @case ('cancel') {
+                      <button
+                        type="button"
+                        class="btn secondary"
+                        [disabled]="store.actingId() === booking.id"
+                        (click)="cancelWithQuote(booking)"
+                      >
+                        {{ i18n.t('booking.cancel') }}
+                      </button>
+                    }
+                    @case ('reschedule') {
+                      <button
+                        type="button"
+                        class="btn secondary"
+                        [disabled]="store.actingId() === booking.id"
+                        (click)="rescheduleTomorrow(booking)"
+                      >
+                        {{ i18n.t('booking.reschedule') }}
+                      </button>
+                    }
+                    @case ('dispute') {
+                      <button
+                        type="button"
+                        class="btn secondary"
+                        [disabled]="store.actingId() === booking.id"
+                        (click)="run(booking, 'dispute')"
+                      >
+                        {{ i18n.t('booking.dispute') }}
+                      </button>
+                    }
                   }
                 }
                 @if (booking.status === 'completed' && !reviewed(booking.id)) {
-                  <button type="button" (click)="review(booking.id)">Rate this visit</button>
+                  <button type="button" class="btn" (click)="review(booking.id)">
+                    {{ i18n.t('booking.rateVisit') }}
+                  </button>
                 }
               </p>
 
               @if (quote() && quote()?.id === booking.id) {
                 <p class="meta policy" aria-live="polite">
                   @if (quote()!.free) {
-                    Free cancellation ({{ FREE_CANCEL_HOURS }}h+ before start) — full refund.
+                    {{ i18n.t('booking.freeCancel', { hours: FREE_CANCEL_HOURS }) }}
                   } @else {
-                    Late cancellation — fee {{ quote()!.feeCents / 100 }}€, refund {{ quote()!.refundCents / 100 }}€.
+                    {{
+                      i18n.t('booking.lateCancel', {
+                        fee: quote()!.feeCents / 100,
+                        refund: quote()!.refundCents / 100
+                      })
+                    }}
                   }
                 </p>
               }
 
               @if (booking.pendingReschedule && !proposalAgreed(booking)) {
                 <p class="meta policy" aria-live="polite">
-                  New time proposed: {{ formatDate(booking.pendingReschedule.scheduledAtMs) }} —
-                  awaiting {{ booking.pendingReschedule.proposedBy === 'client' ? 'provider' : 'client' }} confirmation.
-                  <button type="button" class="secondary" [disabled]="store.actingId() === booking.id"
-                    (click)="confirmProposal(booking)">
-                    Confirm new time
+                  {{
+                    i18n.t('booking.proposedAt', {
+                      when: formatDate(booking.pendingReschedule.scheduledAtMs),
+                      role:
+                        booking.pendingReschedule.proposedBy === 'client'
+                          ? i18n.t('booking.roleProvider')
+                          : i18n.t('booking.roleClient')
+                    })
+                  }}
+                  <button
+                    type="button"
+                    class="btn secondary sm"
+                    [disabled]="store.actingId() === booking.id"
+                    (click)="confirmProposal(booking)"
+                  >
+                    {{ i18n.t('booking.confirmNewTime') }}
                   </button>
                 </p>
               } @else if (booking.pendingReschedule) {
                 <p class="meta" aria-live="polite">
-                  Rescheduled to {{ formatDate(booking.pendingReschedule.scheduledAtMs) }} — agreed by both parties.
+                  {{ i18n.t('booking.rescheduled', { when: formatDate(booking.pendingReschedule.scheduledAtMs) }) }}
                 </p>
               }
 
               <details class="timeline">
-                <summary>History</summary>
-                <ul>
+                <summary>{{ i18n.t('booking.history') }}</summary>
+                <ul class="list">
                   @for (event of store.eventsFor()(booking.id); track event.id) {
                     <li>
-                      <span class="chip">{{ event.kind }}</span>
+                      <span class="badge">{{ eventKindLabel(event.kind) }}</span>
                       {{ event.detail }} · {{ event.byName }} · {{ formatDate(event.atMs) }}
                     </li>
                   }
@@ -182,21 +253,56 @@ const PUSH_PROMPT_KEY = 'cm.push.prompted.v1';
     </section>
   `,
   styles: `
-    h2 { margin: 1.5rem 0 0.75rem; font-size: 1.15rem; }
-    .push-prompt { border: 1px solid var(--border, #d9dee7); border-radius: 0.75rem; padding: 0.9rem 1rem; background: var(--accent-soft, #e3f0fa); margin-bottom: 1rem; }
-    .push-prompt p { margin: 0; }
-    .row { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; }
-    .chip.ok { background: var(--success, #1d7a3d); color: #fff; }
-    .chip.warn { background: var(--warning, #b45309); color: #fff; }
-    .actions { margin-top: 0.75rem; display: flex; flex-wrap: wrap; gap: 0.5rem; }
-    .policy { margin-top: 0.5rem; font-weight: 600; }
-    .timeline { margin-top: 0.5rem; }
-    .timeline ul { list-style: none; margin: 0.5rem 0 0; padding: 0; display: grid; gap: 0.35rem; }
-    .visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+    .section-title {
+      margin: var(--space-5) 0 var(--space-3);
+      font-size: var(--text-lg);
+    }
+    .request {
+      max-width: 32rem;
+      display: grid;
+      gap: var(--space-3);
+    }
+    .push-prompt {
+      border: 1px solid var(--accent);
+      border-radius: var(--radius-lg);
+      padding: var(--space-4);
+      background: var(--accent-soft);
+      margin: var(--space-4) 0;
+    }
+    .push-prompt p {
+      margin: 0;
+    }
+    .row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: var(--space-2);
+    }
+    .actions {
+      margin-top: var(--space-3);
+      display: flex;
+      flex-wrap: wrap;
+      gap: var(--space-2);
+    }
+    .policy {
+      margin-top: var(--space-2);
+      font-weight: var(--weight-semibold);
+    }
+    .timeline {
+      margin-top: var(--space-2);
+    }
+    .timeline summary {
+      cursor: pointer;
+      font-weight: var(--weight-semibold);
+    }
+    .timeline ul {
+      margin-top: var(--space-2);
+    }
   `,
 })
 export class BookingPage implements OnInit, OnDestroy {
   readonly store = inject(BookingStore);
+  protected readonly i18n = inject(I18n);
   private readonly reviews = inject(ReviewsStore);
   private readonly escrow = inject(EscrowStore);
   private readonly session = inject(SessionStore);
@@ -230,11 +336,12 @@ export class BookingPage implements OnInit, OnDestroy {
     );
   });
 
-  readonly liveStatus = computed(() => {
-    const list = this.visibleBookings();
-    const completed = list.filter((b) => b.status === 'completed').length;
-    return `${list.length} bookings shown, ${completed} completed.`;
-  });
+  readonly liveStatus = computed(() =>
+    this.i18n.t('booking.liveStatus', {
+      total: this.visibleBookings().length,
+      completed: this.visibleBookings().filter((b) => b.status === 'completed').length,
+    })
+  );
 
   ngOnInit(): void {
     this.store.load();
@@ -260,6 +367,14 @@ export class BookingPage implements OnInit, OnDestroy {
   ngOnDestroy(): void {
     this.wsSub?.unsubscribe();
     this.wsSub = null;
+  }
+
+  statusLabel(status: BookingStatus): string {
+    return this.i18n.t(`booking.status.${status}`);
+  }
+
+  eventKindLabel(kind: BookingEventKind): string {
+    return this.i18n.t(`booking.event.${kind}`);
   }
 
   actionsFor(booking: BookingRecord): BookingAction[] {
@@ -410,6 +525,11 @@ export class BookingPage implements OnInit, OnDestroy {
   }
 
   formatDate(ms: number): string {
-    return formatDate(ms);
+    return new Date(ms).toLocaleDateString(this.i18n.locale(), {
+      day: 'numeric',
+      month: 'short',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
   }
 }

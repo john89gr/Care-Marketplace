@@ -4,6 +4,7 @@ import { DisputesStore, Dispute, DISPUTE_REASON_LABELS } from './disputes.store'
 import { SessionStore } from '../../core/auth/session';
 import { AdminQueueComponent } from './admin-queue.component';
 import { DisputeDetailComponent } from './dispute-detail.component';
+import { I18n } from '../../core/i18n/i18n.service';
 
 function formatDate(ms: number): string {
   return new Date(ms).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
@@ -29,7 +30,7 @@ function formatTimeDiff(ms: number): string {
       @if (store.loading()) {
         <p>Loading…</p>
       } @else if (store.error()) {
-        <p class="error" role="alert">{{ store.error() }}</p>
+        <p class="error" role="alert">{{ i18n.message(store.errorSource(), store.error()) }}</p>
       }
 
       @if (isAdmin()) {
@@ -73,7 +74,7 @@ function formatTimeDiff(ms: number): string {
       }
 
       @if (store.error()) {
-        <p class="error" role="alert">{{ store.error() }}</p>
+        <p class="error" role="alert">{{ i18n.message(store.errorSource(), store.error()) }}</p>
       }
     </section>
   `,
@@ -90,6 +91,8 @@ function formatTimeDiff(ms: number): string {
   `,
 })
 export class DisputesPage implements OnInit {
+  protected readonly i18n = inject(I18n);
+
   readonly store = inject(DisputesStore);
   private readonly session = inject(SessionStore);
   readonly router = inject(Router);

@@ -52,14 +52,23 @@ export function defaultTimesFor(count: number): number[] {
 }
 
 /** Named time-of-day tokens → minutes (first match wins per token). */
-const NAMED_TIMES: readonly { pattern: RegExp; minutes: number; label: string }[] = [
-  { pattern: /(πρωι|morning|breakfast|πρωιν[οό])/, minutes: 8 * 60, label: 'πρωί' },
-  { pattern: /(μεσημερι|noon|midday|lunch)/, minutes: 14 * 60, label: 'μεσημέρι' },
-  { pattern: /(απογευμα|afternoon)/, minutes: 18 * 60, label: 'απόγευμα' },
-  { pattern: /(βραδυ|evening|dinner|nighttime)/, minutes: 20 * 60, label: 'βράδυ' },
+const NAMED_TIMES: readonly {
+  pattern: RegExp;
+  minutes: number;
+  labelEl: string;
+  labelEn: string;
+}[] = [
+  { pattern: /(πρωι|morning|breakfast|πρωιν[οό])/, minutes: 8 * 60, labelEl: 'πρωί', labelEn: 'morning' },
+  { pattern: /(μεσημερι|noon|midday|lunch)/, minutes: 14 * 60, labelEl: 'μεσημέρι', labelEn: 'noon' },
+  { pattern: /(απογευμα|afternoon)/, minutes: 18 * 60, labelEl: 'απόγευμα', labelEn: 'afternoon' },
+  { pattern: /(βραδυ|evening|dinner|nighttime)/, minutes: 20 * 60, labelEl: 'βράδυ', labelEn: 'evening' },
   // `\bnight\b` deliberately excludes "nighttime" (handled by the evening row).
-  { pattern: /(νυχτα|bedtime|before bed|\bnight\b)/, minutes: 22 * 60, label: 'νύχτα' },
+  { pattern: /(νυχτα|bedtime|before bed|\bnight\b)/, minutes: 22 * 60, labelEl: 'νύχτα', labelEn: 'night' },
 ];
+
+/** Locale-aware view of a `NAMED_TIMES` entry. */
+const namedLabel = (entry: { labelEl: string; labelEn: string }, locale: 'el' | 'en'): string =>
+  locale === 'el' ? entry.labelEl : entry.labelEn;
 
 const PRN_PATTERN = /(sos|s\.o\.s|prn|οταν χρειαστει|επι πονου|as needed|as required|if needed)/;
 const HOURLY_PATTERN = /(?:καθε|every)\s*(\d{1,2})\s*(?:ωρε[ςσ]|hours?|h\b)/;
@@ -91,8 +100,14 @@ export function everyNHoursTimes(everyHours: number): number[] {
   return times.sort((a, b) => a - b);
 }
 
-/** Parse a free-text frequency phrase into a suggested schedule. */
-export function parseFrequency(raw: string): ParsedFrequency {
+/**
+ * Parse a free-text frequency phrase into a suggested schedule.
+ *
+ * `locale` localizes the human explanation (`note`) and the matched phrase
+ * echoed back to the user. It defaults to Greek, which is what the existing
+ * parse tests assert; the wizard passes the active language.
+ */
+export function parseFrequency(raw: string, locale: 'el' | 'en' = 'el'): ParsedFrequency {
   const text = fold(raw);
   if (!text) {
     return {
@@ -100,7 +115,10 @@ export function parseFrequency(raw: string): ParsedFrequency {
       isPrn: false,
       confidence: 'defaulted',
       matched: '',
-      note: 'Δεν δόθηκε οδηγία δοσολογίας — ορίστε τις ώρες χειροκίνητα.',
+      note:
+        locale === 'el'
+          ? 'Δεν δόθηκε οδηγία δοσολογίας — ορίστε τις ώρες χειροκίνητα.'
+          : 'No dosage instruction was given — set the times manually.',
     };
   }
 
@@ -110,7 +128,10 @@ export function parseFrequency(raw: string): ParsedFrequency {
       isPrn: true,
       confidence: 'defaulted',
       matched: 'SOS',
-      note: 'Λήψη κατά περίπτωση (SOS). Δεν ορίζεται σταθερό πρόγραμμα — προσθέστε ώρες μόνο αν το ζήτησε ο γιατρός.',
+      note:
+        locale === 'el'
+          ? 'Λήψη κατά περίπτωση (SOS). Δεν ορίζεται σταθερό πρόγραμμα — προσθέστε ώρες μόνο αν το ζήτησε ο γιατρός.'
+          : 'Take as needed (PRN/SOS). No fixed schedule is set — add times only if your doctor asked for them.',
     };
   }
 
@@ -118,12 +139,13 @@ export function parseFrequency(raw: string): ParsedFrequency {
   const named = NAMED_TIMES.filter((t) => t.pattern.test(text));
   if (named.length > 0) {
     const times = [...new Set(named.map((n) => n.minutes))].sort((a, b) => a - b);
+    const list = named.map((n) => namedLabel(n, locale)).join(', ');
     return {
       schedule: { kind: 'daily', timesMinutes: times },
       isPrn: false,
       confidence: 'parsed',
-      matched: named.map((n) => n.label).join(', '),
-      note: `Αναγνωρίστηκαν ώρες: ${named.map((n) => n.label).join(', ')}.`,
+      matched: list,
+      note: locale === 'el' ? `Αναγνωρίστηκαν ώρες: ${list}.` : `Recognized times: ${list}.`,
     };
   }
 
@@ -133,8 +155,11 @@ export function parseFrequency(raw: string): ParsedFrequency {
       schedule: { kind: 'weekly', weekdays: [1], timeMinutes: 8 * 60 },
       isPrn: false,
       confidence: 'defaulted',
-      matched: 'εβδομαδιαία',
-      note: 'Εβδομαδιαία λήψη — ελέγξτε την ημέρα και την ώρα.',
+      matched: locale === 'el' ? 'εβδομαδιαία' : 'weekly',
+      note:
+        locale === 'el'
+          ? 'Εβδομαδιαία λήψη — ελέγξτε την ημέρα και την ώρα.'
+          : 'Weekly dosing — check the day and the time.',
     };
   }
 
@@ -146,7 +171,8 @@ export function parseFrequency(raw: string): ParsedFrequency {
       isPrn: false,
       confidence: 'parsed',
       matched: everyDays[0],
-      note: `Κάθε ${days} ημέρα/ες στις 08:00.`,
+      note:
+        locale === 'el' ? `Κάθε ${days} ημέρα/ες στις 08:00.` : `Every ${days} day(s) at 08:00.`,
     };
   }
 
@@ -158,7 +184,10 @@ export function parseFrequency(raw: string): ParsedFrequency {
       isPrn: false,
       confidence: 'parsed',
       matched: hourly[0],
-      note: `Κάθε ${hours} ώρες (προτεινόμενες ώρες — προσαρμόστε τις).`,
+      note:
+        locale === 'el'
+          ? `Κάθε ${hours} ώρες (προτεινόμενες ώρες — προσαρμόστε τις).`
+          : `Every ${hours} hours (suggested times — adjust them).`,
     };
   }
 
@@ -170,7 +199,7 @@ export function parseFrequency(raw: string): ParsedFrequency {
       isPrn: false,
       confidence: 'parsed',
       matched: onceDaily[0],
-      note: '1 δόση την ημέρα.',
+      note: locale === 'el' ? '1 δόση την ημέρα.' : '1 dose per day.',
     };
   }
 
@@ -191,7 +220,7 @@ export function parseFrequency(raw: string): ParsedFrequency {
       isPrn: false,
       confidence: 'parsed',
       matched: factor?.[0] ?? greekTimes?.[0] ?? englishTimes?.[0] ?? '',
-      note: `${count} δόσεις την ημέρα.`,
+      note: locale === 'el' ? `${count} δόσεις την ημέρα.` : `${count} doses per day.`,
     };
   }
 
@@ -200,7 +229,10 @@ export function parseFrequency(raw: string): ParsedFrequency {
     isPrn: false,
     confidence: 'defaulted',
     matched: '',
-    note: `Δεν αναγνωρίστηκε η οδηγία "${raw.trim()}" — ορίστε τις ώρες χειροκίνητα.`,
+    note:
+      locale === 'el'
+        ? `Δεν αναγνωρίστηκε η οδηγία "${raw.trim()}" — ορίστε τις ώρες χειροκίνητα.`
+        : `The instruction "${raw.trim()}" was not recognized — set the times manually.`,
   };
 }
 
@@ -231,6 +263,8 @@ export interface PrescriptionReminderPlan {
 export interface PlanOptions {
   /** Override the default channels (e.g. the user's saved reminder prefs). */
   channels?: readonly ReminderChannel[];
+  /** Locale for the generated explanation. Defaults to Greek. */
+  locale?: 'el' | 'en';
 }
 
 /**
@@ -243,7 +277,7 @@ export function planFromPrescription(
   options: PlanOptions = {}
 ): PrescriptionReminderPlan {
   const parsedFrom = (rx.instructions ?? '').trim();
-  const parsed = parseFrequency(parsedFrom);
+  const parsed = parseFrequency(parsedFrom, options.locale ?? 'el');
   const base = applyCatalog(rx.drug) ?? emptyInstructions();
   const foodRelation = parseFoodRelation(parsedFrom);
   const instructions: MedicineInstructions = {

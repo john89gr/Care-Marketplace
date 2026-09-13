@@ -20,6 +20,7 @@ import { medicationDraftsFor, statusLabel } from './pharmacy.models';
 import { canTransition } from './order-machine';
 import { HistoryStore } from '../health-record/history.store';
 import type { PrescriptionDraft } from '../health-record/history.models';
+import { LocalizedMessage } from '../../core/i18n/localized-message';
 
 export interface PharmacyStatusPush {
   orderId: string;
@@ -43,7 +44,7 @@ export class OrdersStore {
   private readonly _orders = signal<PharmacyOrder[]>([]);
   private readonly _loading = signal(false);
   private readonly _actingId = signal<string | null>(null);
-  private readonly _error = signal('');
+  private readonly _error = new LocalizedMessage();
   private readonly _loaded = signal(false);
   /**
    * Orders already staged into the medication list (subtask 10 idempotency
@@ -59,7 +60,9 @@ export class OrdersStore {
   readonly orders = this._orders.asReadonly();
   readonly loading = this._loading.asReadonly();
   readonly actingId = this._actingId.asReadonly();
-  readonly error = this._error.asReadonly();
+  /** Translatable source of the message (null for server-provided text). */
+  readonly errorSource = this._error.source;
+  readonly error = this._error.value;
   readonly loaded = this._loaded.asReadonly();
   readonly importedIds = this._importedIds.asReadonly();
   readonly importedHistoryIds = this._importedHistoryIds.asReadonly();
@@ -112,15 +115,18 @@ export class OrdersStore {
   advance(orderId: string, to: PharmacyOrderStatus): Observable<boolean> {
     const order = this._orders().find((o) => o.id === orderId);
     if (!order) {
-      this._error.set('Order not found. Refresh the list and try again.');
+      this._error.set({ key: 'store.orders.notFound' });
       return of(false);
     }
     if (!canTransition(order.status, to)) {
-      this._error.set(`Cannot move an order from ${statusLabel(order.status)} to ${statusLabel(to)}.`);
+      this._error.set({
+        key: 'store.orders.invalidTransition',
+        params: { from: statusLabel(order.status), to: statusLabel(to) },
+      });
       return of(false);
     }
     this._actingId.set(orderId);
-    this._error.set('');
+    this._error.clear();
     return this.api.post<PharmacyOrder>(`/pharmacy-orders/${encodeURIComponent(orderId)}/status`, { to }).pipe(
       map((updated) => {
         this.upsert(updated);
@@ -129,10 +135,9 @@ export class OrdersStore {
       }),
       catchError((error) => {
         this._actingId.set(null);
-        this._error.set(
-          (error as { error?: { message?: string } })?.error?.message ??
-            'Could not update the order. Please try again.'
-        );
+        this._error.setFromServer((error as { error?: { message?: string } })?.error?.message, {
+            key: 'store.orders.updateFailed',
+          });
         return of(false);
       })
     );
@@ -163,7 +168,7 @@ export class OrdersStore {
    */
   importToMedications(order: PharmacyOrder): Observable<boolean> {
     if (order.status !== 'delivered') {
-      this._error.set('Only delivered orders can be added to your medications.');
+      this._error.set({ key: 'store.orders.onlyDeliveredToMeds' });
       return of(false);
     }
     if (this.isImported(order.id)) {
@@ -171,11 +176,11 @@ export class OrdersStore {
     }
     const drafts = medicationDraftsFor(order, order.prescriber);
     if (drafts.length === 0) {
-      this._error.set('This order has no medications to import.');
+      this._error.set({ key: 'store.orders.noMedsToImport' });
       return of(false);
     }
     this._actingId.set(order.id);
-    this._error.set('');
+    this._error.clear();
     const creates = drafts.map((draft) =>
       this.api.post('/me/medications', {
         name: draft.name,
@@ -193,10 +198,9 @@ export class OrdersStore {
       }),
       catchError((error) => {
         this._actingId.set(null);
-        this._error.set(
-          (error as { error?: { message?: string } })?.error?.message ??
-            'Could not add these medications. Please try again.'
-        );
+        this._error.setFromServer((error as { error?: { message?: string } })?.error?.message, {
+            key: 'store.orders.addMedsFailed',
+          });
         return of(false);
       })
     );
@@ -210,23 +214,23 @@ export class OrdersStore {
    */
   importToHistory(order: PharmacyOrder): Observable<boolean> {
     if (order.status !== 'delivered') {
-      this._error.set('Only delivered orders can be added to your medical history.');
+      this._error.set({ key: 'store.orders.onlyDeliveredToHistory' });
       return of(false);
     }
     if (this.isHistoryImported(order.id)) {
       return of(true);
     }
     if (!this.history) {
-      this._error.set('Medical history is not available right now.');
+      this._error.set({ key: 'store.orders.historyUnavailable' });
       return of(false);
     }
     const drafts = medicationDraftsFor(order, order.prescriber);
     if (drafts.length === 0) {
-      this._error.set('This order has no medications to add to your history.');
+      this._error.set({ key: 'store.orders.noMedsForHistory' });
       return of(false);
     }
     this._actingId.set(order.id);
-    this._error.set('');
+    this._error.clear();
     const registerDrafts: PrescriptionDraft[] = drafts.map((draft) => ({
       drug: draft.name,
       dose: draft.dose || undefined,
@@ -240,7 +244,7 @@ export class OrdersStore {
       map((results) => {
         if (!results.every(Boolean)) {
           this._actingId.set(null);
-          this._error.set('Could not add all items to your medical history.');
+          this._error.set({ key: 'store.orders.historyPartial' });
           return false;
         }
         this._importedHistoryIds.update((ids) =>
@@ -251,10 +255,9 @@ export class OrdersStore {
       }),
       catchError((error) => {
         this._actingId.set(null);
-        this._error.set(
-          (error as { error?: { message?: string } })?.error?.message ??
-            'Could not add these prescriptions to your medical history.'
-        );
+        this._error.setFromServer((error as { error?: { message?: string } })?.error?.message, {
+            key: 'store.orders.historyFailed',
+          });
         return of(false);
       })
     );
@@ -288,10 +291,15 @@ export class OrdersStore {
       updatedAtMs: push.atMs,
     };
     this.upsert(updated);
+    // Status names are contractual machine tokens, so they stay as-is in both
+    // languages (the same convention the booking statuses follow).
+    const status = statusLabel(push.status).toLowerCase();
     this.notifications?.notify(
       'system',
-      `Pharmacy order ${statusLabel(push.status).toLowerCase()}`,
-      `Order ${order.id} is now ${statusLabel(push.status).toLowerCase()}${order.pharmacyName ? ` at ${order.pharmacyName}` : ''}.`,
+      { key: 'store.orders.statusTitle', params: { status } },
+      order.pharmacyName
+        ? { key: 'store.orders.statusBodyAt', params: { id: order.id, status, pharmacy: order.pharmacyName } }
+        : { key: 'store.orders.statusBody', params: { id: order.id, status } },
       '/pharmacy-orders'
     );
   }

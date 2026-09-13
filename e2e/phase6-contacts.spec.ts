@@ -12,6 +12,11 @@ import { test, expect, Locator, Page } from '@playwright/test';
  * would reload the app and reset the in-memory store.
  */
 
+// The contacts page was written Greek-first, so this spec runs under a Greek
+// browser locale. That keeps its assertions intact and, together with the
+// other specs' English locale, exercises both runtime i18n branches.
+test.use({ locale: 'el-GR' });
+
 const CLIENT = {
   userId: 'u-client',
   displayName: 'Maria Papadopoulou',
@@ -64,7 +69,7 @@ test('a new primary ICE contact demotes the old one and reaches the export', asy
 
   // The directory feeds the health-summary export (SPA nav keeps demo state):
   // 2 seeded ICE contacts + the one just added.
-  await page.getByRole('link', { name: 'Health record' }).click();
+  await page.getByRole('link', { name: 'Φάκελος υγείας' }).click();
   await page.getByRole('link', { name: 'Health summary export' }).click();
   await expect(page.getByRole('heading', { name: 'Health summary export' })).toBeVisible();
   await expect(page.getByRole('status').first()).toContainText('3 emergency contacts');

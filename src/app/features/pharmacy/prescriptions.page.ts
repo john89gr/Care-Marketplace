@@ -13,6 +13,7 @@ import { ProfileStore } from '../profiles/profile.store';
 import { GeolocationService } from '../../core/services/geo/geolocation.service';
 import { addressFromProfile, statusLabel } from './pharmacy.models';
 import { BarcodeParseError, parseBarcodePayload, type ParsedPrescriptionPayload } from './barcode';
+import { I18n } from '../../core/i18n/i18n.service';
 
 /** Minimal shape of the browser BarcodeDetector API (not in all TS libs). */
 interface BarcodeDetectorLike {
@@ -112,7 +113,7 @@ function detectorConstructor(): (new () => BarcodeDetectorLike) | null {
 
       @if (store.error()) {
         <div class="error-box" role="alert">
-          <p>{{ store.error() }}</p>
+          <p>{{ i18n.message(store.errorSource(), store.error()) }}</p>
           <button type="button" class="secondary" (click)="retry()">Try again</button>
         </div>
       }
@@ -158,6 +159,8 @@ function detectorConstructor(): (new () => BarcodeDetectorLike) | null {
   `,
 })
 export class PrescriptionsPage implements OnDestroy {
+  protected readonly i18n = inject(I18n);
+
   readonly store = inject(PrescriptionsStore);
   private readonly orders = inject(OrdersStore);
   private readonly profile = inject(ProfileStore);

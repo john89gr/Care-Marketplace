@@ -432,15 +432,18 @@ export function reminderPreview(
   med: Medication,
   nowMs: number,
   tz: string,
-  channels: readonly ReminderChannel[]
+  channels: readonly ReminderChannel[],
+  locale: 'el' | 'en' = 'en'
 ): string {
   const next = nextDose(med, nowMs, tz);
   const via = primaryChannel(channels);
   if (!next) {
-    return `no upcoming doses for ${med.name}`;
+    return locale === 'el'
+      ? `δεν υπάρχουν επόμενες δόσεις για ${med.name}`
+      : `no upcoming doses for ${med.name}`;
   }
   const zone = safeTimeZone(tz);
-  const label = new Intl.DateTimeFormat('en-GB', {
+  const label = new Intl.DateTimeFormat(locale === 'el' ? 'el-GR' : 'en-GB', {
     timeZone: zone,
     weekday: 'short',
     hour: '2-digit',
@@ -449,7 +452,9 @@ export function reminderPreview(
   })
     .format(next.atMs)
     .replace(',', '');
-  return `next reminder fires ${label} via ${via}`;
+  return locale === 'el'
+    ? `επόμενη υπενθύμιση ${label} μέσω ${via}`
+    : `next reminder fires ${label} via ${via}`;
 }
 
 // ---- Clock + preference normalization helpers ----

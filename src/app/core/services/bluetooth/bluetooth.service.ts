@@ -11,6 +11,7 @@ import {
   BATTERY_SERVICE_UUID,
   BATTERY_LEVEL_UUID,
 } from './device-profiles';
+import { LocalizedMessage } from '../../i18n/localized-message';
 import { parseFrame, ParsedVitalReading } from './gatt-parsers';
 import type { VitalType } from '../../../features/health-record/vitals.store';
 
@@ -76,7 +77,7 @@ export class BluetoothService {
   private readonly _connected = signal(false);
   private readonly _deviceName = signal<string | null>(null);
   private readonly _deviceKind = signal<BluetoothDeviceKind | null>(null);
-  private readonly _error = signal('');
+  private readonly _error = new LocalizedMessage();
   private readonly _lastReading = signal<ParsedVitalReading | null>(null);
   private readonly _batteryLevel = signal<number | null>(null);
 
@@ -86,7 +87,9 @@ export class BluetoothService {
   readonly connected = this._connected.asReadonly();
   readonly deviceName = this._deviceName.asReadonly();
   readonly deviceKind = this._deviceKind.asReadonly();
-  readonly error = this._error.asReadonly();
+  /** Translatable source of the message (null for server-provided text). */
+  readonly errorSource = this._error.source;
+  readonly error = this._error.value;
   readonly lastReading = this._lastReading.asReadonly();
   readonly batteryLevel = this._batteryLevel.asReadonly();
 
@@ -121,7 +124,7 @@ export class BluetoothService {
   async connect(kind: BluetoothDeviceKind): Promise<void> {
     this.reconnectAttempts = 0;
     this._connecting.set(true);
-    this._error.set('');
+    this._error.clear();
     this._lastReading.set(null);
 
     const api = this.bluetoothFactory();
@@ -130,13 +133,13 @@ export class BluetoothService {
         this.connectViaWs(kind);
         return;
       }
-      this._error.set('Web Bluetooth is not supported in this browser or context.');
+      this._error.set({ key: 'store.bluetooth.unsupported' });
       this._connecting.set(false);
       return;
     }
 
     if (!this.isSecureContext()) {
-      this._error.set('Web Bluetooth requires a secure context (HTTPS or localhost).');
+      this._error.set({ key: 'store.bluetooth.insecureContext' });
       this._connecting.set(false);
       return;
     }
@@ -146,7 +149,7 @@ export class BluetoothService {
       const device = await api.requestDevice(options);
       await this.connectGatt(kind, device);
     } catch (err) {
-      this._error.set((err as Error)?.message ?? 'Failed to connect to the device.');
+      this._error.setFromServer((err as Error)?.message, { key: 'store.bluetooth.connectFailed' });
       this._connecting.set(false);
     }
   }
@@ -156,10 +159,10 @@ export class BluetoothService {
     this._connected.set(true);
     this._deviceName.set('Demo device');
     this._deviceKind.set(kind);
-    this._error.set('');
+    this._error.clear();
     const sent = this.ws.send({ type: 'bluetooth.start', payload: { kind } });
     if (!sent) {
-      this._error.set('Could not start the simulated device stream.');
+      this._error.set({ key: 'store.bluetooth.streamFailed' });
     }
   }
 
@@ -167,7 +170,7 @@ export class BluetoothService {
     this.device = device;
     this._deviceName.set(device.name ?? 'Unknown device');
     this._deviceKind.set(kind);
-    this._error.set('');
+    this._error.clear();
 
     try {
       const gatt = device.gatt;
@@ -189,13 +192,13 @@ export class BluetoothService {
       device.addEventListener('gattserverdisconnected', this.handleDisconnect);
 
       if (this.reconnectAttempts > 0) {
-        this._error.set('');
+        this._error.clear();
         this.reconnectAttempts = 0;
       }
 
       void this.readBatteryLevel();
     } catch (err) {
-      this._error.set((err as Error)?.message ?? 'Failed to set up GATT notifications.');
+      this._error.setFromServer((err as Error)?.message, { key: 'store.bluetooth.gattFailed' });
       this._connecting.set(false);
       this._connected.set(false);
     }
@@ -213,13 +216,13 @@ export class BluetoothService {
     if (reading) {
       this._lastReading.set(reading);
       if (reading.implausible) {
-        this._error.set('Implausible reading received — verify the device placement.');
+        this._error.set({ key: 'store.bluetooth.implausible' });
       }
     } else {
       if (isDevMode) {
         console.debug('[bluetooth] raw GATT frame:', Array.from(bytes));
       }
-      this._error.set('Could not parse data from the device.');
+      this._error.set({ key: 'store.bluetooth.parseFailed' });
     }
   };
 
@@ -233,7 +236,10 @@ export class BluetoothService {
 
     if (this.reconnectAttempts < MAX_RECONNECT_RETRIES) {
       this.reconnectAttempts += 1;
-      this._error.set(`Connection lost. Reconnecting (${this.reconnectAttempts}/${MAX_RECONNECT_RETRIES})…`);
+      this._error.set({
+        key: 'store.bluetooth.reconnecting',
+        params: { attempt: this.reconnectAttempts, max: MAX_RECONNECT_RETRIES },
+      });
       this.reconnectTimer = setTimeout(() => {
         const kind = this._deviceKind();
         if (kind) {
@@ -241,7 +247,7 @@ export class BluetoothService {
         }
       }, RECONNECT_DELAY_MS);
     } else {
-      this._error.set('Connection lost. Please reconnect your device.');
+      this._error.set({ key: 'store.bluetooth.connectionLost' });
       this.reconnectAttempts = 0;
     }
   };
@@ -249,7 +255,7 @@ export class BluetoothService {
   private async reconnectToRemembered(kind: BluetoothDeviceKind): Promise<void> {
     const api = this.bluetoothFactory();
     if (!api) {
-      this._error.set('Bluetooth adapter not available for reconnection.');
+      this._error.set({ key: 'store.bluetooth.adapterUnavailable' });
       return;
     }
     try {
@@ -261,7 +267,7 @@ export class BluetoothService {
       }
     } catch {
       if (this.reconnectAttempts >= MAX_RECONNECT_RETRIES) {
-        this._error.set('Connection lost. Please reconnect your device.');
+        this._error.set({ key: 'store.bluetooth.connectionLost' });
         this.reconnectAttempts = 0;
       }
     }
@@ -321,7 +327,7 @@ export class BluetoothService {
     this._connecting.set(false);
     this._deviceName.set(null);
     this._deviceKind.set(null);
-    this._error.set('');
+    this._error.clear();
   }
 
   clearReading(): void {

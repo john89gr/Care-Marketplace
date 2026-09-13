@@ -1,5 +1,6 @@
 import { Component, computed, effect, inject, signal } from '@angular/core';
 import { SessionStore } from '../../core/auth/session';
+import { I18n } from '../../core/i18n/i18n.service';
 import { HistoryStore } from './history.store';
 import { PrescriptionsStore } from '../pharmacy/prescriptions.store';
 import { VisitStore } from '../home-health/visit.store';
@@ -133,6 +134,11 @@ const emptyForms = (): {
  * archive, prescription status actions + the §7 medications bridge, and a
  * chronological timeline with filter chips. Family roles (caregiver/nurse)
  * view read-only.
+ *
+ * Bilingual: enum labels come from the shared bilingual catalogs and follow
+ * the active locale; UI copy comes from i18n.
+ * Load-bearing for the E2E suite: the single `role="alert"` (store error),
+ * the `role="note"` read-only notice, and the record `li > h3` structure.
  */
 @Component({
   selector: 'app-history',
@@ -140,33 +146,38 @@ const emptyForms = (): {
   imports: [PrescriptionReminderComponent],
   template: `
     <section class="history">
-      <h1>Ιατρικό ιστορικό</h1>
-      <p class="disclaimer" role="note">
-        Καταγράψτε διαγνώσεις, αλλεργίες, εμβολιασμούς, ιατρικά συμβάντα,
-        συμπτώματα και συνταγές. Το ιστορικό σας είναι <strong>προσωπικό
-        αρχείο</strong> — μοιράζεται μόνο όταν το επιτρέψετε. Οι κωδικοί
-        ICD-11 είναι ενδεικτικό υποσύνολο, όχι ιατρική συμβουλή.
+      <header class="page-header">
+        <div>
+          <h1 class="page-title">{{ i18n.t('history.title') }}</h1>
+        </div>
+      </header>
+
+      <p class="card disclaimer" role="note">
+        {{ i18n.t('history.disclaimerLead') }}
+        <strong>{{ i18n.t('history.disclaimerStrong') }}</strong>
+        {{ i18n.t('history.disclaimerRest') }}
       </p>
 
       @if (store.error()) {
-        <p class="error" role="alert">{{ store.error() }}</p>
+        <p class="error" role="alert">{{ i18n.message(store.errorSource(), store.error()) }}</p>
       }
       @if (!canWrite()) {
-        <p class="meta" role="note">
+        <p class="meta readonly" role="note">
           @if (recipient(); as r) {
-            Προβολή ιστορικού της <strong>{{ r.name }}</strong> — πρόσβαση
-            οικογένειας, μόνο για ανάγνωση.
+            {{ i18n.t('history.readOnlyRecipientLead') }}<strong>{{ r.name }}</strong
+            >{{ i18n.t('history.readOnlyRecipientRest') }}
           } @else {
-            Προβολή μόνο για ανάγνωση (πρόσβαση οικογένειας).
+            {{ i18n.t('history.readOnly') }}
           }
         </p>
       }
 
-      <div class="tabs" role="tablist" aria-label="Κατηγορίες ιστορικού">
+      <div class="tabs" role="tablist" [attr.aria-label]="i18n.t('history.categories')">
         @for (tabKey of tabs; track tabKey) {
           <button
             type="button"
             role="tab"
+            class="tab"
             [attr.aria-selected]="tab() === tabKey"
             [class.active]="tab() === tabKey"
             (click)="openTab(tabKey)"
@@ -176,37 +187,38 @@ const emptyForms = (): {
         }
       </div>
 
-      <p class="sr-only" aria-live="polite">{{ saveStatus() }}</p>
+      <p class="visually-hidden" aria-live="polite">{{ saveStatus() }}</p>
 
       @if (tab() === 'conditions') {
         @if (canWrite()) {
-          <button type="button" class="secondary" (click)="toggleForm('conditions')">
-            {{ showForm().conditions ? 'Κλείσιμο φόρμας' : '+ Προσθήκη πάθησης' }}
+          <button type="button" class="btn secondary" (click)="toggleForm('conditions')">
+            {{ showForm().conditions ? i18n.t('history.closeForm') : i18n.t('history.conditions.addBtn') }}
           </button>
         }
         @if (showForm().conditions) {
           <form class="card-form" (submit)="submitCondition($event)">
-            <label>
-              Όνομα
+            <label class="field">
+              <span class="field-label">{{ i18n.t('history.conditions.name') }}</span>
               <input type="text" required [value]="form().conditions.name"
                 (input)="form().conditions.name = $any($event.target).value" />
             </label>
-            <label>
-              Κωδικός ICD-11 (αναζήτηση στα ελληνικά)
-              <input type="text" list="icd11-options" placeholder="π.χ. BA00 ή «διαβήτης»"
+            <label class="field">
+              <span class="field-label">{{ i18n.t('history.conditions.icd11') }}</span>
+              <input type="text" list="icd11-options"
+                [attr.placeholder]="i18n.t('history.conditions.icd11Placeholder')"
                 [value]="form().conditions.icd11Code"
                 (input)="onIcd11Input($any($event.target).value)" />
               <datalist id="icd11-options">
                 @for (entry of icd11Options(); track entry.code) {
-                  <option [value]="entry.code + ' · ' + entry.labelEl">{{ entry.categoryLabel }}</option>
+                  <option [value]="entry.code + ' · ' + entry.label">{{ entry.categoryLabel }}</option>
                 }
               </datalist>
             </label>
             @if (icd11Hint()) {
               <p class="meta">{{ icd11Hint() }}</p>
             }
-            <label>
-              Κατάσταση
+            <label class="field">
+              <span class="field-label">{{ i18n.t('history.conditions.status') }}</span>
               <select [value]="form().conditions.status"
                 (change)="form().conditions.status = $any($event.target).value">
                 @for (key of conditionStatusKeys; track key) {
@@ -214,23 +226,29 @@ const emptyForms = (): {
                 }
               </select>
             </label>
-            <label>
-              Ημερομηνία διάγνωσης
+            <label class="field">
+              <span class="field-label">{{ i18n.t('history.conditions.diagnosed') }}</span>
               <input type="date" required [value]="form().conditions.diagnosedDate"
                 (input)="form().conditions.diagnosedDate = $any($event.target).value" />
             </label>
-            <label>
-              Σημειώσεις
+            <label class="field">
+              <span class="field-label">{{ i18n.t('history.notes') }}</span>
               <input type="text" [value]="form().conditions.notes"
                 (input)="form().conditions.notes = $any($event.target).value" />
             </label>
-            <button type="submit" [disabled]="saving('conditions')">Αποθήκευση</button>
-            <button type="button" class="secondary" (click)="toggleForm('conditions')">Ακύρωση</button>
+            <div class="card-actions">
+              <button type="submit" class="btn" [disabled]="saving('conditions')">
+                {{ i18n.t('common.save') }}
+              </button>
+              <button type="button" class="btn secondary" (click)="toggleForm('conditions')">
+                {{ i18n.t('common.cancel') }}
+              </button>
+            </div>
           </form>
         }
         <ul class="items">
           @for (item of conditions(); track item.id) {
-            <li>
+            <li class="card">
               <div class="row">
                 <div>
                   <h3>{{ item.name }}</h3>
@@ -243,9 +261,13 @@ const emptyForms = (): {
                 @if (canWrite()) {
                   <div class="actions">
                     @if (item.status !== 'resolved') {
-                      <button type="button" class="secondary" (click)="markResolved(item)">Ολοκληρώθηκε</button>
+                      <button type="button" class="btn secondary sm" (click)="markResolved(item)">
+                        {{ i18n.t('history.conditions.resolved') }}
+                      </button>
                     }
-                    <button type="button" class="link" (click)="archive('conditions', item.id)">Αρχειοθέτηση</button>
+                    <button type="button" class="link" (click)="archive('conditions', item.id)">
+                      {{ i18n.t('history.archive') }}
+                    </button>
                   </div>
                 }
               </div>
@@ -253,25 +275,25 @@ const emptyForms = (): {
           }
         </ul>
         @if (conditions().length === 0) {
-          <p class="meta">Καμία καταγεγραμμένη πάθηση.</p>
+          <p class="empty-state">{{ i18n.t('history.conditions.empty') }}</p>
         }
       }
 
       @if (tab() === 'allergies') {
         @if (canWrite()) {
-          <button type="button" class="secondary" (click)="toggleForm('allergies')">
-            {{ showForm().allergies ? 'Κλείσιμο φόρμας' : '+ Προσθήκη αλλεργίας' }}
+          <button type="button" class="btn secondary" (click)="toggleForm('allergies')">
+            {{ showForm().allergies ? i18n.t('history.closeForm') : i18n.t('history.allergies.addBtn') }}
           </button>
         }
         @if (showForm().allergies) {
           <form class="card-form" (submit)="submitAllergy($event)">
-            <label>
-              Αλλεργιογόνο
+            <label class="field">
+              <span class="field-label">{{ i18n.t('history.allergies.substance') }}</span>
               <input type="text" required [value]="form().allergies.substance"
                 (input)="form().allergies.substance = $any($event.target).value" />
             </label>
-            <label>
-              Τύπος
+            <label class="field">
+              <span class="field-label">{{ i18n.t('history.allergies.kind') }}</span>
               <select [value]="form().allergies.kind"
                 (change)="form().allergies.kind = $any($event.target).value">
                 @for (key of allergyKindKeys; track key) {
@@ -279,8 +301,8 @@ const emptyForms = (): {
                 }
               </select>
             </label>
-            <label>
-              Σοβαρότητα
+            <label class="field">
+              <span class="field-label">{{ i18n.t('history.allergies.severity') }}</span>
               <select [value]="form().allergies.severity"
                 (change)="form().allergies.severity = $any($event.target).value">
                 @for (key of allergySeverityKeys; track key) {
@@ -288,28 +310,34 @@ const emptyForms = (): {
                 }
               </select>
             </label>
-            <label>
-              Αντίδραση
+            <label class="field">
+              <span class="field-label">{{ i18n.t('history.allergies.reaction') }}</span>
               <input type="text" [value]="form().allergies.reaction"
                 (input)="form().allergies.reaction = $any($event.target).value" />
             </label>
-            <label>
-              Ημερομηνία επιβεβαίωσης
+            <label class="field">
+              <span class="field-label">{{ i18n.t('history.allergies.confirmed') }}</span>
               <input type="date" required [value]="form().allergies.confirmedDate"
                 (input)="form().allergies.confirmedDate = $any($event.target).value" />
             </label>
-            <label>
-              Σημειώσεις
+            <label class="field">
+              <span class="field-label">{{ i18n.t('history.notes') }}</span>
               <input type="text" [value]="form().allergies.notes"
                 (input)="form().allergies.notes = $any($event.target).value" />
             </label>
-            <button type="submit" [disabled]="saving('allergies')">Αποθήκευση</button>
-            <button type="button" class="secondary" (click)="toggleForm('allergies')">Ακύρωση</button>
+            <div class="card-actions">
+              <button type="submit" class="btn" [disabled]="saving('allergies')">
+                {{ i18n.t('common.save') }}
+              </button>
+              <button type="button" class="btn secondary" (click)="toggleForm('allergies')">
+                {{ i18n.t('common.cancel') }}
+              </button>
+            </div>
           </form>
         }
         <ul class="items">
           @for (item of allergies(); track item.id) {
-            <li [class.severe]="item.severity === 'severe'">
+            <li class="card" [class.severe]="item.severity === 'severe'">
               <div class="row">
                 <div>
                   <h3>{{ item.substance }}</h3>
@@ -322,7 +350,9 @@ const emptyForms = (): {
                 </div>
                 @if (canWrite()) {
                   <div class="actions">
-                    <button type="button" class="link" (click)="archive('allergies', item.id)">Αρχειοθέτηση</button>
+                    <button type="button" class="link" (click)="archive('allergies', item.id)">
+                      {{ i18n.t('history.archive') }}
+                    </button>
                   </div>
                 }
               </div>
@@ -330,57 +360,65 @@ const emptyForms = (): {
           }
         </ul>
         @if (allergies().length === 0) {
-          <p class="meta">Καμία καταγεγραμμένη αλλεργία.</p>
+          <p class="empty-state">{{ i18n.t('history.allergies.empty') }}</p>
         }
       }
 
       @if (tab() === 'immunizations') {
         @if (canWrite()) {
-          <button type="button" class="secondary" (click)="toggleForm('immunizations')">
-            {{ showForm().immunizations ? 'Κλείσιμο φόρμας' : '+ Προσθήκη εμβολιασμού' }}
+          <button type="button" class="btn secondary" (click)="toggleForm('immunizations')">
+            {{ showForm().immunizations ? i18n.t('history.closeForm') : i18n.t('history.immunizations.addBtn') }}
           </button>
         }
         @if (showForm().immunizations) {
           <form class="card-form" (submit)="submitImmunization($event)">
-            <label>
-              Εμβόλιο
+            <label class="field">
+              <span class="field-label">{{ i18n.t('history.immunizations.vaccine') }}</span>
               <input type="text" required [value]="form().immunizations.vaccine"
                 (input)="form().immunizations.vaccine = $any($event.target).value" />
             </label>
-            <label>
-              Δόση
+            <label class="field">
+              <span class="field-label">{{ i18n.t('history.immunizations.dose') }}</span>
               <input type="number" min="1" placeholder="1" [value]="form().immunizations.doseNumber"
                 (input)="form().immunizations.doseNumber = $any($event.target).value" />
             </label>
-            <label>
-              Ημερομηνία χορήγησης
+            <label class="field">
+              <span class="field-label">{{ i18n.t('history.immunizations.administered') }}</span>
               <input type="date" required [value]="form().immunizations.administeredDate"
                 (input)="form().immunizations.administeredDate = $any($event.target).value" />
             </label>
-            <label>
-              Σημειώσεις
+            <label class="field">
+              <span class="field-label">{{ i18n.t('history.notes') }}</span>
               <input type="text" [value]="form().immunizations.notes"
                 (input)="form().immunizations.notes = $any($event.target).value" />
             </label>
-            <button type="submit" [disabled]="saving('immunizations')">Αποθήκευση</button>
-            <button type="button" class="secondary" (click)="toggleForm('immunizations')">Ακύρωση</button>
+            <div class="card-actions">
+              <button type="submit" class="btn" [disabled]="saving('immunizations')">
+                {{ i18n.t('common.save') }}
+              </button>
+              <button type="button" class="btn secondary" (click)="toggleForm('immunizations')">
+                {{ i18n.t('common.cancel') }}
+              </button>
+            </div>
           </form>
         }
         <ul class="items">
           @for (item of immunizations(); track item.id) {
-            <li>
+            <li class="card">
               <div class="row">
                 <div>
                   <h3>{{ item.vaccine }}</h3>
                   <p class="meta">
                     {{ date(item.administeredAtMs) }}
-                    @if (item.doseNumber) { · Δόση {{ item.doseNumber }} }
-                    @if (item.source === 'wallet') { · από Gov.gr Wallet }
+                    @if (item.doseNumber) { · {{ i18n.t('history.immunizations.doseNumber', { count: item.doseNumber }) }} }
+                    @if (item.source === 'wallet') { · {{ i18n.t('history.immunizations.fromWallet') }} }
                   </p>
                 </div>
                 @if (canWrite()) {
                   <div class="actions">
-                    <button type="button" class="link" (click)="archive('immunizations', item.id)">Αρχειοθέτηση</button>
+                    <button type="button" class="link" (click)="archive('immunizations', item.id)">
+                      {{ i18n.t('history.archive') }}
+                    </button>
                   </div>
                 }
               </div>
@@ -388,20 +426,20 @@ const emptyForms = (): {
           }
         </ul>
         @if (immunizations().length === 0) {
-          <p class="meta">Κανένας καταγεγραμμένος εμβολιασμός.</p>
+          <p class="empty-state">{{ i18n.t('history.immunizations.empty') }}</p>
         }
       }
 
       @if (tab() === 'events') {
         @if (canWrite()) {
-          <button type="button" class="secondary" (click)="toggleForm('events')">
-            {{ showForm().events ? 'Κλείσιμο φόρμας' : '+ Προσθήκη συμβάντος' }}
+          <button type="button" class="btn secondary" (click)="toggleForm('events')">
+            {{ showForm().events ? i18n.t('history.closeForm') : i18n.t('history.events.addBtn') }}
           </button>
         }
         @if (showForm().events) {
           <form class="card-form" (submit)="submitEvent($event)">
-            <label>
-              Τύπος
+            <label class="field">
+              <span class="field-label">{{ i18n.t('history.events.kind') }}</span>
               <select [value]="form().events.kind"
                 (change)="form().events.kind = $any($event.target).value">
                 @for (key of eventKindKeys; track key) {
@@ -409,33 +447,39 @@ const emptyForms = (): {
                 }
               </select>
             </label>
-            <label>
-              Περιγραφή
+            <label class="field">
+              <span class="field-label">{{ i18n.t('history.events.description') }}</span>
               <input type="text" required [value]="form().events.name"
                 (input)="form().events.name = $any($event.target).value" />
             </label>
-            <label>
-              Φορέας / Νοσοκομείο
+            <label class="field">
+              <span class="field-label">{{ i18n.t('history.events.facility') }}</span>
               <input type="text" [value]="form().events.facility"
                 (input)="form().events.facility = $any($event.target).value" />
             </label>
-            <label>
-              Ημερομηνία
+            <label class="field">
+              <span class="field-label">{{ i18n.t('history.events.date') }}</span>
               <input type="date" required [value]="form().events.occurredDate"
                 (input)="form().events.occurredDate = $any($event.target).value" />
             </label>
-            <label>
-              Σημειώσεις
+            <label class="field">
+              <span class="field-label">{{ i18n.t('history.notes') }}</span>
               <input type="text" [value]="form().events.notes"
                 (input)="form().events.notes = $any($event.target).value" />
             </label>
-            <button type="submit" [disabled]="saving('events')">Αποθήκευση</button>
-            <button type="button" class="secondary" (click)="toggleForm('events')">Ακύρωση</button>
+            <div class="card-actions">
+              <button type="submit" class="btn" [disabled]="saving('events')">
+                {{ i18n.t('common.save') }}
+              </button>
+              <button type="button" class="btn secondary" (click)="toggleForm('events')">
+                {{ i18n.t('common.cancel') }}
+              </button>
+            </div>
           </form>
         }
         <ul class="items">
           @for (item of events(); track item.id) {
-            <li>
+            <li class="card">
               <div class="row">
                 <div>
                   <h3>{{ item.name }}</h3>
@@ -447,7 +491,9 @@ const emptyForms = (): {
                 </div>
                 @if (canWrite()) {
                   <div class="actions">
-                    <button type="button" class="link" (click)="archive('events', item.id)">Αρχειοθέτηση</button>
+                    <button type="button" class="link" (click)="archive('events', item.id)">
+                      {{ i18n.t('history.archive') }}
+                    </button>
                   </div>
                 }
               </div>
@@ -455,25 +501,25 @@ const emptyForms = (): {
           }
         </ul>
         @if (events().length === 0) {
-          <p class="meta">Κανένα καταγεγραμμένο ιατρικό συμβάν.</p>
+          <p class="empty-state">{{ i18n.t('history.events.empty') }}</p>
         }
       }
 
       @if (tab() === 'symptoms') {
         @if (canWrite()) {
-          <button type="button" class="secondary" (click)="toggleForm('symptoms')">
-            {{ showForm().symptoms ? 'Κλείσιμο φόρμας' : '+ Προσθήκη συμπτώματος' }}
+          <button type="button" class="btn secondary" (click)="toggleForm('symptoms')">
+            {{ showForm().symptoms ? i18n.t('history.closeForm') : i18n.t('history.symptoms.addBtn') }}
           </button>
         }
         @if (showForm().symptoms) {
           <form class="card-form" (submit)="submitSymptom($event)">
-            <label>
-              Σύμπτωμα
+            <label class="field">
+              <span class="field-label">{{ i18n.t('history.symptoms.name') }}</span>
               <input type="text" required [value]="form().symptoms.name"
                 (input)="form().symptoms.name = $any($event.target).value" />
             </label>
-            <label>
-              Ένταση
+            <label class="field">
+              <span class="field-label">{{ i18n.t('history.symptoms.severity') }}</span>
               <select [value]="form().symptoms.severity"
                 (change)="form().symptoms.severity = $any($event.target).value">
                 @for (key of symptomSeverityKeys; track key) {
@@ -481,23 +527,29 @@ const emptyForms = (): {
                 }
               </select>
             </label>
-            <label>
-              Έναρξη
+            <label class="field">
+              <span class="field-label">{{ i18n.t('history.symptoms.onset') }}</span>
               <input type="date" required [value]="form().symptoms.onsetDate"
                 (input)="form().symptoms.onsetDate = $any($event.target).value" />
             </label>
-            <label>
-              Σημειώσεις
+            <label class="field">
+              <span class="field-label">{{ i18n.t('history.notes') }}</span>
               <input type="text" [value]="form().symptoms.notes"
                 (input)="form().symptoms.notes = $any($event.target).value" />
             </label>
-            <button type="submit" [disabled]="saving('symptoms')">Αποθήκευση</button>
-            <button type="button" class="secondary" (click)="toggleForm('symptoms')">Ακύρωση</button>
+            <div class="card-actions">
+              <button type="submit" class="btn" [disabled]="saving('symptoms')">
+                {{ i18n.t('common.save') }}
+              </button>
+              <button type="button" class="btn secondary" (click)="toggleForm('symptoms')">
+                {{ i18n.t('common.cancel') }}
+              </button>
+            </div>
           </form>
         }
         <ul class="items">
           @for (item of symptoms(); track item.id) {
-            <li [class.severe]="item.severity === 'severe'">
+            <li class="card" [class.severe]="item.severity === 'severe'">
               <div class="row">
                 <div>
                   <h3>{{ item.name }}</h3>
@@ -510,9 +562,13 @@ const emptyForms = (): {
                 @if (canWrite()) {
                   <div class="actions">
                     @if (item.status === 'ongoing') {
-                      <button type="button" class="secondary" (click)="resolveSymptom(item)">Υποχώρησε</button>
+                      <button type="button" class="btn secondary sm" (click)="resolveSymptom(item)">
+                        {{ i18n.t('history.symptoms.resolved') }}
+                      </button>
                     }
-                    <button type="button" class="link" (click)="archive('symptoms', item.id)">Αρχειοθέτηση</button>
+                    <button type="button" class="link" (click)="archive('symptoms', item.id)">
+                      {{ i18n.t('history.archive') }}
+                    </button>
                   </div>
                 }
               </div>
@@ -520,55 +576,63 @@ const emptyForms = (): {
           }
         </ul>
         @if (symptoms().length === 0) {
-          <p class="meta">Κανένα καταγεγραμμένο σύμπτωμα.</p>
+          <p class="empty-state">{{ i18n.t('history.symptoms.empty') }}</p>
         }
       }
 
       @if (tab() === 'prescriptions') {
         @if (canWrite()) {
-          <button type="button" class="secondary" (click)="toggleForm('prescriptions')">
-            {{ showForm().prescriptions ? 'Κλείσιμο φόρμας' : '+ Προσθήκη συνταγής' }}
+          <button type="button" class="btn secondary" (click)="toggleForm('prescriptions')">
+            {{ showForm().prescriptions ? i18n.t('history.closeForm') : i18n.t('history.prescriptions.addBtn') }}
           </button>
         }
         @if (showForm().prescriptions) {
           <form class="card-form" (submit)="submitPrescription($event)">
-            <label>
-              Φάρμακο
+            <label class="field">
+              <span class="field-label">{{ i18n.t('history.prescriptions.drug') }}</span>
               <input type="text" required [value]="form().prescriptions.drug"
                 (input)="form().prescriptions.drug = $any($event.target).value" />
             </label>
-            <label>
-              Δοσολογία
-              <input type="text" placeholder="π.χ. 500mg ×2" [value]="form().prescriptions.dose"
+            <label class="field">
+              <span class="field-label">{{ i18n.t('history.prescriptions.dose') }}</span>
+              <input type="text" [attr.placeholder]="i18n.t('history.prescriptions.dosePlaceholder')"
+                [value]="form().prescriptions.dose"
                 (input)="form().prescriptions.dose = $any($event.target).value" />
             </label>
-            <label>
-              Οδηγίες
-              <input type="text" placeholder="π.χ. πρωί και βράδυ" [value]="form().prescriptions.instructions"
+            <label class="field">
+              <span class="field-label">{{ i18n.t('history.prescriptions.instructions') }}</span>
+              <input type="text" [attr.placeholder]="i18n.t('history.prescriptions.instructionsPlaceholder')"
+                [value]="form().prescriptions.instructions"
                 (input)="form().prescriptions.instructions = $any($event.target).value" />
             </label>
-            <label>
-              Συνταγογράφος
+            <label class="field">
+              <span class="field-label">{{ i18n.t('history.prescriptions.prescriber') }}</span>
               <input type="text" [value]="form().prescriptions.prescriber"
                 (input)="form().prescriptions.prescriber = $any($event.target).value" />
             </label>
-            <label>
-              Ημερομηνία έκδοσης
+            <label class="field">
+              <span class="field-label">{{ i18n.t('history.prescriptions.issued') }}</span>
               <input type="date" required [value]="form().prescriptions.issuedDate"
                 (input)="form().prescriptions.issuedDate = $any($event.target).value" />
             </label>
-            <label>
-              Διάρκεια (ημέρες)
+            <label class="field">
+              <span class="field-label">{{ i18n.t('history.prescriptions.duration') }}</span>
               <input type="number" min="1" [value]="form().prescriptions.durationDays"
                 (input)="form().prescriptions.durationDays = $any($event.target).value" />
             </label>
-            <button type="submit" [disabled]="saving('prescriptions')">Αποθήκευση</button>
-            <button type="button" class="secondary" (click)="toggleForm('prescriptions')">Ακύρωση</button>
+            <div class="card-actions">
+              <button type="submit" class="btn" [disabled]="saving('prescriptions')">
+                {{ i18n.t('common.save') }}
+              </button>
+              <button type="button" class="btn secondary" (click)="toggleForm('prescriptions')">
+                {{ i18n.t('common.cancel') }}
+              </button>
+            </div>
           </form>
         }
         <ul class="items">
           @for (item of prescriptions(); track item.id) {
-            <li>
+            <li class="card">
               <div class="row">
                 <div>
                   <h3>{{ item.drug }}</h3>
@@ -577,7 +641,7 @@ const emptyForms = (): {
                     {{ enumLabel(PRESCRIPTION_STATUS_LABELS, item.status) }}
                     @if (item.dose) { · {{ item.dose }} }
                     @if (item.prescriber) { · {{ item.prescriber }} }
-                    @if (item.medicationId) { · ✓ στο πρόγραμμα φαρμάκων }
+                    @if (item.medicationId) { · {{ i18n.t('history.prescriptions.inMedications') }} }
                   </p>
                   @if (item.instructions) {
                     <p class="meta">{{ item.instructions }}</p>
@@ -586,35 +650,43 @@ const emptyForms = (): {
                 @if (canWrite()) {
                   <div class="actions">
                     @if (item.status === 'active' && !item.medicationId) {
-                      <button type="button" [disabled]="saving('prescriptions')"
-                        (click)="toMedications(item)">+ Στα φάρμακα</button>
-                      <button type="button" class="secondary" [disabled]="saving('prescriptions')"
-                        (click)="openReminderWizard(item)">+ Υπενθύμιση από συνταγή</button>
+                      <button type="button" class="btn sm" [disabled]="saving('prescriptions')"
+                        (click)="toMedications(item)">{{ i18n.t('history.prescriptions.toMedications') }}</button>
+                      <button type="button" class="btn secondary sm" [disabled]="saving('prescriptions')"
+                        (click)="openReminderWizard(item)">{{ i18n.t('history.prescriptions.reminderFromRx') }}</button>
                     }
                     @if (item.status === 'active') {
-                      <button type="button" class="secondary" (click)="complete(item)">Ολοκληρώθηκε</button>
-                      <button type="button" class="secondary" (click)="cancel(item)">Ακύρωση</button>
+                      <button type="button" class="btn secondary sm" (click)="complete(item)">
+                        {{ i18n.t('history.prescriptions.complete') }}
+                      </button>
+                      <button type="button" class="btn secondary sm" (click)="cancel(item)">
+                        {{ i18n.t('common.cancel') }}
+                      </button>
                     }
                     @if (!item.pharmacyPrescriptionId && scannedPrescriptions().length > 0) {
                       <label class="link-pharmacy">
-                        <span class="sr-only">Σύνδεση με σκαναρισμένη συνταγή</span>
+                        <span class="visually-hidden">{{ i18n.t('history.prescriptions.linkScanned') }}</span>
                         <select
-                          aria-label="Σκαναρισμένη συνταγή"
+                          [attr.aria-label]="i18n.t('history.prescriptions.scannedLabel')"
                           [value]="linkSelections()[item.id] ?? ''"
                           (change)="setLinkSelection(item.id, $any($event.target).value)"
                         >
-                          <option value="">Σύνδεση με σκαναρισμένη συνταγή…</option>
+                          <option value="">{{ i18n.t('history.prescriptions.linkPlaceholder') }}</option>
                           @for (scanned of scannedPrescriptions(); track scanned.id) {
                             <option [value]="scanned.id">#{{ scanned.id }} · {{ scannedMedLabel(scanned) }}</option>
                           }
                         </select>
                         @if (linkSelections()[item.id]) {
-                          <button type="button" class="secondary" [disabled]="saving('prescriptions')"
-                            (click)="linkScanned(item, linkSelections()[item.id])">Σύνδεση</button>
+                          <button type="button" class="btn secondary sm" [disabled]="saving('prescriptions')"
+                            (click)="linkScanned(item, linkSelections()[item.id])">
+                            {{ i18n.t('history.prescriptions.link') }}
+                          </button>
                         }
                       </label>
                     }
-                    <button type="button" class="link" (click)="archive('prescriptions', item.id)">Αρχειοθέτηση</button>
+                    <button type="button" class="link" (click)="archive('prescriptions', item.id)">
+                      {{ i18n.t('history.archive') }}
+                    </button>
                   </div>
                 }
               </div>
@@ -622,7 +694,7 @@ const emptyForms = (): {
           }
         </ul>
         @if (prescriptions().length === 0) {
-          <p class="meta">Καμία καταγεγραμμένη συνταγή.</p>
+          <p class="empty-state">{{ i18n.t('history.prescriptions.empty') }}</p>
         }
         @if (reminderCandidate(); as candidate) {
           <app-prescription-reminder
@@ -633,23 +705,25 @@ const emptyForms = (): {
       }
 
       @if (tab() === 'timeline') {
-        <div class="tabs secondary-tabs" role="group" aria-label="Φίλτρα χρονολογίου">
-          <button type="button" [class.active]="timelineFilter() === ''" (click)="timelineFilter.set('')">Όλα</button>
+        <div class="tabs secondary-tabs" role="group" [attr.aria-label]="i18n.t('history.timelineFilters')">
+          <button type="button" class="tab" [class.active]="timelineFilter() === ''" (click)="timelineFilter.set('')">
+            {{ i18n.t('history.filterAll') }}
+          </button>
           @for (tabKey of recordTabs; track tabKey) {
-            <button type="button" [class.active]="timelineFilter() === tabKey"
+            <button type="button" class="tab" [class.active]="timelineFilter() === tabKey"
               (click)="timelineFilter.set(tabKey)">
               {{ tabLabel(tabKey) }}
             </button>
           }
         </div>
         @if (timelineGroups().length === 0) {
-          <p class="meta">Το χρονολόγιο θα γεμίσει όταν προσθέσετε τις πρώτες εγγραφές.</p>
+          <p class="empty-state">{{ i18n.t('history.timelineEmpty') }}</p>
         }
         @for (group of timelineGroups(); track group.year) {
           <h2 class="year">{{ group.year }}</h2>
           <ul class="items timeline">
             @for (entry of group.entries; track entry.key) {
-              <li [class.archived]="entry.archived">
+              <li class="card" [class.archived]="entry.archived">
                 <div class="row">
                   <div>
                     <h3>{{ TIMELINE_KIND_ICONS[entry.kind] }} {{ entry.title }}</h3>
@@ -664,50 +738,94 @@ const emptyForms = (): {
     </section>
   `,
   styles: `
-    .disclaimer {
-      background: var(--surface-2, #eef1f6);
-      border-radius: 0.5rem;
-      padding: 0.6rem 0.9rem;
-      font-size: 0.9rem;
+    .history {
+      max-width: 70rem;
     }
-    .tabs { display: flex; gap: 0.4rem; margin: 1rem 0; flex-wrap: wrap; }
-    .tabs button { border: 1px solid var(--border, #d9dee7); background: none; padding: 0.4rem 0.9rem; border-radius: 999px; cursor: pointer; }
-    .tabs button.active { background: var(--accent, #4f7cff); color: #fff; }
-    .secondary-tabs { margin-top: 0; }
+    .card.disclaimer {
+      background: var(--surface-raised);
+      border-color: var(--border);
+      color: var(--text-muted);
+      font-size: var(--text-sm);
+      margin-bottom: var(--space-4);
+    }
+    .readonly {
+      color: var(--text-muted);
+    }
+    .secondary-tabs {
+      margin-top: 0;
+    }
     .card-form {
-      border: 1px solid var(--border, #d9dee7);
-      border-radius: 0.6rem;
-      padding: 1rem;
-      margin: 1rem 0;
+      margin: var(--space-4) 0;
       display: grid;
-      gap: 0.6rem;
+      gap: var(--space-3);
       max-width: 34rem;
     }
-    .card-form label { display: grid; gap: 0.25rem; font-size: 0.9rem; }
-    .card-form input, .card-form select {
-      padding: 0.45rem 0.6rem;
-      border: 1px solid var(--border, #d9dee7);
-      border-radius: 0.4rem;
-      font: inherit;
+    .card-form .card-actions {
+      margin-top: 0;
     }
-    .items { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.6rem; }
-    .items li { border: 1px solid var(--border, #d9dee7); border-radius: 0.6rem; padding: 0.75rem 1rem; }
-    .items li.severe { border-color: var(--danger, #c62828); }
-    .items li.archived { opacity: 0.55; }
-    .row { display: flex; justify-content: space-between; gap: 1rem; flex-wrap: wrap; align-items: start; }
-    .row h3 { margin: 0 0 0.25rem; font-size: 1rem; }
-    .actions { display: flex; gap: 0.4rem; flex-wrap: wrap; align-items: center; }
-    .link-pharmacy { display: inline-flex; gap: 0.4rem; align-items: center; }
-    .link-pharmacy select { padding: 0.3rem 0.5rem; border: 1px solid var(--border, #d9dee7); border-radius: 0.4rem; max-width: 16rem; }
-    .link { background: none; border: none; color: var(--accent, #4f7cff); cursor: pointer; padding: 0; font: inherit; text-decoration: underline; }
-    .year { font-size: 1.1rem; margin: 1.2rem 0 0.4rem; }
-    .error { color: var(--danger, #c62828); }
-    .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+    .items {
+      list-style: none;
+      margin: 0;
+      padding: 0;
+      display: grid;
+      gap: var(--space-3);
+    }
+    .items li.severe {
+      border-left: 3px solid var(--danger);
+    }
+    .items li.archived {
+      opacity: 0.55;
+    }
+    .row {
+      display: flex;
+      justify-content: space-between;
+      gap: var(--space-4);
+      flex-wrap: wrap;
+      align-items: flex-start;
+    }
+    .row h3 {
+      margin: 0 0 0.25rem;
+      font-size: var(--text-md);
+    }
+    .actions {
+      display: flex;
+      gap: var(--space-2);
+      flex-wrap: wrap;
+      align-items: center;
+    }
+    .link-pharmacy {
+      display: inline-flex;
+      gap: var(--space-2);
+      align-items: center;
+      flex-direction: row;
+    }
+    .link-pharmacy select {
+      padding: 0.3rem 0.5rem;
+      max-width: 16rem;
+    }
+    .year {
+      font-size: var(--text-lg);
+      margin: var(--space-5) 0 var(--space-2);
+    }
+    .link {
+      background: none;
+      border: none;
+      color: var(--accent);
+      cursor: pointer;
+      padding: 0;
+      font: inherit;
+      text-decoration: underline;
+    }
+    .link:hover:not(:disabled) {
+      background: none;
+      color: var(--accent-hover);
+    }
   `,
 })
 export class HistoryPage {
   readonly store = inject(HistoryStore);
   readonly pharmacy = inject(PrescriptionsStore);
+  protected readonly i18n = inject(I18n);
   private readonly session = inject(SessionStore);
   private readonly visits = inject(VisitStore);
 
@@ -780,7 +898,9 @@ export class HistoryPage {
   readonly icd11Options = computed(() =>
     searchIcd11(this.form().conditions.icd11Code).map((e) => ({
       ...e,
-      categoryLabel: ICD11_CATEGORY_LABELS[e.category].el,
+      // Curated catalog ships both labels; show the one for the active locale.
+      label: this.i18n.language() === 'el' ? e.labelEl : e.labelEn,
+      categoryLabel: ICD11_CATEGORY_LABELS[e.category][this.i18n.language()],
     }))
   );
 
@@ -789,12 +909,17 @@ export class HistoryPage {
     if (!code) {
       return '';
     }
-    return isIcd11Code(code) ? icd11Label(code) : '';
+    return isIcd11Code(code) ? icd11Label(code, this.i18n.language()) : '';
   });
 
   readonly saveStatus = computed(() => {
     const acting = this.store.actingKey();
-    return acting ? 'Αποθήκευση…' : this.store.error() ? this.store.error() : '';
+    if (acting) {
+      return this.i18n.t('common.saving');
+    }
+    return this.store.error()
+      ? this.i18n.message(this.store.errorSource(), this.store.error())
+      : '';
   });
 
   readonly timelineGroups = computed(() => {
@@ -806,7 +931,7 @@ export class HistoryPage {
         events: this.store.records('events'),
         symptoms: this.store.records('symptoms'),
         prescriptions: this.store.records('prescriptions'),
-      }),
+      }, this.i18n.language()),
       this.timelineFilter()
     );
     return groupTimelineByYear(entries);
@@ -878,15 +1003,15 @@ export class HistoryPage {
   // ---- Condition form ----
 
   onIcd11Input(value: string): void {
-    // Picker options render as "CODE · Greek label"; keep only the code.
+    // Picker options render as "CODE · label"; keep only the code.
     const code = value.trim().split(/\s/)[0] ?? '';
     const form = this.form();
     form.conditions.icd11Code = code;
-    // Auto-fill the name from the Greek label when a curated code is chosen.
+    // Auto-fill the name from the curated label when a code is chosen.
     if (isIcd11Code(code) && !form.conditions.name.trim()) {
       const entry = icd11ByCode(code);
       if (entry) {
-        form.conditions.name = entry.labelEl;
+        form.conditions.name = this.i18n.language() === 'el' ? entry.labelEl : entry.labelEn;
       }
     }
     this.form.set({ ...form });
@@ -1074,20 +1199,21 @@ export class HistoryPage {
     this.showForm.update((s) => ({ ...s, [kind]: false }));
   }
 
+  /** Enum label in the active locale (catalogs ship both). */
   enumLabel(map: Record<string, { el: string; en: string }>, key: string): string {
-    return historyLabel(map, key);
+    return historyLabel(map, key, this.i18n.language());
   }
 
   tabLabel(tabKey: TabKey): string {
     if (tabKey === 'timeline') {
-      return 'Χρονολόγιο';
+      return this.i18n.t('history.timeline');
     }
-    return HISTORY_KIND_LABELS[tabKey].el;
+    return HISTORY_KIND_LABELS[tabKey][this.i18n.language()];
   }
 
   date(ms: number): string {
     if (!ms) return '—';
-    return new Date(ms).toLocaleDateString('el-GR', {
+    return new Date(ms).toLocaleDateString(this.i18n.locale(), {
       day: 'numeric',
       month: 'short',
       year: 'numeric',

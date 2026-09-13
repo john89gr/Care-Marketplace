@@ -8,6 +8,11 @@ import { test, expect, Page } from '@playwright/test';
  * consent-gated family endpoint (server enforcement mirrored by the demo API).
  */
 
+// The history register was written Greek-first, so this spec runs under a
+// Greek browser locale. That keeps its assertions intact and exercises the
+// runtime i18n detection (the other specs cover the English branch).
+test.use({ locale: 'el-GR' });
+
 const CLIENT = {
   userId: 'u-client',
   displayName: 'Maria Papadopoulou',

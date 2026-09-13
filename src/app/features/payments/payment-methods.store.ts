@@ -1,6 +1,7 @@
 import { Injectable, inject, signal, computed } from '@angular/core';
 import { Observable, map, catchError, of } from 'rxjs';
 import { ApiClient } from '../../core/api/api.client';
+import { LocalizedMessage } from '../../core/i18n/localized-message';
 
 /**
  * Client-side payment-method state (FEATURE_PLAN.md §13).
@@ -62,19 +63,21 @@ export class PaymentMethodsStore {
   private readonly _loading = signal(false);
   private readonly _tokenizing = signal(false);
   private readonly _actingId = signal<string | null>(null);
-  private readonly _error = signal('');
+  private readonly _error = new LocalizedMessage();
 
   readonly methods = this._methods.asReadonly();
   readonly loading = this._loading.asReadonly();
   readonly tokenizing = this._tokenizing.asReadonly();
   readonly actingId = this._actingId.asReadonly();
-  readonly error = this._error.asReadonly();
+  /** Translatable source of the message (null for server-provided text). */
+  readonly errorSource = this._error.source;
+  readonly error = this._error.value;
 
   readonly defaultMethod = computed(() => this._methods().find((m) => m.isDefault));
 
   load(): void {
     this._loading.set(true);
-    this._error.set('');
+    this._error.clear();
     this.api.get<PaymentMethod[]>('/me/payment-methods').subscribe({
       next: (methods) => {
         this._methods.set(methods);
@@ -82,7 +85,7 @@ export class PaymentMethodsStore {
       },
       error: () => {
         this._loading.set(false);
-        this._error.set('Could not load your payment methods.');
+        this._error.set({ key: 'store.paymentMethods.loadFailed' });
       },
     });
   }
@@ -93,7 +96,7 @@ export class PaymentMethodsStore {
    * The demo backend simulates tokenization at POST /me/payment-methods/tokenize.
    */
   tokenize(card: CardDetails): Observable<TokenizedCard | null> {
-    this._error.set('');
+    this._error.clear();
     this._tokenizing.set(true);
     return this.api
       .post<TokenizedCard | { declined: true }>('/me/payment-methods/tokenize', card)
@@ -101,17 +104,16 @@ export class PaymentMethodsStore {
         map((result) => {
           this._tokenizing.set(false);
           if ('declined' in result) {
-            this._error.set('Your card was declined. Please try another.');
+            this._error.set({ key: 'store.paymentMethods.cardDeclined' });
             return null;
           }
           return result;
         }),
         catchError((error) => {
           this._tokenizing.set(false);
-          this._error.set(
-            (error as { error?: { message?: string } })?.error?.message ??
-              'Could not tokenize your card. Please try again.'
-          );
+          this._error.setFromServer((error as { error?: { message?: string } })?.error?.message, {
+              key: 'store.paymentMethods.tokenizeFailed',
+            });
           return of(null);
         })
       );
@@ -119,17 +121,16 @@ export class PaymentMethodsStore {
 
   /** Add a tokenised payment method. The PAN never enters this call. */
   add(request: AddPaymentMethodRequest): Observable<boolean> {
-    this._error.set('');
+    this._error.clear();
     return this.api.post<PaymentMethod>('/me/payment-methods', request).pipe(
       map((method) => {
         this._methods.update((list) => [method, ...list]);
         return true;
       }),
       catchError((error) => {
-        this._error.set(
-          (error as { error?: { message?: string } })?.error?.message ??
-            'Could not save your payment method. Please try again.'
-        );
+        this._error.setFromServer((error as { error?: { message?: string } })?.error?.message, {
+            key: 'store.paymentMethods.saveFailed',
+          });
         return of(false);
       })
     );
@@ -137,7 +138,7 @@ export class PaymentMethodsStore {
 
   setDefault(id: string): Observable<boolean> {
     this._actingId.set(id);
-    this._error.set('');
+    this._error.clear();
     return this.api
       .patch<{ ok: boolean }>(`/me/payment-methods/${id}/default`, {})
       .pipe(
@@ -150,10 +151,9 @@ export class PaymentMethodsStore {
         }),
         catchError((error) => {
           this._actingId.set(null);
-          this._error.set(
-            (error as { error?: { message?: string } })?.error?.message ??
-              'Could not set this as your default payment method.'
-          );
+          this._error.setFromServer((error as { error?: { message?: string } })?.error?.message, {
+              key: 'store.paymentMethods.defaultFailed',
+            });
           return of(false);
         })
       );
@@ -161,7 +161,7 @@ export class PaymentMethodsStore {
 
   remove(id: string): Observable<boolean> {
     this._actingId.set(id);
-    this._error.set('');
+    this._error.clear();
     return this.api.delete<{ ok: boolean }>(`/me/payment-methods/${id}`).pipe(
       map(() => {
         this._methods.update((list) => list.filter((m) => m.id !== id));
@@ -170,10 +170,9 @@ export class PaymentMethodsStore {
       }),
       catchError((error) => {
         this._actingId.set(null);
-        this._error.set(
-          (error as { error?: { message?: string } })?.error?.message ??
-            'Could not remove this payment method.'
-        );
+        this._error.setFromServer((error as { error?: { message?: string } })?.error?.message, {
+            key: 'store.paymentMethods.removeFailed',
+          });
         return of(false);
       })
     );

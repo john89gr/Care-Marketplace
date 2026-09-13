@@ -1,5 +1,6 @@
 import { Component, inject, OnInit } from '@angular/core';
 import { ShiftsStore, WEEKDAYS, TIME_SEGMENTS } from './shifts.store';
+import { I18n } from '../../core/i18n/i18n.service';
 
 function formatDate(ms: number): string {
   return new Date(ms).toLocaleString(undefined, {
@@ -64,7 +65,7 @@ function formatDate(ms: number): string {
           {{ store.saving() ? 'Saving…' : 'Save availability' }}
         </button>
         @if (store.saveError()) {
-          <p class="error" role="alert">{{ store.saveError() }}</p>
+          <p class="error" role="alert">{{ i18n.message(store.saveErrorSource(), store.saveError()) }}</p>
         }
 
         <h2>Upcoming shifts</h2>
@@ -112,6 +113,7 @@ function formatDate(ms: number): string {
   `,
 })
 export class ShiftsPage implements OnInit {
+  protected readonly i18n = inject(I18n);
   readonly store = inject(ShiftsStore);
 
   readonly WEEKDAYS = WEEKDAYS;

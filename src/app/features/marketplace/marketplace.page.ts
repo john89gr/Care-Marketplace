@@ -23,134 +23,151 @@ import {
 import { AnalyticsService } from '../../core/services/analytics.service';
 import { GeolocationService } from '../../core/services/geo/geolocation.service';
 import { SessionStore } from '../../core/auth/session';
+import { I18n } from '../../core/i18n/i18n.service';
 import { SearchFilters } from './marketplace.store';
 import { ROLES, Role } from '../../core/auth/roles';
 
-const ROLE_LABELS: Record<string, string> = {
-  [ROLES.CAREGIVER]: 'Caregiver',
-  [ROLES.NURSE]: 'Nurse',
-  [ROLES.PHYSIO]: 'Physiotherapist',
-  [ROLES.PHARMACY]: 'Pharmacy',
-  [ROLES.CLIENT]: 'Family',
-  [ROLES.ADMIN]: 'Admin',
-};
-
+/**
+ * Marketplace search + caregiver cards (FEATURE_PLAN.md §2, §5).
+ *
+ * Bilingual. Load-bearing for the E2E suite: `.results .card` with an `h3`
+ * title, `.reviews` for the expanded reviews, `.favorites`-style heart buttons
+ * addressed by their "Add/Remove <name> to/from favorites" accessible name,
+ * the "Search caregivers…" placeholder, and the "Save search"/"delete"/
+ * "rename" controls — all kept in their original English wording.
+ */
 @Component({
   selector: 'app-marketplace',
   standalone: true,
   imports: [],
   template: `
     <section class="marketplace">
-      <h1>Marketplace</h1>
+      <header class="page-header">
+        <h1 class="page-title">{{ i18n.t('market.title') }}</h1>
+        <p class="page-subtitle">{{ i18n.t('market.subtitle') }}</p>
+      </header>
 
-      <div class="filters">
-        <input
-          type="search"
-          placeholder="Search caregivers…"
-          aria-label="Search caregivers"
-          [value]="store.filters().query"
-          (input)="onQuery($any($event.target).value)"
-        />
-        <label>
+      <div class="filters toolbar">
+        <label class="field">
+          <span class="visually-hidden">{{ i18n.t('market.searchLabel') }}</span>
+          <input
+            type="search"
+            [attr.placeholder]="i18n.t('market.searchPlaceholder')"
+            [attr.aria-label]="i18n.t('market.searchLabel')"
+            [value]="store.filters().query"
+            (input)="onQuery($any($event.target).value)"
+          />
+        </label>
+
+        <label class="check">
           <input
             type="checkbox"
             [checked]="store.filters().availableNowOnly"
-            (change)="
-              store.setFilters({ availableNowOnly: $any($event.target).checked })
-            "
+            (change)="store.setFilters({ availableNowOnly: $any($event.target).checked })"
           />
-          Available now
+          {{ i18n.t('market.availableNow') }}
         </label>
-        <label>
-          Sort by
+
+        <label class="field">
+          <span class="field-label">{{ i18n.t('market.sortBy') }}</span>
           <select
             [value]="store.filters().sort ?? 'relevance'"
             (change)="onSortChange($any($event.target).value)"
           >
-            <option value="relevance">Best match</option>
-            <option value="distance">Distance</option>
-            <option value="rating">Rating</option>
-            <option value="price">Price (low → high)</option>
+            <option value="relevance">{{ i18n.t('market.sort.relevance') }}</option>
+            <option value="distance">{{ i18n.t('market.sort.distance') }}</option>
+            <option value="rating">{{ i18n.t('market.sort.rating') }}</option>
+            <option value="price">{{ i18n.t('market.sort.price') }}</option>
           </select>
         </label>
-        <label>
-          Max €/h
+
+        <label class="field">
+          <span class="field-label">{{ i18n.t('market.maxRate') }}</span>
           <input
             type="number"
             min="0"
             step="1"
             class="budget"
-            aria-label="Maximum hourly rate in euros"
-            placeholder="Budget"
+            [attr.aria-label]="i18n.t('market.maxRateLabel')"
+            [attr.placeholder]="i18n.t('market.budgetPlaceholder')"
             [value]="store.filters().maxHourlyRate ?? ''"
             (change)="onBudgetChange($any($event.target).value)"
             (keydown.enter)="onBudgetChange($any($event.target).value)"
           />
         </label>
+
         <button
           type="button"
-          class="link geo"
+          class="btn ghost sm"
           [attr.aria-pressed]="!!store.origin()"
           (click)="toggleGeo()"
         >
-          {{ store.origin() ? '📍 Using my location' : 'Use my location' }}
+          {{ store.origin() ? i18n.t('market.usingLocation') : i18n.t('market.useLocation') }}
         </button>
-        <label>
-          Min rating
+
+        <label class="field">
+          <span class="field-label">{{ i18n.t('market.minRating') }}</span>
           <select
             [value]="store.filters().minRating ?? ''"
             (change)="store.setFilters({ minRating: ratingOrNull($any($event.target).value) })"
           >
-            <option value="">Any</option>
+            <option value="">{{ i18n.t('market.any') }}</option>
             <option value="3">3+</option>
             <option value="4">4+</option>
             <option value="4.5">4.5+</option>
           </select>
         </label>
-        <label>
+
+        <label class="check">
           <input
             type="checkbox"
             [checked]="store.filters().favoritesOnly ?? false"
             (change)="toggleFavoritesOnly($any($event.target).checked)"
           />
-          Favorites only
+          {{ i18n.t('market.favoritesOnly') }}
         </label>
-        <button type="button" (click)="onSearch()">Search</button>
-        <button type="button" class="secondary" (click)="reset()">Reset</button>
+
+        <button type="button" class="btn" (click)="onSearch()">
+          {{ i18n.t('market.search') }}
+        </button>
+        <button type="button" class="btn secondary" (click)="reset()">
+          {{ i18n.t('market.reset') }}
+        </button>
+
         @if (savingSearch()) {
           <form class="save-form" (submit)="submitSave($event)">
-            <label>
-              Search name
+            <label class="field">
+              <span class="field-label">{{ i18n.t('market.searchName') }}</span>
               <input
                 type="text"
-                aria-label="Search name"
+                [attr.aria-label]="i18n.t('market.searchName')"
                 [value]="saveName()"
                 (input)="saveName.set($any($event.target).value)"
               />
             </label>
-            <button type="submit">Save</button>
-            <button type="button" class="secondary" (click)="savingSearch.set(false)">Cancel</button>
+            <button type="submit" class="btn">{{ i18n.t('common.save') }}</button>
+            <button type="button" class="btn secondary" (click)="savingSearch.set(false)">
+              {{ i18n.t('common.cancel') }}
+            </button>
           </form>
         } @else {
           <button
             type="button"
-            class="secondary"
+            class="btn secondary"
             [disabled]="!isClient()"
-            [attr.title]="!isClient() ? 'Sign in as a family to save searches' : null"
+            [attr.title]="!isClient() ? i18n.t('market.saveSearchTitle') : null"
             (click)="startSave()"
           >
-            Save search
+            {{ i18n.t('market.saveSearch') }}
           </button>
         }
       </div>
 
-      <div class="saved" aria-label="Saved searches">
+      <div class="saved" [attr.aria-label]="i18n.t('market.savedSearches')">
         @if (saved.loading()) {
-          <p class="meta">Loading saved searches…</p>
+          <p class="meta">{{ i18n.t('market.loadingSaved') }}</p>
         } @else if (saved.savedSearches().length === 0 && saved.favorites().length === 0) {
-          <p class="meta">
-            No saved searches yet — set some filters and click “Save search”.
-          </p>
+          <p class="meta">{{ i18n.t('market.savedEmpty') }}</p>
         } @else {
           <ul class="saved-list" (keydown)="onSavedListKeydown($event)">
             @for (search of saved.savedSearches(); track search.id) {
@@ -158,13 +175,13 @@ const ROLE_LABELS: Record<string, string> = {
                 @if (renamingId() === search.id) {
                   <form class="rename-form" (submit)="submitRename($event, search.id)">
                     <input
-                      aria-label="New name"
+                      [attr.aria-label]="i18n.t('market.newName')"
                       [value]="renameValue()"
                       (input)="renameValue.set($any($event.target).value)"
                     />
-                    <button type="submit">Save name</button>
-                    <button type="button" class="secondary" (click)="renamingId.set(null)">
-                      Cancel
+                    <button type="submit" class="btn sm">{{ i18n.t('market.saveName') }}</button>
+                    <button type="button" class="btn secondary sm" (click)="renamingId.set(null)">
+                      {{ i18n.t('common.cancel') }}
                     </button>
                   </form>
                 } @else {
@@ -175,19 +192,11 @@ const ROLE_LABELS: Record<string, string> = {
                   >
                     {{ search.name }}
                   </button>
-                  <button
-                    type="button"
-                    class="link"
-                    (click)="startRename(search.name, search.id)"
-                  >
-                    rename
+                  <button type="button" class="link" (click)="startRename(search.name, search.id)">
+                    {{ i18n.t('market.rename') }}
                   </button>
-                  <button
-                    type="button"
-                    class="link"
-                    (click)="removeSearch(search.id)"
-                  >
-                    delete
+                  <button type="button" class="link" (click)="removeSearch(search.id)">
+                    {{ i18n.t('market.delete') }}
                   </button>
                 }
               </li>
@@ -195,30 +204,30 @@ const ROLE_LABELS: Record<string, string> = {
           </ul>
         }
         @if (saved.error()) {
-          <p class="error" role="alert">{{ saved.error() }}</p>
+          <p class="error" role="alert">{{ i18n.message(saved.errorSource(), saved.error()) }}</p>
         }
       </div>
 
       @if (availableFavorites().length > 0 && !(store.filters().favoritesOnly ?? false)) {
         <p class="meta watch">
-          ♥ {{ availableFavorites().length }} favorite{{ availableFavorites().length > 1 ? 's' : '' }}
-          available now: {{ availableFavorites().map((c) => c.displayName).join(', ') }}
+          ♥
+          {{
+            i18n.t('market.favoritesAvailable', {
+              count: availableFavorites().length,
+              names: availableFavorites().map((c) => c.displayName).join(', ')
+            })
+          }}
         </p>
       }
 
       @if (store.loading()) {
-        <p>Searching…</p>
+        <p class="meta">{{ i18n.t('market.searching') }}</p>
       } @else if (store.error()) {
-        <p class="error" role="alert">{{ store.error() }}</p>
+        <p class="error" role="alert">{{ i18n.message(store.errorSource(), store.error()) }}</p>
       } @else if (!store.hasResults()) {
-        @if (store.filters().favoritesOnly) {
-          <p>
-            No favorites match the current filters. Remove the “Favorites only”
-            filter or add caregivers to your favorites with the ♡ button.
-          </p>
-        } @else {
-          <p>No caregivers match the current filters.</p>
-        }
+        <p class="empty-state">
+          {{ store.filters().favoritesOnly ? i18n.t('market.noFavoritesMatch') : i18n.t('market.noMatch') }}
+        </p>
       } @else {
         <ul class="results">
           @for (card of store.results(); track card.id) {
@@ -231,30 +240,38 @@ const ROLE_LABELS: Record<string, string> = {
                   [class.active]="saved.isFavorite(card.id)"
                   [attr.aria-pressed]="saved.isFavorite(card.id)"
                   [attr.aria-label]="
-                    (saved.isFavorite(card.id) ? 'Remove ' : 'Add ') +
-                    card.displayName +
-                    (saved.isFavorite(card.id) ? ' from favorites' : ' to favorites')
+                    i18n.t(saved.isFavorite(card.id) ? 'market.removeFavorite' : 'market.addFavorite', {
+                      name: card.displayName
+                    })
                   "
                   [disabled]="saved.togglingId() === card.id || !isClient()"
-                  [attr.title]="!isClient() ? 'Sign in as a family to save favorites' : null"
+                  [attr.title]="!isClient() ? i18n.t('market.favoriteTitle') : null"
                   (click)="toggleFavorite(card.id)"
                 >
                   {{ saved.isFavorite(card.id) ? '♥' : '♡' }}
                 </button>
               </div>
+
               <p class="roles">
                 @for (role of card.roles; track role) {
-                  <span class="chip">{{ roleLabel(role) }}</span>
+                  <span class="badge">{{ roleLabel(role) }}</span>
                 }
               </p>
+
               <p class="meta">
-                <span [attr.aria-label]="'Rated ' + card.rating + ' out of 5 from ' + (card.reviewCount ?? 0) + ' reviews'">
+                <span
+                  [attr.aria-label]="
+                    i18n.t('market.ratedAria', { rating: card.rating, count: card.reviewCount ?? 0 })
+                  "
+                >
                   ★ {{ card.rating }}
                 </span>
-                <span class="chip count">{{ card.reviewCount ?? 0 }} reviews</span>
-                · {{ card.distanceKm }} km · {{ card.hourlyRate }}/h
+                <span class="badge info">
+                  {{ i18n.t('market.reviewsCount', { count: card.reviewCount ?? 0 }) }}
+                </span>
+                · {{ card.distanceKm }} km · {{ card.hourlyRate }}€/h
                 @if (card.availableNow) {
-                  <span class="chip now">available now</span>
+                  <span class="badge success">{{ i18n.t('market.availableNowChip') }}</span>
                 }
                 @if (store.filters().sort === 'relevance') {
                   <button
@@ -263,42 +280,54 @@ const ROLE_LABELS: Record<string, string> = {
                     [attr.aria-expanded]="whyCard() === card.id"
                     (click)="toggleWhy(card.id)"
                   >
-                    why these results?
+                    {{ i18n.t('market.why') }}
                   </button>
                 }
               </p>
+
               @if (whyCard() === card.id) {
-                <ul class="why" aria-label="Score breakdown">
+                <ul class="why-lines" [attr.aria-label]="i18n.t('market.scoreBreakdown')">
                   @for (line of breakdownLines(card.id); track line) {
                     <li>{{ line }}</li>
                   }
                 </ul>
               }
-              <p class="actions">
-                <button type="button" (click)="book(card.id)">Request booking</button>
-                <button type="button" class="secondary" (click)="chat(card)">Message</button>
+
+              <p class="card-actions">
+                <button type="button" class="btn" (click)="book(card.id)">
+                  {{ i18n.t('market.requestBooking') }}
+                </button>
+                <button type="button" class="btn secondary" (click)="chat(card)">
+                  {{ i18n.t('market.message') }}
+                </button>
                 <button
                   type="button"
-                  class="secondary"
+                  class="btn secondary"
                   [attr.aria-expanded]="expandedCard() === card.id"
                   (click)="toggleReviews(card)"
                 >
-                  {{ expandedCard() === card.id ? 'Hide reviews' : 'Reviews (' + (card.reviewCount ?? 0) + ')' }}
+                  {{
+                    expandedCard() === card.id
+                      ? i18n.t('market.hideReviews')
+                      : i18n.t('market.reviews', { count: card.reviewCount ?? 0 })
+                  }}
                 </button>
               </p>
+
               @if (expandedCard() === card.id) {
                 <div class="reviews">
                   @if (reviews.isLoadingFor(card.id)) {
-                    <p class="meta">Loading reviews…</p>
+                    <p class="meta">{{ i18n.t('market.loadingReviews') }}</p>
                   } @else if (reviews.reviewsFor(card.id).length === 0) {
-                    <p class="meta">No reviews yet.</p>
+                    <p class="meta">{{ i18n.t('market.noReviews') }}</p>
                   } @else {
-                    <ul>
+                    <ul class="list">
                       @for (review of reviews.reviewsFor(card.id); track review.id) {
                         <li>
                           <p class="meta">
                             <strong>{{ review.authorName }}</strong> · ★ {{ review.rating }} ·
-                            {{ reviewDate(review.createdAtMs) }} · visit {{ review.bookingId }}
+                            {{ reviewDate(review.createdAtMs) }} ·
+                            {{ i18n.t('market.visit', { id: review.bookingId }) }}
                           </p>
                           @if (review.comment) {
                             <p>{{ review.comment }}</p>
@@ -309,7 +338,7 @@ const ROLE_LABELS: Record<string, string> = {
                             [disabled]="reviews.actingId() === review.id"
                             (click)="flag(review)"
                           >
-                            Report
+                            {{ i18n.t('market.report') }}
                           </button>
                         </li>
                       }
@@ -324,35 +353,118 @@ const ROLE_LABELS: Record<string, string> = {
     </section>
   `,
   styles: `
-    .filters { display: flex; flex-wrap: wrap; gap: 0.75rem; align-items: center; }
-    .saved { margin: 0.75rem 0 1rem; }
-    .saved-list { list-style: none; display: flex; flex-wrap: wrap; gap: 0.5rem 1rem; margin: 0; padding: 0; }
-    .saved-list li { display: flex; gap: 0.5rem; align-items: baseline; }
-    .link { background: none; border: none; color: var(--accent, #4f7cff); cursor: pointer; padding: 0; font: inherit; text-decoration: underline; }
-    .link.strong { font-weight: 600; }
-    .rename-form { display: flex; gap: 0.5rem; }
-    .rename-form input { max-width: 14rem; }
-    .save-form { display: flex; gap: 0.5rem; align-items: end; }
-    .save-form input { max-width: 14rem; }
-    .card-head { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; }
-    .heart { font-size: 1.35rem; line-height: 1; background: none; border: none; cursor: pointer; padding: 0.25rem 0.5rem; color: var(--accent, #4f7cff); }
-    .heart.active { color: var(--danger, #c62828); }
-    .reviews { margin-top: 0.5rem; border-top: 1px solid var(--border, #d9dee7); padding-top: 0.5rem; }
-    .reviews ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.75rem; }
-    .reviews li { padding: 0.5rem 0; }
-    .chip.count { background: var(--surface-2, #eef1f6); color: inherit; }
-    .watch { color: var(--success, #1d7a3d); }
-    .budget { width: 5.5rem; }
-    .geo { text-decoration: none; }
-    .why { margin: 0.35rem 0 0; padding-left: 1.1rem; font-size: 0.85rem; color: var(--text-muted); }
-    .why.why-lines { display: grid; gap: 0.1rem; }
-    button.link.why { text-decoration: underline; font-size: 0.8rem; }
+    .filters {
+      align-items: flex-end;
+    }
+    .check {
+      display: flex;
+      flex-direction: row;
+      align-items: center;
+      gap: var(--space-2);
+      min-height: 44px;
+      font-weight: var(--weight-normal);
+    }
+    .check input[type='checkbox'] {
+      width: auto;
+    }
+    .saved {
+      margin: var(--space-3) 0 var(--space-4);
+    }
+    .saved-list {
+      list-style: none;
+      display: flex;
+      flex-wrap: wrap;
+      gap: var(--space-2) var(--space-4);
+      margin: 0;
+      padding: 0;
+    }
+    .saved-list li {
+      display: flex;
+      gap: var(--space-2);
+      align-items: baseline;
+    }
+    .link {
+      background: none;
+      border: none;
+      color: var(--accent);
+      cursor: pointer;
+      padding: 0;
+      font: inherit;
+      text-decoration: underline;
+    }
+    .link:hover:not(:disabled) {
+      background: none;
+      color: var(--accent-hover);
+    }
+    .link.strong {
+      font-weight: var(--weight-semibold);
+    }
+    .rename-form,
+    .save-form {
+      display: flex;
+      gap: var(--space-2);
+      align-items: flex-end;
+    }
+    .rename-form input,
+    .save-form input {
+      max-width: 14rem;
+    }
+    .card-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: var(--space-2);
+    }
+    .heart {
+      font-size: 1.35rem;
+      line-height: 1;
+      background: none;
+      border: none;
+      cursor: pointer;
+      padding: 0.25rem 0.5rem;
+      color: var(--accent);
+    }
+    .heart.active {
+      color: var(--danger);
+    }
+    .reviews {
+      margin-top: var(--space-3);
+      border-top: 1px solid var(--border);
+      padding-top: var(--space-3);
+    }
+    .reviews .list {
+      gap: var(--space-3);
+    }
+    .watch {
+      color: var(--success);
+    }
+    .budget {
+      width: 5.5rem;
+    }
+    .roles {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.25rem;
+      margin: var(--space-1) 0;
+    }
+    .why-lines {
+      margin: var(--space-1) 0;
+      padding-left: 1.1rem;
+      font-size: var(--text-sm);
+      color: var(--text-muted);
+      display: grid;
+      gap: 0.1rem;
+    }
+    button.link.why {
+      font-size: var(--text-xs);
+    }
   `,
 })
 export class MarketplacePage implements OnInit, OnDestroy {
   readonly store = inject(MarketplaceStore);
   readonly reviews = inject(ReviewsStore);
   readonly saved = inject(SavedSearchStore);
+  protected readonly i18n = inject(I18n);
   private readonly booking = inject(BookingStore);
   private readonly router = inject(Router);
   private readonly route = inject(ActivatedRoute);
@@ -363,8 +475,7 @@ export class MarketplacePage implements OnInit, OnDestroy {
   /**
    * Per-user client guard (subtask 11): saved searches & favorites belong to
    * a signed-in family. The marketplace route itself stays public so anyone
-   * can browse; only the mutations below are gated. The demo backend isolates
-   * both collections by userId.
+   * can browse; only the mutations below are gated.
    */
   readonly isClient = computed(() => this.session.hasAnyRole([ROLES.CLIENT]));
 
@@ -473,15 +584,15 @@ export class MarketplacePage implements OnInit, OnDestroy {
     }
     const pct = (v: number) => `${Math.round(v * 100)}%`;
     const lines = [
-      `Rating ★: ${pct(b.rating)}`,
-      `Available now: ${pct(b.availableNow)}`,
-      `Distance band: ${pct(b.distance)}`,
-      `Price fit: ${pct(b.price)}`,
-      `Speciality match: ${pct(b.speciality)}`,
-      `Completed visits: ${pct(b.history)}`,
+      this.i18n.t('market.breakdown.rating', { pct: pct(b.rating) }),
+      this.i18n.t('market.breakdown.availableNow', { pct: pct(b.availableNow) }),
+      this.i18n.t('market.breakdown.distance', { pct: pct(b.distance) }),
+      this.i18n.t('market.breakdown.price', { pct: pct(b.price) }),
+      this.i18n.t('market.breakdown.speciality', { pct: pct(b.speciality) }),
+      this.i18n.t('market.breakdown.history', { pct: pct(b.history) }),
     ];
     if (b.cancellationPenalty < 0) {
-      lines.push(`Recent cancellations: −${pct(-b.cancellationPenalty)}`);
+      lines.push(this.i18n.t('market.breakdown.cancellations', { pct: pct(-b.cancellationPenalty) }));
     }
     return lines;
   }
@@ -611,7 +722,7 @@ export class MarketplacePage implements OnInit, OnDestroy {
   }
 
   reviewDate(ms: number): string {
-    return new Date(ms).toLocaleDateString(undefined, {
+    return new Date(ms).toLocaleDateString(this.i18n.locale(), {
       day: 'numeric',
       month: 'short',
       year: 'numeric',
@@ -619,7 +730,7 @@ export class MarketplacePage implements OnInit, OnDestroy {
   }
 
   roleLabel(role: string): string {
-    return ROLE_LABELS[role] ?? role;
+    return this.i18n.t(`market.role.${role}`);
   }
 
   book(caregiverId: string): void {

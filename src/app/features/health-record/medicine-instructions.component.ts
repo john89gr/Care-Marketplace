@@ -1,5 +1,6 @@
 import { Component, computed, inject, input, signal } from '@angular/core';
 import { SessionStore } from '../../core/auth/session';
+import { I18n } from '../../core/i18n/i18n.service';
 import { MedicationsStore } from './medications.store';
 import type { Medication } from './medications.logic';
 import {
@@ -25,6 +26,9 @@ import { applyCatalog, findMedicineInfo } from './medicine.catalog';
  *
  * Informational convenience only — never medical advice; the copy says so.
  * A11y: fieldset/legend, labelled fields, `aria-live` save status.
+ *
+ * Bilingual. Load-bearing for the E2E suite: `.toggle` (the per-drug sheet
+ * button, whose accessible name carries "How to take <drug>") and `.sheet`.
  */
 @Component({
   selector: 'app-medicine-instructions',
@@ -39,7 +43,7 @@ import { applyCatalog, findMedicineInfo } from './medicine.catalog';
           [attr.aria-expanded]="open()"
           (click)="toggle()"
         >
-          💊 How to take {{ med.name }}
+          {{ i18n.t('medicine.toggle', { name: med.name }) }}
           <span class="meta">{{ summaryText(med) }}</span>
         </button>
 
@@ -47,40 +51,38 @@ import { applyCatalog, findMedicineInfo } from './medicine.catalog';
           <div class="sheet">
             @if (catalogHit(med); as hit) {
               <p class="catalog" role="note">
-                Catalog suggestion available ({{ hit }}). This is general
-                information, not medical advice — check with your doctor or
-                pharmacist.
+                {{ i18n.t('medicine.catalogAvailable', { name: hit }) }}
               </p>
               @if (confirmAutofill()) {
-                <button type="button" class="danger" (click)="autofill(med)">
-                  Replace my sheet with the catalog suggestion
+                <button type="button" class="btn danger" (click)="autofill(med)">
+                  {{ i18n.t('medicine.replaceWithCatalog') }}
                 </button>
-                <button type="button" class="secondary" (click)="cancelAutofill()">
-                  Keep my edits
+                <button type="button" class="btn secondary" (click)="cancelAutofill()">
+                  {{ i18n.t('medicine.keepEdits') }}
                 </button>
               } @else {
-                <button type="button" class="secondary" (click)="autofill(med)">
-                  Auto-fill from catalog
+                <button type="button" class="btn secondary" (click)="autofill(med)">
+                  {{ i18n.t('medicine.autofill') }}
                 </button>
               }
             }
 
             <fieldset [disabled]="!canWrite()">
-              <legend>Instructions for {{ med.name }}</legend>
+              <legend>{{ i18n.t('medicine.legend', { name: med.name }) }}</legend>
 
               <div class="grid">
-                <label>
-                  Dose form
+                <label class="field">
+                  <span class="field-label">{{ i18n.t('medicine.doseForm') }}</span>
                   <input
                     type="text"
-                    placeholder="e.g. Tablet / Σιρόπι"
+                    [attr.placeholder]="i18n.t('medicine.doseFormPlaceholder')"
                     [value]="form().doseForm ?? ''"
                     (input)="patch('doseForm', $any($event.target).value)"
                   />
                 </label>
 
-                <label>
-                  Route
+                <label class="field">
+                  <span class="field-label">{{ i18n.t('medicine.route') }}</span>
                   <select
                     [value]="form().route ?? 'oral'"
                     (change)="patch('route', $any($event.target).value)"
@@ -91,8 +93,8 @@ import { applyCatalog, findMedicineInfo } from './medicine.catalog';
                   </select>
                 </label>
 
-                <label>
-                  Food
+                <label class="field">
+                  <span class="field-label">{{ i18n.t('medicine.food') }}</span>
                   <select
                     [value]="form().foodRelation"
                     (change)="patch('foodRelation', $any($event.target).value)"
@@ -103,8 +105,8 @@ import { applyCatalog, findMedicineInfo } from './medicine.catalog';
                   </select>
                 </label>
 
-                <label>
-                  Max doses per day
+                <label class="field">
+                  <span class="field-label">{{ i18n.t('medicine.maxDaily') }}</span>
                   <input
                     type="number"
                     min="1"
@@ -114,8 +116,8 @@ import { applyCatalog, findMedicineInfo } from './medicine.catalog';
                   />
                 </label>
 
-                <label class="wide">
-                  Warnings (one per line)
+                <label class="field wide">
+                  <span class="field-label">{{ i18n.t('medicine.warnings') }}</span>
                   <textarea
                     rows="3"
                     [value]="warningsText()"
@@ -123,8 +125,8 @@ import { applyCatalog, findMedicineInfo } from './medicine.catalog';
                   ></textarea>
                 </label>
 
-                <label class="wide">
-                  Possible side effects
+                <label class="field wide">
+                  <span class="field-label">{{ i18n.t('medicine.sideEffects') }}</span>
                   <input
                     type="text"
                     [value]="form().sideEffects ?? ''"
@@ -132,8 +134,8 @@ import { applyCatalog, findMedicineInfo } from './medicine.catalog';
                   />
                 </label>
 
-                <label class="wide">
-                  Storage
+                <label class="field wide">
+                  <span class="field-label">{{ i18n.t('medicine.storage') }}</span>
                   <input
                     type="text"
                     [value]="form().storage ?? ''"
@@ -141,8 +143,8 @@ import { applyCatalog, findMedicineInfo } from './medicine.catalog';
                   />
                 </label>
 
-                <label class="wide">
-                  Special instructions
+                <label class="field wide">
+                  <span class="field-label">{{ i18n.t('medicine.special') }}</span>
                   <input
                     type="text"
                     [value]="form().specialInstructions ?? ''"
@@ -152,18 +154,18 @@ import { applyCatalog, findMedicineInfo } from './medicine.catalog';
               </div>
 
               <div class="actions">
-                <button type="button" [disabled]="saving()" (click)="save(med)">
-                  Save instructions
+                <button type="button" class="btn" [disabled]="saving()" (click)="save(med)">
+                  {{ i18n.t('medicine.save') }}
                 </button>
-                <button type="button" class="secondary" (click)="clear(med)">
-                  Clear sheet
+                <button type="button" class="btn secondary" (click)="clear(med)">
+                  {{ i18n.t('medicine.clear') }}
                 </button>
               </div>
               <p class="meta" role="status" aria-live="polite">{{ status() }}</p>
             </fieldset>
 
             @if (form().warnings.length > 0) {
-              <ul class="warnings" aria-label="Warnings">
+              <ul class="warnings" [attr.aria-label]="i18n.t('medicine.warningsAria')">
                 @for (w of form().warnings; track w) {
                   <li>⚠️ {{ w }}</li>
                 }
@@ -175,37 +177,75 @@ import { applyCatalog, findMedicineInfo } from './medicine.catalog';
     }
   `,
   styles: `
-    .instr { margin-top: 0.4rem; }
+    .instr {
+      margin-top: var(--space-1);
+    }
     .toggle {
+      display: block;
       background: none;
       border: none;
-      color: var(--accent, #4f7cff);
+      color: var(--accent);
       cursor: pointer;
       font: inherit;
-      font-weight: 600;
+      font-weight: var(--weight-semibold);
       text-align: left;
       padding: 0.35rem 0;
       min-height: 44px;
     }
-    .toggle .meta { font-weight: 400; margin-left: 0.4rem; }
-    .sheet { border: 1px solid var(--border, #d9dee7); border-radius: 0.6rem; padding: 0.7rem 1rem; }
-    .catalog { background: var(--surface-2, #eef1f6); border-radius: 0.5rem; padding: 0.5rem 0.7rem; }
-    fieldset { border: none; padding: 0; margin: 0.4rem 0 0; }
-    legend { font-weight: 600; padding: 0; }
-    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr)); gap: 0.6rem; }
-    .grid label { display: flex; flex-direction: column; gap: 0.25rem; font-size: 0.9rem; }
-    .grid .wide { grid-column: 1 / -1; }
-    input, select, textarea { min-height: 44px; font: inherit; }
-    .actions { display: flex; gap: 0.6rem; margin-top: 0.6rem; }
-    button { min-height: 44px; padding: 0.4rem 0.9rem; cursor: pointer; }
-    .secondary { background: var(--surface-2, #eef1f6); }
-    .danger { background: var(--danger, #c62828); color: #fff; }
-    .meta { color: var(--text-muted); }
-    .warnings { margin: 0.6rem 0 0; padding-left: 1.1rem; color: var(--danger, #c62828); }
+    .toggle:hover:not(:disabled) {
+      background: none;
+      color: var(--accent-hover);
+    }
+    .toggle .meta {
+      font-weight: var(--weight-normal);
+      margin-left: 0.4rem;
+    }
+    .sheet {
+      border: 1px solid var(--border);
+      border-radius: var(--radius-md);
+      padding: var(--space-3) var(--space-4);
+      margin-top: var(--space-2);
+    }
+    .catalog {
+      background: var(--surface-raised);
+      border-radius: var(--radius-sm);
+      padding: 0.5rem 0.7rem;
+      color: var(--text-muted);
+      font-size: var(--text-sm);
+    }
+    fieldset {
+      border: none;
+      padding: 0;
+      margin: var(--space-2) 0 0;
+    }
+    legend {
+      font-weight: var(--weight-semibold);
+      padding: 0;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr));
+      gap: var(--space-3);
+      margin-top: var(--space-2);
+    }
+    .grid .wide {
+      grid-column: 1 / -1;
+    }
+    .actions {
+      display: flex;
+      gap: var(--space-3);
+      margin-top: var(--space-3);
+    }
+    .warnings {
+      margin: var(--space-3) 0 0;
+      padding-left: 1.1rem;
+      color: var(--danger);
+    }
   `,
 })
 export class MedicineInstructionsComponent {
   readonly medication = input<Medication>();
+  protected readonly i18n = inject(I18n);
   private readonly store = inject(MedicationsStore);
   private readonly session = inject(SessionStore);
 
@@ -229,9 +269,9 @@ export class MedicineInstructionsComponent {
   readonly warningsText = computed(() => this.form().warnings.join('\n'));
 
   readonly routeLabel = (route: string): string =>
-    medicineLabel(MEDICINE_ROUTE_LABELS, route);
+    medicineLabel(MEDICINE_ROUTE_LABELS, route, this.i18n.language());
   readonly foodLabel = (relation: string): string =>
-    medicineLabel(FOOD_RELATION_LABELS, relation);
+    medicineLabel(FOOD_RELATION_LABELS, relation, this.i18n.language());
 
   /** Name of the catalog entry that matches, or '' when there is none. */
   catalogHit(med: Medication): string {
@@ -241,11 +281,13 @@ export class MedicineInstructionsComponent {
   summaryText(med: Medication): string {
     const saved = med.instructions;
     if (saved && hasInstructions(saved)) {
-      const summary = summaryOf(normalizeInstructions(saved));
-      return summary || '';
+      return this.summaryOf(normalizeInstructions(saved));
     }
     const suggestion = applyCatalog(med.name);
-    return suggestion ? `suggested: ${summaryOf(suggestion)}` : '';
+    if (!suggestion) {
+      return '';
+    }
+    return this.i18n.t('medicine.suggested', { summary: this.summaryOf(suggestion) });
   }
 
   toggle(): void {
@@ -274,7 +316,7 @@ export class MedicineInstructionsComponent {
   autofill(med: Medication): void {
     const suggestion = applyCatalog(med.name);
     if (!suggestion) {
-      this.status.set('No catalog entry for this medicine.');
+      this.status.set(this.i18n.t('medicine.status.noCatalog'));
       return;
     }
     const current = normalizeInstructions(this.form());
@@ -282,19 +324,17 @@ export class MedicineInstructionsComponent {
       hasInstructions(current) && JSON.stringify(current) !== JSON.stringify(suggestion);
     if (replacesSheet && !this.confirmAutofill()) {
       this.confirmAutofill.set(true);
-      this.status.set(
-        'Your current sheet will be replaced. Confirm to load the catalog suggestion.'
-      );
+      this.status.set(this.i18n.t('medicine.status.willReplace'));
       return;
     }
     this.confirmAutofill.set(false);
     this.form.set(suggestion);
-    this.status.set('Catalog suggestion loaded — review and save.');
+    this.status.set(this.i18n.t('medicine.status.loaded'));
   }
 
   cancelAutofill(): void {
     this.confirmAutofill.set(false);
-    this.status.set('Kept your edits.');
+    this.status.set(this.i18n.t('medicine.status.kept'));
   }
 
   patch<K extends keyof MedicineInstructions>(
@@ -325,9 +365,11 @@ export class MedicineInstructionsComponent {
     if (!this.canWrite()) {
       return;
     }
-    this.status.set('Saving…');
+    this.status.set(this.i18n.t('common.saving'));
     this.store.saveInstructions(med.id, this.form()).subscribe((ok) => {
-      this.status.set(ok ? 'Instructions saved.' : 'Could not save the instructions.');
+      this.status.set(
+        ok ? this.i18n.t('medicine.status.saved') : this.i18n.t('medicine.status.saveFailed')
+      );
     });
   }
 
@@ -337,22 +379,27 @@ export class MedicineInstructionsComponent {
     }
     this.form.set(emptyInstructions());
     this.store.saveInstructions(med.id, null).subscribe((ok) => {
-      this.status.set(ok ? 'Sheet cleared.' : 'Could not clear the sheet.');
+      this.status.set(
+        ok ? this.i18n.t('medicine.status.cleared') : this.i18n.t('medicine.status.clearFailed')
+      );
     });
   }
-}
 
-/** Local one-line summary (keeps the component free of extra imports). */
-function summaryOf(instructions: MedicineInstructions): string {
-  const parts: string[] = [];
-  if (instructions.route && instructions.route !== 'oral') {
-    parts.push(medicineLabel(MEDICINE_ROUTE_LABELS, instructions.route));
+  /** One-line summary in the active locale. */
+  private summaryOf(instructions: MedicineInstructions): string {
+    const locale = this.i18n.language();
+    const parts: string[] = [];
+    if (instructions.route && instructions.route !== 'oral') {
+      parts.push(medicineLabel(MEDICINE_ROUTE_LABELS, instructions.route, locale));
+    }
+    if (instructions.foodRelation !== 'any') {
+      parts.push(medicineLabel(FOOD_RELATION_LABELS, instructions.foodRelation, locale));
+    }
+    if ((instructions.maxDailyDoses ?? null) !== null) {
+      parts.push(
+        this.i18n.t('medicine.maxDailySummary', { count: instructions.maxDailyDoses! })
+      );
+    }
+    return parts.join(' · ');
   }
-  if (instructions.foodRelation !== 'any') {
-    parts.push(medicineLabel(FOOD_RELATION_LABELS, instructions.foodRelation));
-  }
-  if ((instructions.maxDailyDoses ?? null) !== null) {
-    parts.push(`έως ${instructions.maxDailyDoses}/ημέρα`);
-  }
-  return parts.join(' · ');
 }

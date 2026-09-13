@@ -4,6 +4,7 @@ import {
   composeHealthSummary,
   HealthSummaryInput,
 } from './export.payload';
+import { LocalizedMessage } from '../../core/i18n/localized-message';
 import {
   exportFilename,
   hasExportConsent,
@@ -47,13 +48,15 @@ export class HealthSummaryExportService {
   constructor(private readonly audit: AuditService = inject(AuditService)) {}
 
   private readonly _loading = signal(false);
-  private readonly _error = signal('');
+  private readonly _error = new LocalizedMessage();
   private readonly _lastFilename = signal<string | null>(null);
   private readonly _lastExportAtMs = signal<number | null>(null);
   private readonly _shareLink = signal<string | null>(null);
 
   readonly loading = this._loading.asReadonly();
-  readonly error = this._error.asReadonly();
+  /** Translatable source of the message (null for server-provided text). */
+  readonly errorSource = this._error.source;
+  readonly error = this._error.value;
   readonly lastFilename = this._lastFilename.asReadonly();
   readonly lastExportAtMs = this._lastExportAtMs.asReadonly();
   readonly shareLink = this._shareLink.asReadonly();
@@ -64,11 +67,11 @@ export class HealthSummaryExportService {
   async exportNow(input: HealthSummaryInput): Promise<boolean> {
     this.lastInput = input;
     if (!hasExportConsent()) {
-      this._error.set('Please confirm the export consent before generating the PDF.');
+      this._error.set({ key: 'store.export.consentPdf' });
       return false;
     }
     this._loading.set(true);
-    this._error.set('');
+    this._error.clear();
     try {
       const payload = composeHealthSummary(input);
       const filename = exportFilename(payload.generatedAtMs);
@@ -91,7 +94,7 @@ export class HealthSummaryExportService {
       return true;
     } catch {
       this._loading.set(false);
-      this._error.set('Could not generate the PDF. Please try again.');
+      this._error.set({ key: 'store.export.pdfFailed' });
       return false;
     }
   }
@@ -99,7 +102,7 @@ export class HealthSummaryExportService {
   /** Re-run the last export attempt (subtask 18: no silent failure). */
   retry(): Promise<boolean> {
     if (!this.lastInput) {
-      this._error.set('Nothing to retry yet — start an export first.');
+      this._error.set({ key: 'store.export.nothingToRetry' });
       return Promise.resolve(false);
     }
     return this.exportNow(this.lastInput);
@@ -113,17 +116,20 @@ export class HealthSummaryExportService {
    */
   async exportFhir(input: FhirBundleInput): Promise<boolean> {
     if (!hasExportConsent()) {
-      this._error.set('Please confirm the export consent before generating the FHIR bundle.');
+      this._error.set({ key: 'store.export.consentFhir' });
       return false;
     }
     this._loading.set(true);
-    this._error.set('');
+    this._error.clear();
     try {
       const { buildFhirBundle } = await import('../../shared/fhir/bundle');
       const nowMs = input.nowMs ?? Date.now();
       const { bundle, validation } = buildFhirBundle({ ...input, nowMs });
       if (!validation.valid) {
-        this._error.set(`FHIR bundle failed validation: ${validation.errors[0] ?? 'unknown'}`);
+        this._error.set({
+          key: 'store.export.fhirInvalid',
+          params: { detail: validation.errors[0] ?? 'unknown' },
+        });
         this._loading.set(false);
         return false;
       }
@@ -144,7 +150,7 @@ export class HealthSummaryExportService {
       return true;
     } catch {
       this._loading.set(false);
-      this._error.set('Could not generate the FHIR bundle. Please try again.');
+      this._error.set({ key: 'store.export.fhirFailed' });
       return false;
     }
   }

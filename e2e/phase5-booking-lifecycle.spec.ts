@@ -102,8 +102,11 @@ test.describe('Feature 3 — Booking lifecycle', () => {
 
     await page.getByRole('button', { name: 'Complete (releases escrow)' }).click();
     await expect(page.getByText('completed', { exact: true })).toBeVisible();
+    // The store toasts the success message *before* it issues the release
+    // request, so poll instead of sampling the flag once (the toast is
+    // optimistic — booking.store.ts emits it above the escrow.release call).
     await expect(page.getByText('Visit completed — escrow released.')).toBeVisible();
-    expect(released).toBe(true);
+    await expect.poll(() => released).toBe(true);
   });
 
   test('client: cancel shows the policy preview and the refund reaches the ledger', async ({ page }) => {

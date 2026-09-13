@@ -16,13 +16,16 @@ Then open `http://localhost:4200/`.
 
 ## Demo mode (no backend needed)
 
-Alongside the real Express/Postgres API in `server/`, the app ships with an
-in-memory demo backend that answers every `/api/**` call — auth, marketplace
+**The real Express/Postgres API in `server/` is the default path** — the app
+talks to it unless you explicitly opt in to the demo backend.
+
+The in-memory demo backend answers every `/api/**` call — auth, marketplace
 search, booking + escrow, licence vetting, shifts, visits/GPS, payments and
 the personal health record (vitals, medications, medical history, contacts,
-consents). It is **off by default** so the real backend and the Playwright E2E
-network mocks are unaffected, and it needs no database — the quickest way to
-explore the app.
+consents) — so you can explore the app with no server and no database. It is
+**off by default** so the real backend and the Playwright E2E network mocks are
+unaffected, and it is never a silent fallback: while it is active the shell
+shows a **Demo mode** banner so a demo session is never mistaken for real data.
 
 Enable it by opening the app with a `demo` query parameter:
 
@@ -49,6 +52,108 @@ peer reply and visit positions are broadcast back to listeners.
 **Where it lives:** `src/app/core/api/demo.api.ts` (HTTP interceptor),
 `src/app/core/api/demo.socket.ts` (WebSocket), `src/app/core/api/demo.mode.ts`
 (enable flag).
+
+## Languages (Ελληνικά / English)
+
+The UI is bilingual via a **runtime** switcher: one build serves both locales,
+so there is no locale-prefixed routing and no build per language.
+
+- **Switching.** The `EN | ΕΛ` control in the topbar. The choice is persisted in
+  `localStorage` (`cm.lang.v1`) and mirrored onto `<html lang>`.
+- **First visit.** A stored choice wins; otherwise the browser language is
+  matched on its primary subtag (`el-GR` → Greek), falling back to English.
+  This is why the Playwright suite still sees English labels — its locale is
+  `en-US`.
+- **Translating a template.** `{{ i18n.t('nav.vitals') }}`. `t()` reads a
+  signal, so only the views that read it re-render on a language switch.
+- **Adding a string.** Add the key to *both* `en` and `el` in
+  `src/app/core/i18n/translations.ts`. A key missing from `el` falls back to
+  English and an unknown key renders as the key itself, so a gap degrades
+  readably instead of blanking out.
+- **Plurals.** Pass `count` and define `<key>.one` / `<key>.other` — see
+  `offline.pending.one` / `offline.pending.other`.
+
+`src/app/core/i18n/i18n.service.spec.ts` enforces dictionary parity: adding a
+key to `en` without `el` fails the unit suite.
+
+### Messages authored by stores
+
+A store cannot inject `I18n` (unit tests construct stores directly, so an
+`inject()` in the constructor would throw outside an injection context). Instead
+of hard-coding English, a store holds a `LocalizedMessage`
+(`src/app/core/i18n/localized-message.ts`) — the *source* of the message:
+
+- **App-authored** → `message.set({ key: 'booking.error.notFound' })`. The page
+  renders it with `i18n.message(store.errorSource(), store.error())`, so it
+  follows the active language.
+- **Server-provided** →
+  `message.setFromServer(error?.error?.message, { key: '…' })`. The server's own
+  copy passes through verbatim; the key applies only when it sent none.
+
+`message.value()` is the English rendering, so existing behaviour and the specs
+that read the plain string are unchanged. Pure helpers that reject
+(`canSubmitReview`, `validateAttachment`) return a `reasonKey` / `errorKey`
+next to the English text for the same reason. `translateStatic()` is the
+no-DI translation entry point.
+
+`localized-message.spec.ts` scans every store that owns a slot for its
+`key: '…'` literals and requires each to exist — and to actually be translated —
+in both dictionaries, so a typo cannot silently render the key itself. A second
+test walks `src/app/{core/services,features}` and fails if a file gains a
+`LocalizedMessage` without being added to that scanned list.
+
+**Store slots are converted app-wide** — pharmacy orders and prescriptions,
+payments (methods, escrow, payouts, disputes), the health-record stores
+(vitals, medications, history, contacts, screening, reminders, export),
+home-health (visits, shifts, clinical log, care plan), consents, profiles,
+vetting, the integrations wallet and the Bluetooth service. Notification copy
+follows the same rule: `notify()` / `toast()` accept a `TranslatableMessage`, and
+server-pushed or server-authored text stays verbatim.
+
+**Persistence caveat.** `autoSearchName()` builds a saved search's default name
+once, in the language active at save time, and the name is then user data — a
+later language switch does not rewrite it.
+
+**Converted so far** (shell + 6 pages + 3 components): the app chrome, vitals,
+preventive care, medications, the medical-history register, contacts & phone
+numbers, consent settings, the medicine-instructions sheet, the
+reminder channel/settings component and prescription reminder wizard, and the
+care/visits batch — marketplace search, booking lifecycle, chat and reviews.
+The remaining feature *pages* are still English-only (their store messages are
+not) and are converted in themed batches.
+
+Some pages were Greek-first (the history register, contacts, the reminder
+wizard), so their Playwright specs run under `test.use({ locale: 'el-GR' })`.
+That keeps their original assertions intact *and* gives the runtime detection
+real coverage, while the other specs exercise the English branch.
+
+**Server-driven tokens.** Statuses and event kinds arrive from the API as
+machine identifiers (`in_progress`, `rescheduled`). Their English translation
+is deliberately the raw token, so the specs, the export payload and any URL or
+API contract keep working unchanged, while Greek gets a real label. Enum labels
+that are *not* contractual (roles, sort options, reminder channels) read
+normally in English.
+
+## Design system
+
+`src/styles.css` is the single source of truth — design tokens (colour,
+spacing, radius, elevation, type scale) plus reusable component classes
+(`.btn`, `.card`, `.badge`, `.table`, `.tabs`, `.field`, `.empty-state`, …).
+
+- **Tokens first.** Reference `var(--…)` rather than hard-coded values so light
+  and dark themes stay in step. Both themes are declared up top, as `:root` and
+  `:root[data-theme='dark']`.
+- **Shell layout.** A sidebar dashboard: grouped, role-filtered navigation, a
+  topbar carrying the language switch, theme toggle and notification bell, and
+  an off-canvas drawer below 60 rem.
+- **Migration state.** The shell and the six health-record pages below are on
+  the new system. The legacy page classes (`.filters`, `.results`, `.error`,
+  the offline/sync banners) are kept deliberately in a section at the bottom of
+  the stylesheet, because the ~31 not-yet-migrated feature pages still use
+  them. They are removed as each page moves over.
+
+Converted: shell, vitals, preventive care, medications, medical history,
+contacts & phone numbers, consent settings.
 
 ## Real API server + Postgres
 
@@ -364,7 +469,7 @@ npx playwright test
 
 ```
 src/app/
-  core/          # auth, api client, demo backend, WebSocket, geolocation
+  core/          # auth, api client, demo backend, WebSocket, geolocation, i18n
   shared/        # FHIR R4 mappers + bundle/validator, validators, signature pad, utils
   features/
     auth/        # login, register, forbidden

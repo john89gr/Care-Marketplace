@@ -14,6 +14,7 @@ import {
 import { AnalyticsService } from '../../core/services/analytics.service';
 import { GeoPoint } from '../../core/services/geo/geolocation.service';
 import { certificationStatus } from '../../core/services/integrations/certification-status';
+import { LocalizedMessage } from '../../core/i18n/localized-message';
 
 /**
  * Marketplace search state (Phase 1, PLAN.md §5). search() fetches candidate
@@ -100,12 +101,14 @@ export class MarketplaceStore {
   private readonly _filters = signal<SearchFilters>(DEFAULT_FILTERS);
   private readonly _results = signal<CaregiverCard[]>([]);
   private readonly _loading = signal(false);
-  private readonly _error = signal('');
+  private readonly _error = new LocalizedMessage();
 
   readonly filters = this._filters.asReadonly();
   readonly results = this._results.asReadonly();
   readonly loading = this._loading.asReadonly();
-  readonly error = this._error.asReadonly();
+  /** Translatable source of the error (null for a server-provided message). */
+  readonly errorSource = this._error.source;
+  readonly error = this._error.value;
   readonly hasResults = computed(() => this._results().length > 0);
 
   /** Per-card score breakdowns aligned with results() (explainable results). */
@@ -131,7 +134,7 @@ export class MarketplaceStore {
   search(): void {
     const filters = this._filters();
     this._loading.set(true);
-    this._error.set('');
+    this._error.clear();
     this.analytics.track('search_run', {
       query: filters.query,
       roles: filters.roles.join(','),
@@ -151,7 +154,7 @@ export class MarketplaceStore {
           this._loading.set(false);
         },
         error: () => {
-          this._error.set('Search is unavailable right now. Please try again later.');
+          this._error.set({ key: 'market.error.searchUnavailable' });
           this._loading.set(false);
         },
       });

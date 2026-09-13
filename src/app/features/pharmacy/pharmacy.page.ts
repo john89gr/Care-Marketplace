@@ -8,6 +8,7 @@ import { Component, inject } from '@angular/core';
 import { OrdersStore } from './orders.store';
 import { nextStatuses } from './order-machine';
 import { statusLabel, type PharmacyOrder, type PharmacyOrderStatus } from './pharmacy.models';
+import { I18n } from '../../core/i18n/i18n.service';
 
 @Component({
   selector: 'app-pharmacy',
@@ -26,7 +27,7 @@ import { statusLabel, type PharmacyOrder, type PharmacyOrderStatus } from './pha
         {{ store.loading() ? 'Loading…' : 'Refresh queue' }}
       </button>
       @if (store.error()) {
-        <p class="error" role="alert">{{ store.error() }}</p>
+        <p class="error" role="alert">{{ i18n.message(store.errorSource(), store.error()) }}</p>
       }
 
       @if (!store.loading() && store.sorted().length === 0) {
@@ -81,6 +82,8 @@ import { statusLabel, type PharmacyOrder, type PharmacyOrderStatus } from './pha
   `,
 })
 export class PharmacyPage {
+  protected readonly i18n = inject(I18n);
+
   readonly store = inject(OrdersStore);
 
   protected readonly statusLabel = statusLabel;

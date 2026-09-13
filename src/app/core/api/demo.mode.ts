@@ -1,8 +1,12 @@
 /**
  * Demo backend mode (PLAN.md §6): when enabled, an HTTP interceptor answers
  * /api/** requests from an in-memory store so the app works end-to-end in the
- * browser without a server. Disabled by default so real backends (and the
- * Playwright E2E network mocks) are unaffected.
+ * browser without a server.
+ *
+ * The real Express/Postgres API is the default path — this is an explicitly
+ * opt-in escape hatch for exploring the UI and for the Playwright suite (which
+ * passes `?demo=1`), never a silent fallback. The shell shows a banner while
+ * it is active so a demo session is never mistaken for real data.
  */
 const DEMO_KEY = 'cm.demo.v1';
 

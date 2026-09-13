@@ -3,21 +3,34 @@ import { ActivatedRoute } from '@angular/router';
 import { FormsModule } from '@angular/forms';
 import { ChatStore } from './chat.store';
 import { SessionStore } from '../../core/auth/session';
+import { I18n } from '../../core/i18n/i18n.service';
 
+/**
+ * Caregiver chat (FEATURE_PLAN.md §6). Two-pane layout: conversation list on
+ * the left, thread + composer on the right; messages acknowledge optimistically
+ * and roll back to a "not delivered" marker if the socket drops.
+ *
+ * Bilingual. Load-bearing for the E2E suite: the conversation button carries the
+ * `conv` class and gains `active` when selected, and the composer placeholder is
+ * the chat input's only label, so both are kept verbatim.
+ */
 @Component({
   selector: 'app-chat',
   standalone: true,
   imports: [FormsModule],
   template: `
     <section class="chat">
-      <h1>Chat</h1>
+      <header class="page-header">
+        <h1 class="page-title">{{ i18n.t('chat.title') }}</h1>
+        <p class="page-subtitle">{{ i18n.t('chat.subtitle') }}</p>
+      </header>
 
       <div class="chat-layout">
-        <aside class="chat-list" aria-label="Conversations">
+        <aside class="chat-list" [attr.aria-label]="i18n.t('chat.conversations')">
           @if (conversations().length === 0) {
-            <p class="muted">No conversations yet. Find a caregiver in the marketplace and tap “Message”.</p>
+            <p class="empty-state">{{ i18n.t('chat.empty') }}</p>
           } @else {
-            <ul>
+            <ul class="list">
               @for (conv of conversations(); track conv.id) {
                 <li>
                   <button
@@ -25,10 +38,13 @@ import { SessionStore } from '../../core/auth/session';
                     class="conv"
                     (click)="open(conv.id)"
                     [class.active]="conv.id === activeId()"
+                    [attr.aria-current]="conv.id === activeId() ? 'true' : null"
                   >
                     <span class="name">{{ conv.displayName }}</span>
                     @if (conv.unread > 0) {
-                      <span class="badge">{{ conv.unread }}</span>
+                      <span class="badge accent" [attr.aria-label]="i18n.t('chat.unread', { count: conv.unread })">
+                        {{ conv.unread }}
+                      </span>
                     }
                   </button>
                 </li>
@@ -37,9 +53,9 @@ import { SessionStore } from '../../core/auth/session';
           }
         </aside>
 
-        <div class="chat-thread">
+        <div class="chat-thread card">
           @if (activeId() === null) {
-            <p class="muted">Select a conversation to start chatting.</p>
+            <p class="empty-state">{{ i18n.t('chat.selectPrompt') }}</p>
           } @else {
             <div class="messages" aria-live="polite">
               @for (msg of activeMessages(); track msg.id) {
@@ -47,26 +63,35 @@ import { SessionStore } from '../../core/auth/session';
                   {{ msg.text }}
                   <span class="meta">
                     @if (msg.status === 'failed') {
-                      not delivered
+                      {{ i18n.t('chat.notDelivered') }}
                     } @else if (msg.status === 'sending') {
-                      sending…
+                      {{ i18n.t('chat.sending') }}
                     }
                   </span>
                 </p>
               }
             </div>
+
             @if (store.sendError()) {
-              <p class="error" role="alert">{{ store.sendError() }}</p>
+              <p class="error" role="alert">
+                {{ i18n.message(store.sendErrorSource(), store.sendError()) }}
+              </p>
             }
+
             <form class="composer" (ngSubmit)="send()">
-              <input
-                type="text"
-                [(ngModel)]="draft"
-                name="message"
-                placeholder="Type a message…"
-                autocomplete="off"
-              />
-              <button type="submit" [disabled]="!draft.trim()">Send</button>
+              <label class="field">
+                <span class="visually-hidden">{{ i18n.t('chat.messageLabel') }}</span>
+                <input
+                  type="text"
+                  [(ngModel)]="draft"
+                  name="message"
+                  [attr.placeholder]="i18n.t('chat.placeholder')"
+                  autocomplete="off"
+                />
+              </label>
+              <button type="submit" class="btn" [disabled]="!draft.trim()">
+                {{ i18n.t('chat.send') }}
+              </button>
             </form>
           }
         </div>
@@ -77,81 +102,88 @@ import { SessionStore } from '../../core/auth/session';
     .chat-layout {
       display: grid;
       grid-template-columns: 16rem 1fr;
-      gap: 1rem;
+      gap: var(--space-4);
       align-items: start;
     }
-    .chat-list ul {
-      list-style: none;
-      margin: 0;
-      padding: 0;
+    @media (max-width: 48rem) {
+      .chat-layout {
+        grid-template-columns: 1fr;
+      }
+    }
+    .chat-list .list {
       display: grid;
-      gap: 0.35rem;
+      gap: var(--space-1);
     }
     .chat-list .conv {
       display: flex;
       justify-content: space-between;
       align-items: center;
+      gap: var(--space-2);
       width: 100%;
       padding: 0.6rem 0.8rem;
-      border-radius: 0.5rem;
-      text-decoration: none;
+      border-radius: var(--radius-md);
+      text-align: left;
       color: var(--text);
       background: var(--surface);
       border: 1px solid var(--border);
+      cursor: pointer;
+      font: inherit;
+    }
+    .chat-list .conv:hover {
+      border-color: var(--accent);
     }
     .chat-list .conv.active {
       border-color: var(--accent);
       background: var(--accent-soft);
+      font-weight: var(--weight-semibold);
     }
-    .badge {
-      background: var(--accent);
-      color: #fff;
-      border-radius: 999px;
-      font-size: 0.75rem;
-      padding: 0.05rem 0.45rem;
-      font-weight: 700;
+    .chat-thread {
+      display: grid;
+      gap: var(--space-3);
     }
     .messages {
       display: flex;
       flex-direction: column;
-      gap: 0.5rem;
-      max-height: 22rem;
+      gap: var(--space-2);
+      max-height: 24rem;
       overflow-y: auto;
-      padding: 0.75rem;
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-radius: 0.75rem;
+      padding: var(--space-3);
+      background: var(--surface-raised);
+      border-radius: var(--radius-md);
     }
     .msg {
       align-self: flex-start;
       max-width: 75%;
-      background: var(--surface-raised);
-      border-radius: 0.75rem;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
       padding: 0.45rem 0.7rem;
       margin: 0;
     }
     .msg.mine {
       align-self: flex-end;
       background: var(--accent-soft);
+      border-color: var(--accent);
     }
     .msg .meta {
       display: block;
-      font-size: 0.7rem;
+      font-size: var(--text-xs);
       color: var(--text-muted);
     }
     .composer {
       display: flex;
-      gap: 0.5rem;
-      margin-top: 0.75rem;
+      align-items: flex-end;
+      gap: var(--space-2);
       max-width: none;
     }
-    .muted {
-      color: var(--text-muted);
+    .composer .field {
+      flex: 1;
     }
   `,
 })
 export class ChatPage implements OnInit {
   readonly store = inject(ChatStore);
+  protected readonly i18n = inject(I18n);
   private readonly route = inject(ActivatedRoute);
   private readonly session = inject(SessionStore);
 

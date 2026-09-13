@@ -144,8 +144,8 @@ describe('RemindersStore', () => {
     expect(store.history()).toHaveLength(3);
     expect(deps.notifications.notify).toHaveBeenCalledWith(
       'medication.missed',
-      expect.stringContaining('Insulin'),
-      expect.any(String),
+      { key: 'notify.reminderTitle', params: { name: 'Insulin glargine' } },
+      expect.objectContaining({ key: 'notify.reminderBody' }),
       '/medications'
     );
   });
@@ -176,8 +176,8 @@ describe('RemindersStore', () => {
     expect(copy).toBeDefined();
     expect(deps.notifications.notify).toHaveBeenCalledWith(
       'medication.missed',
-      expect.stringContaining('Caregiver copy'),
-      expect.stringContaining('daughter'),
+      { key: 'notify.caregiverCopyTitle', params: { name: 'Insulin glargine' } },
+      expect.objectContaining({ key: 'notify.caregiverCopyBody' }),
       '/medications'
     );
     // Non-critical meds never fan out to the caregiver.
@@ -197,12 +197,12 @@ describe('RemindersStore', () => {
     });
     expect(deps.notifications.notify).toHaveBeenCalledWith(
       'medication.missed',
-      'Test reminder: Insulin glargine',
-      expect.stringContaining('next reminder fires'),
+      { key: 'notify.testReminderTitle', params: { name: 'Insulin glargine' } },
+      expect.objectContaining({ key: 'notify.testReminderBody' }),
       '/medications'
     );
     expect(deps.notifications.toast).toHaveBeenCalledWith(
-      expect.stringContaining('Insulin glargine'),
+      { key: 'notify.testReminderToast', params: { name: 'Insulin glargine' } },
       'success'
     );
     expect(store.history()[0].detail).toContain('Test reminder');

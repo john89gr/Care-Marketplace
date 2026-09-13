@@ -1,5 +1,6 @@
 import { Component, computed, effect, inject, input, output, signal } from '@angular/core';
 import { SessionStore } from '../../core/auth/session';
+import { I18n } from '../../core/i18n/i18n.service';
 import { HistoryStore } from './history.store';
 import { RemindersStore } from './reminders.store';
 import {
@@ -17,14 +18,16 @@ import type { PrescriptionRecord } from './history.models';
 
 type ScheduleKind = 'daily' | 'interval' | 'weekly';
 
-const CHANNEL_LABELS: Record<ReminderChannel, string> = {
-  inapp: 'In-app',
-  push: 'Push',
-  sms: 'SMS',
-  voice: 'Voice',
-};
-
-const WEEKDAY_LABELS: readonly string[] = ['Κυρ', 'Δευ', 'Τρι', 'Τετ', 'Πεμ', 'Παρ', 'Σαβ'];
+/** Sunday-first, matching `Date.getDay()`. */
+const WEEKDAY_KEYS: readonly string[] = [
+  'rx.weekday.0',
+  'rx.weekday.1',
+  'rx.weekday.2',
+  'rx.weekday.3',
+  'rx.weekday.4',
+  'rx.weekday.5',
+  'rx.weekday.6',
+];
 
 /**
  * Pill-reminder wizard (FEATURE_PLAN.md Track 3): opens from an active
@@ -32,6 +35,11 @@ const WEEKDAY_LABELS: readonly string[] = ['Κυρ', 'Δευ', 'Τρι', 'Τετ
  * lets the user adjust dose times/channels, then creates the medication and
  * persists the reminder channels. Nothing silent: the parsed confidence and a
  * human explanation are always shown.
+ *
+ * Bilingual: the parsed explanation comes from `planFromPrescription` with the
+ * active locale, and the rest of the wizard copy is translated here.
+ * Load-bearing for the E2E suite: the `role="dialog"` labelled by
+ * `#rx-wizard-title` and the `p.prn` note.
  */
 @Component({
   selector: 'app-prescription-reminder',
@@ -40,20 +48,21 @@ const WEEKDAY_LABELS: readonly string[] = ['Κυρ', 'Δευ', 'Τρι', 'Τετ
   template: `
     @if (prescription(); as rx) {
       <div class="wizard" role="dialog" aria-modal="true" aria-labelledby="rx-wizard-title">
-        <h3 id="rx-wizard-title">Υπενθύμιση για {{ rx.drug }}</h3>
+        <h3 id="rx-wizard-title">{{ i18n.t('rx.title', { drug: rx.drug }) }}</h3>
 
         <p class="note" role="status">
           {{ planNote() }}
           <span class="chip" [class.warn]="confidence() === 'defaulted'">
-            {{ confidence() === 'parsed' ? 'από τη συνταγή' : 'προεπιλογή — ελέγξτε το' }}
+            {{
+              confidence() === 'parsed'
+                ? i18n.t('rx.confidence.parsed')
+                : i18n.t('rx.confidence.defaulted')
+            }}
           </span>
         </p>
 
         @if (isPrn()) {
-          <p class="prn" role="note">
-            Η συνταγή είναι «κατά περίπτωση» (SOS). Δεν δημιουργείται σταθερό
-            πρόγραμμα εκτός αν ορίσετε ώρες παρακάτω.
-          </p>
+          <p class="prn" role="note">{{ i18n.t('rx.prnNote') }}</p>
         }
 
         @if (error()) {
@@ -61,7 +70,7 @@ const WEEKDAY_LABELS: readonly string[] = ['Κυρ', 'Δευ', 'Τρι', 'Τετ
         }
 
         <fieldset [disabled]="!canWrite() || saving()">
-          <legend>Πρόγραμμα δόσεων</legend>
+          <legend>{{ i18n.t('rx.scheduleLegend') }}</legend>
 
           <div class="row">
             @for (option of kinds; track option) {
@@ -83,33 +92,40 @@ const WEEKDAY_LABELS: readonly string[] = ['Κυρ', 'Δευ', 'Τρι', 'Τετ
               <div class="times">
                 @for (t of times(); track $index) {
                   <span class="time-row">
-                    <label>
-                      Ώρα {{ $index + 1 }}
+                    <label class="field">
+                      <span class="field-label">{{ i18n.t('rx.timeN', { n: $index + 1 }) }}</span>
                       <input
                         type="time"
                         [value]="clock(t)"
                         (change)="setTime($index, $any($event.target).value)"
                       />
                     </label>
-                    <button type="button" class="link" (click)="removeTime($index)">Αφαίρεση</button>
+                    <button type="button" class="link" (click)="removeTime($index)">
+                      {{ i18n.t('rx.remove') }}
+                    </button>
                   </span>
                 }
                 @if (times().length === 0) {
-                  <p class="meta">Προσθέστε τουλάχιστον μία ώρα.</p>
+                  <p class="meta">{{ i18n.t('rx.addOneTime') }}</p>
                 }
                 <div class="add-time">
-                  <label>
-                    Νέα ώρα
-                    <input type="time" [value]="newTime()"
-                      (change)="newTime.set($any($event.target).value)" />
+                  <label class="field">
+                    <span class="field-label">{{ i18n.t('rx.newTime') }}</span>
+                    <input
+                      type="time"
+                      [value]="newTime()"
+                      (change)="newTime.set($any($event.target).value)"
+                    />
                   </label>
-                  <button type="button" class="secondary" (click)="addTime()">+ Προσθήκη ώρας</button>
+                  <button type="button" class="btn secondary" (click)="addTime()">
+                    {{ i18n.t('rx.addTime') }}
+                  </button>
                 </div>
               </div>
             }
             @case ('interval') {
-              <label>
-                Κάθε πόσες ημέρες
+              <label class="field">
+                <span class="field-label">{{ i18n.t('rx.everyDays') }}</span>
                 <input
                   type="number"
                   min="1"
@@ -118,37 +134,43 @@ const WEEKDAY_LABELS: readonly string[] = ['Κυρ', 'Δευ', 'Τρι', 'Τετ
                   (change)="everyDays.set(+$any($event.target).value || 1)"
                 />
               </label>
-              <label>
-                Ώρα
-                <input type="time" [value]="clock(singleTime())"
-                  (change)="singleTime.set(minutes($any($event.target).value))" />
+              <label class="field">
+                <span class="field-label">{{ i18n.t('rx.time') }}</span>
+                <input
+                  type="time"
+                  [value]="clock(singleTime())"
+                  (change)="singleTime.set(minutes($any($event.target).value))"
+                />
               </label>
             }
             @case ('weekly') {
               <fieldset class="weekdays">
-                <legend>Ημέρες</legend>
-                @for (day of weekdayLabels; track $index) {
+                <legend>{{ i18n.t('rx.weekdays') }}</legend>
+                @for (day of weekdayKeys; track day; let i = $index) {
                   <label class="check">
                     <input
                       type="checkbox"
-                      [checked]="weekdays().includes($index)"
-                      (change)="toggleWeekday($index, $any($event.target).checked)"
+                      [checked]="weekdays().includes(i)"
+                      (change)="toggleWeekday(i, $any($event.target).checked)"
                     />
-                    {{ day }}
+                    {{ i18n.t(day) }}
                   </label>
                 }
               </fieldset>
-              <label>
-                Ώρα
-                <input type="time" [value]="clock(singleTime())"
-                  (change)="singleTime.set(minutes($any($event.target).value))" />
+              <label class="field">
+                <span class="field-label">{{ i18n.t('rx.time') }}</span>
+                <input
+                  type="time"
+                  [value]="clock(singleTime())"
+                  (change)="singleTime.set(minutes($any($event.target).value))"
+                />
               </label>
             }
           }
         </fieldset>
 
         <fieldset class="channels" [disabled]="!canWrite() || saving()">
-          <legend>Κανάλια υπενθύμισης</legend>
+          <legend>{{ i18n.t('rx.channelsLegend') }}</legend>
           @for (channel of channels; track channel) {
             <label class="check" [attr.title]="gateReason(channel)">
               <input
@@ -166,7 +188,9 @@ const WEEKDAY_LABELS: readonly string[] = ['Κυρ', 'Δευ', 'Τρι', 'Τετ
         </fieldset>
 
         @if (instructionsSummaryText()) {
-          <p class="meta">Οδηγίες λήψης: {{ instructionsSummaryText() }}</p>
+          <p class="meta">
+            {{ i18n.t('rx.instructions', { summary: instructionsSummaryText() }) }}
+          </p>
         }
 
         @if (success()) {
@@ -177,61 +201,121 @@ const WEEKDAY_LABELS: readonly string[] = ['Κυρ', 'Δευ', 'Τρι', 'Τετ
         }
 
         <div class="actions">
-          <button type="button" [disabled]="!canConfirm()" (click)="confirm(rx)">
-            {{ saving() ? 'Αποθήκευση…' : 'Δημιουργία φαρμάκου & υπενθύμισης' }}
+          <button type="button" class="btn" [disabled]="!canConfirm()" (click)="confirm(rx)">
+            {{ saving() ? i18n.t('common.saving') : i18n.t('rx.confirm') }}
           </button>
-          <button type="button" class="secondary" (click)="close()">Κλείσιμο</button>
+          <button type="button" class="btn secondary" (click)="close()">
+            {{ i18n.t('common.close') }}
+          </button>
         </div>
       </div>
     }
   `,
   styles: `
     .wizard {
-      border: 1px solid var(--border, #d9dee7);
-      border-radius: 0.7rem;
-      padding: 0.9rem 1.1rem;
-      margin: 0.7rem 0;
-      background: var(--surface, #fff);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      padding: var(--space-4);
+      margin: var(--space-3) 0;
+      background: var(--surface);
+      box-shadow: var(--shadow-md);
     }
-    fieldset { border: none; margin: 0.6rem 0; padding: 0; }
-    legend { font-weight: 600; padding: 0; }
-    .row, .times, .weekdays { display: flex; flex-wrap: wrap; gap: 0.7rem; }
-    .time-row { display: flex; align-items: flex-end; gap: 0.4rem; }
-    label { display: flex; flex-direction: column; gap: 0.25rem; font-size: 0.9rem; }
-    .radio, .check { flex-direction: row; align-items: center; gap: 0.35rem; font-size: 0.95rem; }
-    input, select { min-height: 44px; font: inherit; }
-    .add-time { display: flex; align-items: flex-end; gap: 0.4rem; }
+    fieldset {
+      border: none;
+      margin: var(--space-3) 0;
+      padding: 0;
+    }
+    legend {
+      font-weight: var(--weight-semibold);
+      padding: 0;
+    }
+    .row,
+    .times,
+    .weekdays {
+      display: flex;
+      flex-wrap: wrap;
+      gap: var(--space-3);
+    }
+    .time-row {
+      display: flex;
+      align-items: flex-end;
+      gap: var(--space-2);
+    }
+    .radio,
+    .check {
+      flex-direction: row;
+      align-items: center;
+      gap: 0.35rem;
+      font-size: var(--text-base);
+    }
+    .radio input,
+    .check input {
+      width: auto;
+    }
+    .add-time {
+      display: flex;
+      align-items: flex-end;
+      gap: var(--space-2);
+    }
     .chip {
-      background: var(--accent, #4f7cff);
-      color: #fff;
-      border-radius: 999px;
+      background: var(--accent);
+      color: var(--accent-contrast);
+      border-radius: var(--radius-full);
       padding: 0.05rem 0.5rem;
-      font-size: 0.75rem;
+      font-size: var(--text-xs);
       margin-left: 0.4rem;
     }
-    .chip.warn { background: var(--danger, #c62828); }
-    .note { margin: 0.3rem 0; }
-    .prn, .success { background: var(--surface-2, #eef1f6); border-radius: 0.5rem; padding: 0.5rem 0.7rem; }
-    .success { color: var(--success, #1d7a3d); }
-    .error { color: var(--danger, #c62828); }
-    .meta { color: var(--text-muted); }
-    .actions { display: flex; gap: 0.6rem; margin-top: 0.7rem; }
-    button { min-height: 44px; padding: 0.4rem 0.9rem; cursor: pointer; }
-    .secondary { background: var(--surface-2, #eef1f6); }
-    .link { background: none; border: none; color: var(--accent, #4f7cff); text-decoration: underline; cursor: pointer; }
+    .chip.warn {
+      background: var(--danger);
+      color: #fff;
+    }
+    .note {
+      margin: var(--space-1) 0;
+    }
+    .prn,
+    .success {
+      background: var(--surface-raised);
+      border-radius: var(--radius-sm);
+      padding: 0.5rem 0.7rem;
+    }
+    .success {
+      color: var(--success);
+    }
+    .error {
+      color: var(--danger);
+    }
+    .actions {
+      display: flex;
+      gap: var(--space-3);
+      margin-top: var(--space-3);
+    }
+    .link {
+      background: none;
+      border: none;
+      color: var(--accent);
+      text-decoration: underline;
+      cursor: pointer;
+      padding: 0;
+      font: inherit;
+    }
+    .link:hover:not(:disabled) {
+      background: none;
+      color: var(--accent-hover);
+    }
   `,
 })
 export class PrescriptionReminderComponent {
   readonly prescription = input<PrescriptionRecord | null>(null);
   readonly closed = output<void>();
 
+  protected readonly i18n = inject(I18n);
   private readonly history = inject(HistoryStore);
   private readonly reminders = inject(RemindersStore);
   private readonly session = inject(SessionStore);
 
   readonly kinds: ScheduleKind[] = ['daily', 'interval', 'weekly'];
   readonly channels: ReminderChannel[] = [...ALL_CHANNELS];
-  readonly weekdayLabels = WEEKDAY_LABELS;
+  readonly weekdayKeys = WEEKDAY_KEYS;
 
   readonly kind = signal<ScheduleKind>('daily');
   readonly times = signal<number[]>([8 * 60]);
@@ -261,7 +345,8 @@ export class PrescriptionReminderComponent {
       if (!rx) {
         return;
       }
-      const plan = planFromPrescription(rx);
+      // The parsed explanation follows the active language.
+      const plan = planFromPrescription(rx, { locale: this.i18n.language() });
       this.note.set(plan.note);
       this.confidence.set(plan.confidence);
       this.isPrn.set(plan.isPrn);
@@ -292,13 +377,13 @@ export class PrescriptionReminderComponent {
   readonly planNote = computed(() => this.note());
   readonly instructionsSummaryText = computed(() => {
     const instructions = this.instructions();
-    return instructions ? instructionsSummary(instructions) : '';
+    return instructions ? instructionsSummary(instructions, this.i18n.language()) : '';
   });
 
   readonly smsVoiceHint = computed(() => {
     const status = smsVoiceStatus(this.reminders.prefs());
     return status.sms === 'pending' || status.voice === 'pending'
-      ? 'Τα SMS/φωνητικά χρειάζονται αριθμό τηλεφώνου και συγκατάθεση στις ρυθμίσεις υπενθυμίσεων.'
+      ? this.i18n.t('rx.smsVoiceHint')
       : '';
   });
 
@@ -316,7 +401,7 @@ export class PrescriptionReminderComponent {
   });
 
   label(channel: ReminderChannel): string {
-    return CHANNEL_LABELS[channel];
+    return this.i18n.t(`reminders.channel.${channel}`);
   }
 
   canUse(channel: ReminderChannel): boolean {
@@ -329,7 +414,7 @@ export class PrescriptionReminderComponent {
   }
 
   kindLabel(kind: ScheduleKind): string {
-    return kind === 'daily' ? 'Καθημερινά' : kind === 'interval' ? 'Κάθε N ημέρες' : 'Εβδομαδιαία';
+    return this.i18n.t(`rx.kind.${kind}`);
   }
 
   clock(minutes: number): string {
@@ -389,7 +474,7 @@ export class PrescriptionReminderComponent {
     }
     const schedule = this.buildSchedule();
     if (!schedule) {
-      this.error.set('Ορίστε τουλάχιστον μία ώρα λήψης.');
+      this.error.set(this.i18n.t('rx.error.noTime'));
       return;
     }
     const instructions = this.instructions();
@@ -400,13 +485,17 @@ export class PrescriptionReminderComponent {
       .subscribe((created) => {
         this.saving.set(false);
         if (!created) {
-          this.error.set(this.history.error() || 'Δεν ήταν δυνατή η δημιουργία της υπενθύμισης.');
+          this.error.set(
+            this.history.error()
+              ? this.i18n.message(this.history.errorSource(), this.history.error())
+              : this.i18n.t('rx.error.failed')
+          );
           return;
         }
         // Persist the chosen channels through the existing reminder prefs store
         // (the wizard owns no new endpoint).
         this.reminders.setChannels(created.medicationId, this.selectedChannels()).subscribe();
-        this.success.set(`${rx.drug} προστέθηκε στα φάρμακα με πρόγραμμα.`);
+        this.success.set(this.i18n.t('rx.success', { drug: rx.drug }));
         this.preview.set(this.previewFor(rx, schedule, instructions));
       });
   }
@@ -429,6 +518,6 @@ export class PrescriptionReminderComponent {
       instructions: instructions ?? undefined,
       createdAtMs: Date.now(),
     };
-    return this.reminders.previewFor(pseudo);
+    return this.reminders.previewFor(pseudo, Date.now(), this.i18n.language());
   }
 }

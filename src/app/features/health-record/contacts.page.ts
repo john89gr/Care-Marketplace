@@ -2,6 +2,7 @@ import { Component, computed, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { RouterLink } from '@angular/router';
 import { SessionStore } from '../../core/auth/session';
+import { I18n } from '../../core/i18n/i18n.service';
 import { ContactsStore } from './contacts.store';
 import {
   CARE_ROLE_KEYS,
@@ -23,62 +24,31 @@ import {
  * feeds the health-summary export and FHIR `Patient.contact`) and the care
  * team. Add/edit/archive with a single primary per kind; family roles get a
  * read-only view (RBAC mirrors the other PHR pages).
+ *
+ * Bilingual: kind/role names come from the shared bilingual catalogs, UI copy
+ * from i18n. The `article.contact` / `section.group` / `.badge` structure is
+ * load-bearing for the E2E suite.
  */
-
-interface ContactForm {
-  name: string;
-  relationship: string;
-  careRole: string;
-  phone: string;
-  altPhone: string;
-  email: string;
-  address: string;
-  notes: string;
-  priority: number;
-  isPrimary: boolean;
-}
-
-function emptyForm(): ContactForm {
-  return {
-    name: '',
-    relationship: '',
-    careRole: 'doctor',
-    phone: '',
-    altPhone: '',
-    email: '',
-    address: '',
-    notes: '',
-    priority: 0,
-    isPrimary: false,
-  };
-}
-
-const VALIDATION_MESSAGES: Record<string, string> = {
-  unknown_kind: 'Άγνωστη κατηγορία επαφής.',
-  name_required: 'Το όνομα είναι υποχρεωτικό.',
-  phone_invalid: 'Το τηλέφωνο πρέπει να έχει τουλάχιστον 6 ψηφία.',
-  email_invalid: 'Το email δεν είναι έγκυρο.',
-};
-
 @Component({
   selector: 'app-contacts',
   standalone: true,
   imports: [FormsModule, RouterLink],
   template: `
     <section class="contacts">
-      <h1>Επαφές &amp; Τηλέφωνα</h1>
-      <p class="meta">
-        Οι επαφές έκτακτης ανάγκης (ICE) εμφανίζονται στη σύνοψη υγείας και στην εξαγωγή
-        FHIR. Η ομάδα φροντίδας κρατά τα τηλέφωνα γιατρών, φαρμακείων και φροντιστών.
-      </p>
+      <header class="page-header">
+        <div>
+          <h1 class="page-title">{{ i18n.t('contacts.title') }}</h1>
+          <p class="page-subtitle">{{ i18n.t('contacts.subtitle') }}</p>
+        </div>
+      </header>
 
       <p class="status" role="status" aria-live="polite">
         @if (store.actingKey()) {
-          <span>Αποθήκευση…</span>
+          <span>{{ i18n.t('common.saving') }}</span>
         } @else if (store.error()) {
-          <span class="error" role="alert">{{ store.error() }}</span>
+          <span class="error" role="alert">{{ i18n.message(store.errorSource(), store.error()) }}</span>
         } @else if (!canWrite()) {
-          <span class="readonly">Προβολή μόνο — δεν έχετε δικαίωμα επεξεργασίας.</span>
+          <span class="readonly">{{ i18n.t('contacts.readOnly') }}</span>
         }
       </p>
 
@@ -87,79 +57,116 @@ const VALIDATION_MESSAGES: Record<string, string> = {
           <div class="group-head">
             <h2 [id]="'contacts-' + kind">{{ kindLabel(kind) }}</h2>
             @if (canWrite()) {
-              <button type="button" class="secondary" (click)="toggleForm(kind)">
-                {{ openForm() === kind ? 'Κλείσιμο' : '+ Προσθήκη' }}
+              <button type="button" class="btn secondary sm" (click)="toggleForm(kind)">
+                {{ openForm() === kind ? i18n.t('common.close') : i18n.t('contacts.add') }}
               </button>
             }
           </div>
 
           @if (openForm() === kind) {
             <form class="card form" (submit)="save(kind, $event)">
-              <div class="grid">
-                <label>
-                  Όνομα *
-                  <input type="text" required [value]="form().name"
-                    (input)="patch('name', $any($event.target).value)" />
+              <div class="form-grid">
+                <label class="field">
+                  <span class="field-label">{{ i18n.t('contacts.nameLabel') }}</span>
+                  <input
+                    type="text"
+                    required
+                    [value]="form().name"
+                    (input)="patch('name', $any($event.target).value)"
+                  />
                 </label>
                 @if (kind === 'emergency') {
-                  <label>
-                    Σχέση (π.χ. κόρη, σύζυγος)
-                    <input type="text" [value]="form().relationship"
-                      (input)="patch('relationship', $any($event.target).value)" />
+                  <label class="field">
+                    <span class="field-label">{{ i18n.t('contacts.relationshipHint') }}</span>
+                    <input
+                      type="text"
+                      [value]="form().relationship"
+                      (input)="patch('relationship', $any($event.target).value)"
+                    />
                   </label>
                 } @else {
-                  <label>
-                    Ρόλος
-                    <select [value]="form().careRole"
-                      (change)="patch('careRole', $any($event.target).value)">
+                  <label class="field">
+                    <span class="field-label">{{ i18n.t('contacts.roleLabel') }}</span>
+                    <select
+                      [value]="form().careRole"
+                      (change)="patch('careRole', $any($event.target).value)"
+                    >
                       @for (role of careRoles; track role) {
                         <option [value]="role">{{ roleLabel(role) }}</option>
                       }
                     </select>
                   </label>
                 }
-                <label>
-                  Τηλέφωνο *
-                  <input type="tel" required autocomplete="tel" [value]="form().phone"
-                    (input)="patch('phone', $any($event.target).value)" />
+                <label class="field">
+                  <span class="field-label">{{ i18n.t('contacts.phoneLabel') }}</span>
+                  <input
+                    type="tel"
+                    required
+                    autocomplete="tel"
+                    [value]="form().phone"
+                    (input)="patch('phone', $any($event.target).value)"
+                  />
                 </label>
-                <label>
-                  Δεύτερο τηλέφωνο
-                  <input type="tel" [value]="form().altPhone"
-                    (input)="patch('altPhone', $any($event.target).value)" />
+                <label class="field">
+                  <span class="field-label">{{ i18n.t('contacts.altPhoneLabel') }}</span>
+                  <input
+                    type="tel"
+                    [value]="form().altPhone"
+                    (input)="patch('altPhone', $any($event.target).value)"
+                  />
                 </label>
-                <label>
-                  Email
-                  <input type="email" [value]="form().email"
-                    (input)="patch('email', $any($event.target).value)" />
+                <label class="field">
+                  <span class="field-label">{{ i18n.t('contacts.emailLabel') }}</span>
+                  <input
+                    type="email"
+                    [value]="form().email"
+                    (input)="patch('email', $any($event.target).value)"
+                  />
                 </label>
-                <label>
-                  Διεύθυνση
-                  <input type="text" [value]="form().address"
-                    (input)="patch('address', $any($event.target).value)" />
+                <label class="field">
+                  <span class="field-label">{{ i18n.t('contacts.addressLabel') }}</span>
+                  <input
+                    type="text"
+                    [value]="form().address"
+                    (input)="patch('address', $any($event.target).value)"
+                  />
                 </label>
-                <label>
-                  Προτεραιότητα
-                  <input type="number" min="0" [value]="form().priority"
-                    (input)="patch('priority', +$any($event.target).value)" />
+                <label class="field">
+                  <span class="field-label">{{ i18n.t('contacts.priorityLabel') }}</span>
+                  <input
+                    type="number"
+                    min="0"
+                    [value]="form().priority"
+                    (input)="patch('priority', +$any($event.target).value)"
+                  />
                 </label>
                 <label class="check">
-                  <input type="checkbox" [checked]="form().isPrimary"
-                    (change)="patch('isPrimary', $any($event.target).checked)" />
-                  Κύρια επαφή
+                  <input
+                    type="checkbox"
+                    [checked]="form().isPrimary"
+                    (change)="patch('isPrimary', $any($event.target).checked)"
+                  />
+                  {{ i18n.t('contacts.primaryLabel') }}
                 </label>
-                <label class="wide">
-                  Σημειώσεις
-                  <input type="text" [value]="form().notes"
-                    (input)="patch('notes', $any($event.target).value)" />
+                <label class="field wide">
+                  <span class="field-label">{{ i18n.t('contacts.notesLabel') }}</span>
+                  <input
+                    type="text"
+                    [value]="form().notes"
+                    (input)="patch('notes', $any($event.target).value)"
+                  />
                 </label>
               </div>
               @if (formError()) {
                 <p class="error" role="alert">{{ formError() }}</p>
               }
-              <div class="actions">
-                <button type="submit" [disabled]="saving()">Αποθήκευση</button>
-                <button type="button" class="secondary" (click)="cancelForm()">Ακύρωση</button>
+              <div class="card-actions">
+                <button type="submit" class="btn" [disabled]="saving()">
+                  {{ i18n.t('common.save') }}
+                </button>
+                <button type="button" class="btn secondary" (click)="cancelForm()">
+                  {{ i18n.t('common.cancel') }}
+                </button>
               </div>
             </form>
           }
@@ -167,10 +174,10 @@ const VALIDATION_MESSAGES: Record<string, string> = {
           @for (contact of list(kind); track contact.id) {
             <article class="card contact" [class.primary]="contact.isPrimary">
               <div class="info">
-                <h3>
+                <h3 class="contact-name">
                   {{ contactSummary(contact) }}
                   @if (contact.isPrimary) {
-                    <span class="badge">Κύρια</span>
+                    <span class="badge accent">{{ i18n.t('contacts.primaryBadge') }}</span>
                   }
                 </h3>
                 <p class="phones">
@@ -183,83 +190,122 @@ const VALIDATION_MESSAGES: Record<string, string> = {
                   }
                 </p>
                 @if (contact.address) {
-                  <p class="line">{{ contact.address }}</p>
+                  <p class="meta">{{ contact.address }}</p>
                 }
                 @if (contact.notes) {
-                  <p class="line">{{ contact.notes }}</p>
+                  <p class="meta">{{ contact.notes }}</p>
                 }
               </div>
               @if (canWrite()) {
                 <div class="contact-actions">
                   @if (!contact.isPrimary) {
-                    <button type="button" class="link" (click)="setPrimary(contact.id)">Ορισμός ως κύρια</button>
+                    <button type="button" class="link" (click)="setPrimary(contact.id)">
+                      {{ i18n.t('contacts.setPrimary') }}
+                    </button>
                   }
-                  <button type="button" class="link" (click)="edit(contact)">Επεξεργασία</button>
-                  <button type="button" class="link danger" (click)="archive(contact.id)">Αρχειοθέτηση</button>
+                  <button type="button" class="link" (click)="edit(contact)">
+                    {{ i18n.t('contacts.edit') }}
+                  </button>
+                  <button type="button" class="link danger" (click)="archive(contact.id)">
+                    {{ i18n.t('contacts.archive') }}
+                  </button>
                 </div>
               }
             </article>
           }
 
           @if (list(kind).length === 0) {
-            <p class="empty">
-              {{ kind === 'emergency'
-                ? 'Δεν έχετε καταχωρήσει επαφή έκτακτης ανάγκης. Προσθέστε τουλάχιστον μία.'
-                : 'Δεν έχετε καταχωρήσει επαφή στην ομάδα φροντίδας.' }}
+            <p class="empty-state">
+              {{
+                kind === 'emergency'
+                  ? i18n.t('contacts.emptyEmergency')
+                  : i18n.t('contacts.emptyCare')
+              }}
             </p>
           }
         </section>
       }
 
       <p class="meta">
-        Η προσωπική σας τηλέφωνο βρίσκεται στο
-        <a routerLink="/profile">προφίλ</a>. Οι αριθμοί χρησιμοποιούνται και για
-        ειδοποιήσεις SMS/φωνής στις <a routerLink="/reminders">υπενθυμίσεις</a>.
+        {{ i18n.t('contacts.footerLead') }}<a routerLink="/profile">{{
+          i18n.t('contacts.footerProfile')
+        }}</a
+        >{{ i18n.t('contacts.footerMid') }}<a routerLink="/reminders">{{
+          i18n.t('contacts.footerReminders')
+        }}</a
+        >.
       </p>
     </section>
   `,
   styles: `
-    .contacts { max-width: 60rem; }
-    .group { margin: 1.2rem 0; }
-    .group-head { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
-    .card {
-      border: 1px solid var(--border, #d8dde5);
-      border-radius: 0.6rem;
-      padding: 0.8rem 1rem;
-      margin: 0.6rem 0;
-      background: var(--surface, #fff);
+    .contacts {
+      max-width: 62rem;
     }
-    .contact { display: flex; justify-content: space-between; gap: 1rem; flex-wrap: wrap; }
-    .contact.primary { border-left: 4px solid var(--accent, #4f7cff); }
-    .card h3 { margin: 0 0 0.3rem; }
-    .badge {
-      display: inline-block;
-      margin-left: 0.4rem;
-      background: var(--accent, #4f7cff);
-      color: #fff;
-      border-radius: 999px;
-      padding: 0.05rem 0.55rem;
-      font-size: 0.75rem;
+    .group {
+      margin: var(--space-5) 0;
     }
-    .phones { display: flex; gap: 0.9rem; flex-wrap: wrap; margin: 0.2rem 0; }
-    .line { margin: 0.15rem 0; color: var(--text-muted); }
-    .meta { color: var(--text-muted); }
-    .empty { color: var(--text-muted); font-style: italic; }
-    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr)); gap: 0.6rem; }
-    .grid label { display: flex; flex-direction: column; gap: 0.25rem; font-size: 0.9rem; }
-    .grid .wide { grid-column: 1 / -1; }
-    .grid .check { flex-direction: row; align-items: center; gap: 0.4rem; }
-    .actions { display: flex; gap: 0.6rem; margin-top: 0.6rem; }
-    .contact-actions { display: flex; gap: 0.6rem; align-items: flex-start; flex-wrap: wrap; }
-    button { min-height: 44px; padding: 0.4rem 0.9rem; cursor: pointer; }
-    .link { background: none; border: none; color: var(--accent, #4f7cff); text-decoration: underline; min-height: auto; padding: 0.2rem; }
-    .link.danger { color: var(--danger, #c62828); }
-    .error { color: var(--danger, #c62828); }
-    .readonly { color: var(--text-muted); }
+    .group-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: var(--space-4);
+      margin-bottom: var(--space-3);
+    }
+    .contact {
+      display: flex;
+      justify-content: space-between;
+      gap: var(--space-4);
+      flex-wrap: wrap;
+      margin-bottom: var(--space-3);
+    }
+    .contact.primary {
+      border-left: 3px solid var(--accent);
+    }
+    .contact-name {
+      display: flex;
+      align-items: center;
+      gap: var(--space-2);
+      flex-wrap: wrap;
+      margin: 0 0 var(--space-1);
+      font-size: var(--text-md);
+    }
+    .phones {
+      display: flex;
+      gap: var(--space-4);
+      flex-wrap: wrap;
+      margin: var(--space-1) 0;
+    }
+    .form-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr));
+      gap: var(--space-3);
+    }
+    .form-grid .wide {
+      grid-column: 1 / -1;
+    }
+    .check {
+      flex-direction: row;
+      align-items: center;
+      gap: var(--space-2);
+      color: var(--text);
+    }
+    .check input {
+      width: auto;
+    }
+    .contact-actions {
+      display: flex;
+      gap: var(--space-3);
+      align-items: flex-start;
+      flex-wrap: wrap;
+    }
+    .readonly {
+      color: var(--text-muted);
+    }
   `,
 })
 export class ContactsPage {
   readonly store = inject(ContactsStore);
+  protected readonly i18n = inject(I18n);
   private readonly session = inject(SessionStore);
 
   readonly kinds: ContactKind[] = ['emergency', 'care'];
@@ -288,11 +334,11 @@ export class ContactsPage {
   }
 
   kindLabel(kind: ContactKind): string {
-    return contactLabel(CONTACT_KIND_LABELS, kind);
+    return contactLabel(CONTACT_KIND_LABELS, kind, this.i18n.language());
   }
 
   roleLabel(role: string): string {
-    return contactLabel(CARE_ROLE_LABELS, role);
+    return contactLabel(CARE_ROLE_LABELS, role, this.i18n.language());
   }
 
   readonly contactSummary = contactSummary;
@@ -357,7 +403,7 @@ export class ContactsPage {
     };
     const errorKey = validateContactDraft(draft);
     if (errorKey) {
-      this.formError.set(VALIDATION_MESSAGES[errorKey] ?? 'Ελέγξτε τα στοιχεία.');
+      this.formError.set(this.validationMessage(errorKey));
       return;
     }
     this.formError.set('');
@@ -377,4 +423,40 @@ export class ContactsPage {
   archive(id: string): void {
     this.store.archive(id).subscribe();
   }
+
+  /** Validation keys are raw codes from `validateContactDraft`. */
+  private validationMessage(errorKey: string): string {
+    const known = ['unknown_kind', 'name_required', 'phone_invalid', 'email_invalid'];
+    return known.includes(errorKey)
+      ? this.i18n.t(`contacts.validation.${errorKey}`)
+      : this.i18n.t('contacts.validation.generic');
+  }
+}
+
+interface ContactForm {
+  name: string;
+  relationship: string;
+  careRole: string;
+  phone: string;
+  altPhone: string;
+  email: string;
+  address: string;
+  notes: string;
+  priority: number;
+  isPrimary: boolean;
+}
+
+function emptyForm(): ContactForm {
+  return {
+    name: '',
+    relationship: '',
+    careRole: 'doctor',
+    phone: '',
+    altPhone: '',
+    email: '',
+    address: '',
+    notes: '',
+    priority: 0,
+    isPrimary: false,
+  };
 }

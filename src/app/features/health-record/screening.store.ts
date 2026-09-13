@@ -10,6 +10,7 @@ import {
   ScreeningType,
   evaluateScreenings,
 } from './screening.rules';
+import { LocalizedMessage } from '../../core/i18n/localized-message';
 
 /**
  * Screening store (FEATURE_PLAN.md §6 subtasks 3–4, 11–12): loads the
@@ -61,7 +62,7 @@ export class ScreeningStore {
   private readonly _profile = signal<ScreeningProfile>({ dateOfBirth: '', sex: '' });
   private readonly _loading = signal(false);
   private readonly _actingType = signal<ScreeningType | null>(null);
-  private readonly _error = signal('');
+  private readonly _error = new LocalizedMessage();
   private readonly _loaded = signal(false);
   /** In-memory audit trail of waive/done/snooze/schedule (subtask 13; feeds Feature 17). */
   private readonly _auditLog = signal<ScreeningAuditEvent[]>([]);
@@ -75,7 +76,9 @@ export class ScreeningStore {
   readonly profile = this._profile.asReadonly();
   readonly loading = this._loading.asReadonly();
   readonly actingType = this._actingType.asReadonly();
-  readonly error = this._error.asReadonly();
+  /** Translatable source of the message (null for server-provided text). */
+  readonly errorSource = this._error.source;
+  readonly error = this._error.value;
   readonly loaded = this._loaded.asReadonly();
   readonly auditLog = this._auditLog.asReadonly();
   readonly readOnly = this._readOnly.asReadonly();
@@ -131,7 +134,7 @@ export class ScreeningStore {
       return of(false);
     }
     if (!reason.trim()) {
-      this._error.set('A reason is required to waive a screening.');
+      this._error.set({ key: 'store.screening.reasonRequired' });
       return of(false);
     }
     const trimmed = reason.trim();
@@ -151,7 +154,7 @@ export class ScreeningStore {
     const record = this._records().find((r) => r.type === type);
     const count = record?.snoozeCount ?? 0;
     if (count >= MAX_SNOOZES) {
-      this._error.set(`This screening can only be snoozed ${MAX_SNOOZES} times.`);
+      this._error.set({ key: 'store.screening.snoozeLimit', params: { max: MAX_SNOOZES } });
       return of(false);
     }
     return this.act(
@@ -174,7 +177,7 @@ export class ScreeningStore {
       return of(false);
     }
     if (!Number.isFinite(atMs)) {
-      this._error.set('Choose a valid date to schedule this screening.');
+      this._error.set({ key: 'store.screening.invalidDate' });
       return of(false);
     }
     return this.act(
@@ -202,7 +205,7 @@ export class ScreeningStore {
     if (!this._readOnly()) {
       return false;
     }
-    this._error.set('This view is read-only for your role.');
+    this._error.set({ key: 'store.readOnly' });
     return true;
   }
 
@@ -222,7 +225,7 @@ export class ScreeningStore {
     auditEvent?: ScreeningAuditEvent
   ): Observable<boolean> {
     this._actingType.set(type);
-    this._error.set('');
+    this._error.clear();
     return this.api
       .post<ScreeningApiRecord>(`/me/screenings/${encodeURIComponent(type)}${path}`, body)
       .pipe(
@@ -240,10 +243,9 @@ export class ScreeningStore {
         }),
         catchError((error) => {
           this._actingType.set(null);
-          this._error.set(
-            (error as { error?: { message?: string } })?.error?.message ??
-              'Could not update the screening. Please try again.'
-          );
+          this._error.setFromServer((error as { error?: { message?: string } })?.error?.message, {
+              key: 'store.screening.updateFailed',
+            });
           return of(false);
         })
       );
@@ -266,10 +268,13 @@ export class ScreeningStore {
       this.raised.add(key);
       this.notifications.notify(
         'screening.due',
-        `${status.rule.label} is due`,
-        status.overdue
-          ? `This preventive check is overdue for your age group — book a visit or mark it done.`
-          : `A preventive check is recommended for your age group.`,
+        {
+          key: 'notify.screeningTitle',
+          // Rule names are dictionary keys, so the check name follows the
+          // language switch with the rest of the sentence.
+          params: { check: { key: `screening.rule.${key}` } },
+        },
+        { key: status.overdue ? 'notify.screeningOverdue' : 'notify.screeningRecommended' },
         '/screenings'
       );
     }

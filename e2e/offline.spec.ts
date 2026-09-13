@@ -166,7 +166,8 @@ test('manifest is valid and the app is installable (§20 subtasks 1 & 3)', async
     .locator('link[rel="manifest"]')
     .getAttribute('href');
   expect(manifestHref).toBe('manifest.webmanifest');
-  await expect(page.locator('meta[name="theme-color"]')).toHaveAttribute('content', '#0f6bb5');
+  // Matches the brand accent token in src/styles.css and the manifest below.
+  await expect(page.locator('meta[name="theme-color"]')).toHaveAttribute('content', '#0d9488');
 
   // The manifest is served and satisfies the installability criteria.
   const res = await page.request.get('/manifest.webmanifest');

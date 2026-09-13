@@ -1,6 +1,7 @@
 import { Component, inject, OnInit, signal, computed, effect } from '@angular/core';
 import { WalletStore, WalletDocument, WalletCategory, WALLET_CATEGORIES } from './wallet.store';
 import { SessionStore } from '../../core/auth/session';
+import { I18n } from '../../core/i18n/i18n.service';
 
 function formatDate(ms: number): string {
   return new Date(ms).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
@@ -54,7 +55,7 @@ function formatSyncAge(ms: number): string {
       </div>
 
       @if (store.error()) {
-        <p class="error" role="alert">{{ store.error() }}</p>
+        <p class="error" role="alert">{{ i18n.message(store.errorSource(), store.error()) }}</p>
       }
 
       <!-- Category tabs -->
@@ -188,6 +189,8 @@ function formatSyncAge(ms: number): string {
   `,
 })
 export class WalletPage implements OnInit {
+  protected readonly i18n = inject(I18n);
+
   readonly store = inject(WalletStore);
   private readonly session = inject(SessionStore);
 

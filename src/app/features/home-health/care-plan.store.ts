@@ -2,6 +2,7 @@ import { Injectable, inject, signal } from '@angular/core';
 import { Observable, map, catchError, of } from 'rxjs';
 import { ApiClient } from '../../core/api/api.client';
 import { SessionStore } from '../../core/auth/session';
+import { LocalizedMessage } from '../../core/i18n/localized-message';
 
 /**
  * Shared care plan (PLAN.md §3.A / §5 Phase 2 — Care plan): a client-level
@@ -48,12 +49,14 @@ export class CarePlanStore {
   private readonly _plan = signal<CarePlan | null>(null);
   private readonly _loading = signal(false);
   private readonly _saving = signal(false);
-  private readonly _error = signal('');
+  private readonly _error = new LocalizedMessage();
 
   readonly plan = this._plan.asReadonly();
   readonly loading = this._loading.asReadonly();
   readonly saving = this._saving.asReadonly();
-  readonly error = this._error.asReadonly();
+  /** Translatable source of the message (null for server-provided text). */
+  readonly errorSource = this._error.source;
+  readonly error = this._error.value;
 
   load(): void {
     this._loading.set(true);
@@ -101,7 +104,7 @@ export class CarePlanStore {
 
   private mutate(request: Observable<CarePlan>): Observable<boolean> {
     this._saving.set(true);
-    this._error.set('');
+    this._error.clear();
     return request.pipe(
       map((plan) => {
         this._plan.set(plan);
@@ -110,10 +113,9 @@ export class CarePlanStore {
       }),
       catchError((error) => {
         this._saving.set(false);
-        this._error.set(
-          (error as { error?: { message?: string } })?.error?.message ??
-            'Could not update the care plan. Please try again.'
-        );
+        this._error.setFromServer((error as { error?: { message?: string } })?.error?.message, {
+            key: 'store.carePlan.saveFailed',
+          });
         return of(false);
       })
     );

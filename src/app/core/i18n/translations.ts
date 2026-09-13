@@ -1,0 +1,1736 @@
+/**
+ * Runtime translation dictionaries (no build step, no locale-prefixed routes).
+ *
+ * Keys are flat, dot-namespaced strings grouped by feature (`nav.*`, `shell.*`,
+ * `common.*`, …). `{placeholders}` are interpolated by `I18n.t()`, and a key
+ * may define `.one` / `.other` variants that are selected automatically when a
+ * numeric `count` param is passed.
+ *
+ * Greek is a first-class locale here — the app targets a Greek care market
+ * (AMKA/AFM, Gov.gr), so `el` must stay in sync with `en`. `en` is the fallback
+ * for any key missing from another dictionary.
+ */
+
+export type Language = 'en' | 'el';
+
+export interface LanguageOption {
+  readonly code: Language;
+  /** Label in the language itself, so the switcher is readable when active. */
+  readonly label: string;
+  /** BCP-47 tag used for `documentElement.lang` and `Intl` formatting. */
+  readonly tag: string;
+}
+
+export const LANGUAGES: readonly LanguageOption[] = [
+  { code: 'en', label: 'English', tag: 'en-US' },
+  { code: 'el', label: 'Ελληνικά', tag: 'el-GR' },
+];
+
+export const DEFAULT_LANGUAGE: Language = 'en';
+
+/**
+ * Keys whose value is intentionally identical in both dictionaries: the brand
+ * name, and pure interpolation (`notify.bookingBody` is "<name> · <when>") with
+ * no prose of its own. Everything else must be genuinely translated.
+ */
+const LOCALE_INVARIANT_KEYS: readonly string[] = ['brand.name', 'notify.bookingBody'];
+/**
+ * Clinical reference ranges: numeric units with no Greek form
+ * (`vitals.range.systolic` → "90–120 mmHg").
+ */
+const LOCALE_INVARIANT_PREFIXES: readonly string[] = ['vitals.range.'];
+
+/** True when a key is allowed to read the same in English and Greek. */
+export function isLocaleInvariantKey(key: string): boolean {
+  return (
+    LOCALE_INVARIANT_KEYS.includes(key) ||
+    LOCALE_INVARIANT_PREFIXES.some((prefix) => key.startsWith(prefix))
+  );
+}
+
+export const TRANSLATIONS: Record<Language, Record<string, string>> = {
+  en: {
+    // --- Brand ---------------------------------------------------------------
+    'brand.name': 'CareMarketplace',
+    'brand.tagline': 'Care & health, in one place',
+
+    // --- Navigation ----------------------------------------------------------
+    'nav.mainNavigation': 'Main navigation',
+    'nav.openMenu': 'Open navigation',
+    'nav.closeMenu': 'Close navigation',
+    'nav.youAreHere': 'You are here',
+
+    'nav.group.care': 'Care',
+    'nav.group.health': 'Health',
+    'nav.group.finance': 'Finance',
+    'nav.group.account': 'Account',
+    'nav.group.admin': 'Administration',
+
+    'nav.marketplace': 'Marketplace',
+    'nav.bookings': 'Bookings',
+    'nav.liveVisit': 'Live visit',
+    'nav.onboarding': 'Onboarding',
+    'nav.shifts': 'Shifts',
+    'nav.visits': 'Visits',
+    'nav.clinicalLog': 'Clinical log',
+    'nav.carePlan': 'Care plan',
+    'nav.vitals': 'Vitals',
+    'nav.payments': 'Payments',
+    'nav.disputes': 'Disputes',
+    'nav.healthRecord': 'Health record',
+    'nav.screenings': 'Preventive care',
+    'nav.medications': 'Medications',
+    'nav.consents': 'Consents',
+    'nav.prescriptions': 'Prescriptions',
+    'nav.pharmacyOrders': 'Pharmacy orders',
+    'nav.pharmacy': 'Pharmacy',
+    'nav.chat': 'Chat',
+    'nav.admin': 'Admin',
+    'nav.profile': 'Profile',
+
+    // --- Account / shell controls -------------------------------------------
+    'account.logIn': 'Log in',
+    'account.logOut': 'Log out',
+    'account.switchToDark': 'Switch to dark mode',
+    'account.switchToLight': 'Switch to light mode',
+    'account.language': 'Language',
+    'account.languageEn': 'English',
+    'account.languageEl': 'Greek',
+
+    // --- Notifications -------------------------------------------------------
+    'notifications.title': 'Notifications',
+    'notifications.unread': 'Notifications, {count} unread',
+    'notifications.none': 'Notifications',
+    'notifications.markAllRead': 'Mark all read',
+    'notifications.mutes': 'Mutes',
+    'notifications.mutesHint': "Muted kinds won't appear in the panel, toasts or push.",
+    'notifications.browserPush': 'Browser push notifications',
+    'notifications.loading': 'Loading…',
+    'notifications.allCaughtUp': "You're all caught up 🎉",
+    'notifications.loadMore': 'Load more',
+    'notifications.retry': 'Retry',
+    'notifications.close': 'Close notifications',
+    'notifications.today': 'Today',
+    'notifications.yesterday': 'Yesterday',
+
+    // --- Connection / sync ---------------------------------------------------
+    'offline.title': "You're offline",
+    'offline.body':
+      'Actions you take are queued and will sync automatically when you are back online.',
+    'offline.pending.one': '{count} action waiting to sync',
+    'offline.pending.other': '{count} actions waiting to sync',
+    'offline.failed': '{count} failed',
+    'offline.retryNow': 'Retry now',
+
+    'update.available': 'A new version is available.',
+    'update.reload': 'Reload',
+
+    // --- Demo backend banner -------------------------------------------------
+    'demo.badge': 'Demo mode',
+    'demo.body':
+      'API calls are answered by an in-memory demo backend — nothing is saved to the server.',
+
+    // --- Consents page -------------------------------------------------------
+    'consents.title': 'Consent settings',
+    'consents.intro':
+      'These settings control how your health data is shared. You can withdraw any consent at any time. Withdrawing does not delete data already processed.',
+    'consents.reConsentTitle': 'Action required: new consent terms',
+    'consents.reConsentBody':
+      'The terms for the following purpose(s) have been updated and require your renewed consent:',
+    'consents.reviewDocument': 'Review the updated document (v{version})',
+    'consents.reConsentNow': 'Re-consent now',
+    'consents.active': 'Active',
+    'consents.notGranted': 'Not granted',
+    'consents.effective': 'Effective:',
+    'consents.notYetSet': 'Not yet set',
+    'consents.withdraw': 'Withdraw',
+    'consents.grant': 'Grant',
+    'consents.status.withdrawn': '{purpose} withdrawn.',
+    'consents.status.granted': '{purpose} granted.',
+    'consents.status.failed': 'Could not update {purpose}. Please try again.',
+    'consents.status.reConfirmed': 'All updated consents have been re-confirmed.',
+
+    // --- Vitals page ---------------------------------------------------------
+    'vitals.title': 'Vitals',
+    'vitals.subtitle': 'Log readings and watch your trends over time.',
+    'vitals.alerts': 'Threshold alerts',
+    'vitals.alertText': '⚠️ {label} {value} — outside the normal range ({range}).',
+    'vitals.logReading': 'Log a reading',
+    'vitals.type': 'Type',
+    'vitals.valueIn': 'Value in {unit}',
+    'vitals.diastolic': 'Diastolic (mmHg)',
+    'vitals.saveReading': 'Save reading',
+    'vitals.trends': 'Trends',
+    'vitals.latest': 'Latest: {value} · {date}',
+    'vitals.range.bloodPressure': '90–140/60–90 mmHg',
+    'vitals.range.glucose': '70–180 mg/dL',
+    'vitals.range.spo2': '≥95%',
+    'vitals.range.weight': '—',
+    'vitals.range.temperature': '36–37.8 °C',
+    'vitals.range.heartRate': '60–100 bpm',
+
+    // --- Preventive care (screenings) ----------------------------------------
+    'screening.title': 'Preventive care',
+    'screening.disclaimerLead':
+      'These reminders follow general preventive-care guidelines based on age and sex. They are ',
+    'screening.disclaimerStrong': 'not medical advice',
+    'screening.disclaimerRest':
+      ' — always follow the recommendation of your treating physician.',
+    'screening.readOnly': 'You are viewing this record read-only (family access).',
+    'screening.tablist': 'Screening views',
+    'screening.tabDue': 'Due ({count})',
+    'screening.tabUpcoming': 'Upcoming ({count})',
+    'screening.tabHistory': 'History ({count})',
+    'screening.nothingDue': 'Nothing is due right now. 🎉',
+    'screening.noUpcoming':
+      'No upcoming screenings yet — they appear here once you complete one.',
+    'screening.noHistory': 'No completed or waived screenings yet.',
+    'screening.overdue': 'overdue',
+    'screening.recommendedEvery': 'Recommended every {count} months',
+    'screening.nextDue': 'Next due {date} · every {count} months',
+    'screening.waivedOn': 'Waived {date}',
+    'screening.completedOn': 'Completed {date}',
+    'screening.bookVisit': 'Book visit',
+    'screening.markDone': 'Mark done',
+    'screening.schedule': 'Schedule',
+    'screening.scheduleDate': 'Schedule date',
+    'screening.snooze': 'Snooze 30d',
+    'screening.reason': 'Reason',
+    'screening.reasonForWaiving': 'Reason for waiving',
+    'screening.waive': 'Waive',
+    'screening.waiveEllipsis': 'Waive…',
+    // Rule names, keyed by ScreeningType.
+    'screening.rule.mammography': 'Mammography',
+    'screening.rule.cardioCheck': 'Cardiovascular check',
+    'screening.rule.cervicalSmear': 'Cervical screening',
+    'screening.rule.colorectalScreening': 'Colorectal screening (FIT test)',
+    'screening.rule.fluVaccine': 'Seasonal flu vaccination',
+    'screening.rule.boneDensity': 'Bone density scan',
+
+    // --- Contacts & phone numbers --------------------------------------------
+    'contacts.title': 'Contacts & phone numbers',
+    'contacts.subtitle':
+      'Emergency (ICE) contacts appear on the health summary and in the FHIR export. The care team keeps the numbers of doctors, pharmacies and caregivers.',
+    'contacts.readOnly': 'Read-only — you do not have permission to edit.',
+    'contacts.add': '+ Add',
+    'contacts.nameLabel': 'Name *',
+    'contacts.relationshipHint': 'Relationship (e.g. daughter, spouse)',
+    'contacts.roleLabel': 'Role',
+    'contacts.phoneLabel': 'Phone *',
+    'contacts.altPhoneLabel': 'Second phone',
+    'contacts.emailLabel': 'Email',
+    'contacts.addressLabel': 'Address',
+    'contacts.priorityLabel': 'Priority',
+    'contacts.primaryLabel': 'Primary contact',
+    'contacts.notesLabel': 'Notes',
+    'contacts.primaryBadge': 'Primary',
+    'contacts.setPrimary': 'Set as primary',
+    'contacts.edit': 'Edit',
+    'contacts.archive': 'Archive',
+    'contacts.emptyEmergency':
+      'You have not added an emergency contact yet. Add at least one.',
+    'contacts.emptyCare': 'You have not added a care-team contact yet.',
+    'contacts.footerLead': 'Your personal phone number lives in your ',
+    'contacts.footerProfile': 'profile',
+    'contacts.footerMid': '. The numbers are also used for SMS/voice notifications in ',
+    'contacts.footerReminders': 'reminders',
+    'contacts.validation.unknown_kind': 'Unknown contact category.',
+    'contacts.validation.name_required': 'Name is required.',
+    'contacts.validation.phone_invalid': 'Phone must have at least 6 digits.',
+    'contacts.validation.email_invalid': 'Email is not valid.',
+    'contacts.validation.generic': 'Check the details.',
+
+    // --- Medications ---------------------------------------------------------
+    'medications.title': 'Medications',
+    'medications.subtitle': "Today's doses, adherence and refills.",
+    'medications.missedAlert.one': '{count} medication with a missed dose today:',
+    'medications.missedAlert.other': '{count} medications with a missed dose today:',
+    'medications.refillNeeded': '💊 Refill needed soon:',
+    'medications.todaySchedule': "Today's schedule",
+    'medications.none': 'No active medications. Add them with your care team.',
+    'medications.critical': 'critical',
+    'medications.slot.taken': '✓ taken',
+    'medications.slot.skipped': '⊘ skipped',
+    'medications.slot.missed': '✗ missed (grace {minutes} min passed)',
+    'medications.slot.pending': '○ due',
+    'medications.taken': '✓ Taken',
+    'medications.skip': 'Skip',
+    'medications.loggedBy': 'Logged by {name}',
+    'medications.adherence7': '7-day adherence',
+    'medications.days30': '30-day',
+    'medications.adherenceAriaLabel':
+      '7-day adherence {pct} percent, {taken} of {scheduled} doses taken',
+    'medications.checkInteractions': 'Check interactions',
+    'medications.archive': 'Archive {name}',
+    'medications.adherenceOverview': 'Adherence overview',
+    'medications.overall7': 'Overall (7 days):',
+    'medications.overall30': 'Overall (30 days):',
+    'medications.ofScheduled': 'of scheduled doses taken',
+    'medications.addMedication': 'Add a medication',
+    'medications.name': 'Name',
+    'medications.dose': 'Dose',
+    'medications.dosePlaceholder': 'e.g. 10 mg',
+    'medications.dailyTime': 'Daily time',
+    'medications.criticalMedication': 'Critical medication',
+    'medications.addButton': 'Add medication',
+    'medications.refillOverdue': '{name} (overdue)',
+    'medications.refillDays': '{name} ({days}d left)',
+    'medications.status.markedTaken': '{name} at {time} marked taken.',
+    'medications.status.markedSkipped': '{name} at {time} marked skipped.',
+    'medications.status.logFailed': 'Could not update {name}.',
+    'medications.status.addInvalid':
+      'Enter a name, a dose and a daily time (HH:MM) to add a medication.',
+    'medications.status.added': "{name} added to today's schedule.",
+    'medications.status.addFailed': 'Could not add {name}.',
+    'medications.status.archived': '{name} archived. History is preserved.',
+    'medications.status.archiveFailed': 'Could not archive {name}.',
+
+    // --- Medical history register --------------------------------------------
+    'history.title': 'Medical history',
+    'history.disclaimerLead':
+      'Record diagnoses, allergies, immunizations, medical events, symptoms and prescriptions. Your history is a ',
+    'history.disclaimerStrong': 'personal record',
+    'history.disclaimerRest':
+      ' — it is shared only when you allow it. ICD-11 codes are an indicative subset, not medical advice.',
+    'history.readOnlyRecipientLead': 'Viewing the record of ',
+    'history.readOnlyRecipientRest': ' — family access, read-only.',
+    'history.readOnly': 'Read-only (family access).',
+    'history.categories': 'History categories',
+    'history.timelineFilters': 'Timeline filters',
+    'history.filterAll': 'All',
+    'history.closeForm': 'Close form',
+    'history.timeline': 'Timeline',
+    'history.timelineEmpty': 'The timeline fills up as you add your first records.',
+    'history.notes': 'Notes',
+    'history.archive': 'Archive',
+    'history.conditions.name': 'Name',
+    'history.conditions.icd11': 'ICD-11 code (search in Greek)',
+    'history.conditions.icd11Placeholder': 'e.g. BA00 or “diabetes”',
+    'history.conditions.status': 'Status',
+    'history.conditions.diagnosed': 'Diagnosis date',
+    'history.conditions.addBtn': '+ Add a condition',
+    'history.conditions.empty': 'No recorded conditions.',
+    'history.conditions.resolved': 'Resolved',
+    'history.allergies.substance': 'Allergen',
+    'history.allergies.kind': 'Type',
+    'history.allergies.severity': 'Severity',
+    'history.allergies.reaction': 'Reaction',
+    'history.allergies.confirmed': 'Confirmation date',
+    'history.allergies.addBtn': '+ Add an allergy',
+    'history.allergies.empty': 'No recorded allergies.',
+    'history.immunizations.vaccine': 'Vaccine',
+    'history.immunizations.dose': 'Dose',
+    'history.immunizations.administered': 'Administration date',
+    'history.immunizations.addBtn': '+ Add a vaccination',
+    'history.immunizations.empty': 'No recorded vaccinations.',
+    'history.immunizations.doseNumber': 'Dose {count}',
+    'history.immunizations.fromWallet': 'from Gov.gr Wallet',
+    'history.events.kind': 'Type',
+    'history.events.description': 'Description',
+    'history.events.facility': 'Provider / hospital',
+    'history.events.date': 'Date',
+    'history.events.addBtn': '+ Add an event',
+    'history.events.empty': 'No recorded medical events.',
+    'history.symptoms.name': 'Symptom',
+    'history.symptoms.severity': 'Severity',
+    'history.symptoms.onset': 'Onset',
+    'history.symptoms.addBtn': '+ Add a symptom',
+    'history.symptoms.empty': 'No recorded symptoms.',
+    'history.symptoms.resolved': 'Resolved',
+    'history.prescriptions.drug': 'Drug',
+    'history.prescriptions.dose': 'Dose',
+    'history.prescriptions.dosePlaceholder': 'e.g. 500mg ×2',
+    'history.prescriptions.instructions': 'Instructions',
+    'history.prescriptions.instructionsPlaceholder': 'e.g. morning and evening',
+    'history.prescriptions.prescriber': 'Prescriber',
+    'history.prescriptions.issued': 'Issue date',
+    'history.prescriptions.duration': 'Duration (days)',
+    'history.prescriptions.addBtn': '+ Add a prescription',
+    'history.prescriptions.empty': 'No recorded prescriptions.',
+    'history.prescriptions.complete': 'Completed',
+    'history.prescriptions.toMedications': '+ To medications',
+    'history.prescriptions.reminderFromRx': '+ Reminder from prescription',
+    'history.prescriptions.inMedications': '✓ in the medication schedule',
+    'history.prescriptions.linkScanned': 'Link to a scanned prescription',
+    'history.prescriptions.scannedLabel': 'Scanned prescription',
+    'history.prescriptions.linkPlaceholder': 'Link to a scanned prescription…',
+    'history.prescriptions.link': 'Link',
+
+    // --- Medicine instructions sheet (health-record batch 2) -----------------
+    'medicine.toggle': '💊 How to take {name}',
+    'medicine.catalogAvailable':
+      'Catalog suggestion available ({name}). This is general information, not medical advice — check with your doctor or pharmacist.',
+    'medicine.replaceWithCatalog': 'Replace my sheet with the catalog suggestion',
+    'medicine.keepEdits': 'Keep my edits',
+    'medicine.autofill': 'Auto-fill from catalog',
+    'medicine.legend': 'Instructions for {name}',
+    'medicine.doseForm': 'Dose form',
+    'medicine.doseFormPlaceholder': 'e.g. Tablet / Σιρόπι',
+    'medicine.route': 'Route',
+    'medicine.food': 'Food',
+    'medicine.maxDaily': 'Max doses per day',
+    'medicine.maxDailySummary': 'up to {count}/day',
+    'medicine.warnings': 'Warnings (one per line)',
+    'medicine.warningsAria': 'Warnings',
+    'medicine.sideEffects': 'Possible side effects',
+    'medicine.storage': 'Storage',
+    'medicine.special': 'Special instructions',
+    'medicine.save': 'Save instructions',
+    'medicine.clear': 'Clear sheet',
+    'medicine.suggested': 'suggested: {summary}',
+    'medicine.status.noCatalog': 'No catalog entry for this medicine.',
+    'medicine.status.willReplace':
+      'Your current sheet will be replaced. Confirm to load the catalog suggestion.',
+    'medicine.status.loaded': 'Catalog suggestion loaded — review and save.',
+    'medicine.status.kept': 'Kept your edits.',
+    'medicine.status.saved': 'Instructions saved.',
+    'medicine.status.saveFailed': 'Could not save the instructions.',
+    'medicine.status.cleared': 'Sheet cleared.',
+    'medicine.status.clearFailed': 'Could not clear the sheet.',
+
+    // --- Reminders (health-record batch 2) -----------------------------------
+    'reminders.title': 'Reminder settings',
+    'reminders.channelsFor': 'Reminder channels for {name}',
+    'reminders.channel.inapp': 'In-app inbox',
+    'reminders.channel.push': 'Browser push',
+    'reminders.channel.sms': 'SMS (server-side)',
+    'reminders.channel.voice': 'Voice call (server-side)',
+    'reminders.channelHelp.inapp': 'Always available. Appears in the notification center.',
+    'reminders.channelHelp.push':
+      'Needs browser permission. Works when the tab is closed (PWA).',
+    'reminders.channelHelp.sms': 'Needs a phone number and SMS consent below.',
+    'reminders.channelHelp.voice': 'Needs a phone number and voice-call consent below.',
+    'reminders.sendTest': 'Send test reminder now',
+    'reminders.sendTestFor': 'Send test reminder now for {name}',
+    'reminders.quietHours': 'Quiet hours',
+    'reminders.quietHelp':
+      'Non-critical reminders pause between these hours. Critical medication reminders always come through. Times are in your timezone below. Currently: {summary}.',
+    'reminders.quietEnable': 'Enable quiet hours',
+    'reminders.quietOff': 'off',
+    'reminders.startsAt': 'Starts at',
+    'reminders.endsAt': 'Ends at',
+    'reminders.timezone': 'Timezone',
+    'reminders.timezoneHelp':
+      'IANA name, e.g. Europe/Athens. Dose times render in this zone.',
+    'reminders.timezoneUnknown':
+      'Unknown timezone "{value}". Use an IANA name like Europe/Athens.',
+    'reminders.smsVoice': 'SMS & voice calls',
+    'reminders.telephonyHelp':
+      'SMS and voice reminders are sent server-side (stub in demo mode). Status: SMS {sms}, voice {voice}. Both need a phone number and your consent.',
+    'reminders.telephony.pending': 'pending',
+    'reminders.telephony.configured': 'configured',
+    'reminders.phone': 'Phone number',
+    'reminders.consentSms': 'I consent to SMS medication reminders',
+    'reminders.consentVoice': 'I consent to voice-call medication reminders',
+    'reminders.consentHelp':
+      'Consent is recorded with a timestamp and can be withdrawn here at any time (GDPR; feeds the consent ledger). Withdrawing stops new reminders but keeps the history log.',
+    'reminders.familyCopy': 'Family copy',
+    'reminders.caregiverCopy': 'Also send critical reminders to my caregiver',
+    'reminders.caregiverHelp':
+      'Opt-in per relationship: your caregiver gets a duplicate inbox copy of critical-medication reminders.',
+    'reminders.relationship': 'Relationship',
+    'reminders.relationshipPlaceholder': 'e.g. daughter, nurse',
+    'reminders.enablePush': 'Enable browser push',
+    'reminders.pushState': 'Current state: {state}.',
+    'reminders.push.enabled': 'push enabled',
+    'reminders.push.blocked': 'push blocked in the browser',
+    'reminders.push.unsupported': 'push not supported here',
+    'reminders.push.disabled': 'push not enabled',
+    'reminders.history': 'Reminder history',
+    'reminders.historyEmpty':
+      'No reminders sent yet. Use “Send test reminder now” on a medication.',
+    'reminders.historyAria': 'Reminder delivery attempts',
+    'reminders.historyVia': 'via {channel} — {status}',
+
+    // --- Prescription reminder wizard (health-record batch 2) ----------------
+    'rx.title': 'Reminder for {drug}',
+    'rx.confidence.parsed': 'from the prescription',
+    'rx.confidence.defaulted': 'default — please check',
+    'rx.prnNote':
+      'This prescription is “as needed” (PRN/SOS). No fixed schedule is created unless you set times below.',
+    'rx.scheduleLegend': 'Dose schedule',
+    'rx.kind.daily': 'Daily',
+    'rx.kind.interval': 'Every N days',
+    'rx.kind.weekly': 'Weekly',
+    'rx.time': 'Time',
+    'rx.timeN': 'Time {n}',
+    'rx.newTime': 'New time',
+    'rx.addTime': '+ Add time',
+    'rx.addOneTime': 'Add at least one time.',
+    'rx.remove': 'Remove',
+    'rx.everyDays': 'Every how many days',
+    'rx.weekdays': 'Days',
+    'rx.weekday.0': 'Sun',
+    'rx.weekday.1': 'Mon',
+    'rx.weekday.2': 'Tue',
+    'rx.weekday.3': 'Wed',
+    'rx.weekday.4': 'Thu',
+    'rx.weekday.5': 'Fri',
+    'rx.weekday.6': 'Sat',
+    'rx.channelsLegend': 'Reminder channels',
+    'rx.instructions': 'How to take: {summary}',
+    'rx.smsVoiceHint':
+      'SMS/voice reminders need a phone number and consent in the reminder settings.',
+    'rx.confirm': 'Create medication & reminder',
+    'rx.success': '{drug} was added to your medications with a schedule.',
+    'rx.error.noTime': 'Set at least one dose time.',
+    'rx.error.failed': 'Could not create the reminder.',
+
+    // --- Chat (care/visits batch) --------------------------------------------
+    'chat.title': 'Chat',
+    'chat.subtitle': 'Talk to your caregivers in one place',
+    'chat.conversations': 'Conversations',
+    'chat.empty':
+      'No conversations yet. Find a caregiver in the marketplace and tap “Message”.',
+    'chat.selectPrompt': 'Select a conversation to start chatting.',
+    'chat.placeholder': 'Type a message…',
+    'chat.messageLabel': 'Message',
+    'chat.send': 'Send',
+    'chat.unread': '{count} unread messages',
+    'chat.notDelivered': 'not delivered',
+    'chat.sending': 'sending…',
+
+    // --- Reviews (care/visits batch) -----------------------------------------
+    'review.title': 'Rate your visit',
+    'review.subtitle': 'Your feedback helps other families choose with confidence',
+    'review.empty':
+      'Nothing to review yet. You can rate a visit once its booking is completed, and each visit can be rated once.',
+    'review.visit': 'Visit',
+    'review.yourRating': 'Your rating',
+    'review.star': 'star',
+    'review.stars': 'stars',
+    'review.ratingError': 'Choose a rating between 1 and 5 stars.',
+    'review.comment': 'Comment (optional)',
+    'review.commentError': 'Keep your comment under {max} characters.',
+    'review.submit': 'Submit review',
+    'review.thanks': 'Thank you — your review is published.',
+
+    // --- Bookings (care/visits batch) ----------------------------------------
+    'booking.title': 'Booking request',
+    'booking.subtitle': 'Request a visit and track it from request to completion',
+    'booking.dateTime': 'Date & time',
+    'booking.note': 'Note',
+    'booking.send': 'Send request',
+    'booking.pushTitle': 'Never miss a booking update.',
+    'booking.pushBody':
+      'Allow push notifications so you hear about acceptances, reminders and alerts even when the app is closed.',
+    'booking.enableNotifications': 'Enable notifications',
+    'booking.notNow': 'Not now',
+    'booking.yourBookings': 'Your bookings',
+    'booking.empty': 'No bookings yet. Request one from the marketplace.',
+    'booking.accept': 'Accept',
+    'booking.start': 'Start visit',
+    'booking.complete': 'Complete (releases escrow)',
+    'booking.cancel': 'Cancel',
+    'booking.reschedule': 'Propose new time',
+    'booking.dispute': 'Open dispute',
+    'booking.rateVisit': 'Rate this visit',
+    'booking.freeCancel': 'Free cancellation ({hours}h+ before start) — full refund.',
+    'booking.lateCancel': 'Late cancellation — fee {fee}€, refund {refund}€.',
+    'booking.proposedAt': 'New time proposed: {when} — awaiting {role} confirmation.',
+    'booking.roleProvider': 'provider',
+    'booking.roleClient': 'client',
+    'booking.confirmNewTime': 'Confirm new time',
+    'booking.rescheduled': 'Rescheduled to {when} — agreed by both parties.',
+    'booking.history': 'History',
+    'booking.liveStatus': '{total} bookings shown, {completed} completed.',
+    // Server-driven machine tokens. English keeps the raw token so the specs,
+    // the export and the URL contract stay stable; Greek gets a real label.
+    'booking.status.requested': 'requested',
+    'booking.status.accepted': 'accepted',
+    'booking.status.in_progress': 'in_progress',
+    'booking.status.completed': 'completed',
+    'booking.status.cancelled': 'cancelled',
+    'booking.status.disputed': 'disputed',
+    'booking.event.created': 'created',
+    'booking.event.accepted': 'accepted',
+    'booking.event.started': 'started',
+    'booking.event.completed': 'completed',
+    'booking.event.cancelled': 'cancelled',
+    'booking.event.rescheduled': 'rescheduled',
+    'booking.event.disputed': 'disputed',
+
+    // --- Marketplace (care/visits batch) -------------------------------------
+    'market.title': 'Marketplace',
+    'market.subtitle': 'Find and book trusted care near you',
+    'market.searchPlaceholder': 'Search caregivers…',
+    'market.searchLabel': 'Search caregivers',
+    'market.availableNow': 'Available now',
+    'market.sortBy': 'Sort by',
+    'market.sort.relevance': 'Best match',
+    'market.sort.distance': 'Distance',
+    'market.sort.rating': 'Rating',
+    'market.sort.price': 'Price (low → high)',
+    'market.maxRate': 'Max €/h',
+    'market.maxRateLabel': 'Maximum hourly rate in euros',
+    'market.budgetPlaceholder': 'Budget',
+    'market.useLocation': 'Use my location',
+    'market.usingLocation': '📍 Using my location',
+    'market.minRating': 'Min rating',
+    'market.any': 'Any',
+    'market.favoritesOnly': 'Favorites only',
+    'market.search': 'Search',
+    'market.reset': 'Reset',
+    'market.searchName': 'Search name',
+    'market.newName': 'New name',
+    'market.saveName': 'Save name',
+    'market.saveSearch': 'Save search',
+    'market.saveSearchTitle': 'Sign in as a family to save searches',
+    'market.savedSearches': 'Saved searches',
+    'market.loadingSaved': 'Loading saved searches…',
+    'market.savedEmpty':
+      'No saved searches yet — set some filters and click “Save search”.',
+    'market.rename': 'rename',
+    'market.delete': 'delete',
+    'market.favoritesAvailable.one': '{count} favorite available now: {names}',
+    'market.favoritesAvailable.other': '{count} favorites available now: {names}',
+    'market.searching': 'Searching…',
+    'market.noFavoritesMatch':
+      'No favorites match the current filters. Remove the “Favorites only” filter or add caregivers to your favorites with the ♡ button.',
+    'market.noMatch': 'No caregivers match the current filters.',
+    'market.addFavorite': 'Add {name} to favorites',
+    'market.removeFavorite': 'Remove {name} from favorites',
+    'market.favoriteTitle': 'Sign in as a family to save favorites',
+    'market.ratedAria': 'Rated {rating} out of 5 from {count} reviews',
+    'market.reviewsCount.one': '1 review',
+    'market.reviewsCount.other': '{count} reviews',
+    'market.availableNowChip': 'available now',
+    'market.why': 'why these results?',
+    'market.scoreBreakdown': 'Score breakdown',
+    'market.breakdown.rating': 'Rating ★: {pct}',
+    'market.breakdown.availableNow': 'Available now: {pct}',
+    'market.breakdown.distance': 'Distance band: {pct}',
+    'market.breakdown.price': 'Price fit: {pct}',
+    'market.breakdown.speciality': 'Speciality match: {pct}',
+    'market.breakdown.history': 'Completed visits: {pct}',
+    'market.breakdown.cancellations': 'Recent cancellations: −{pct}',
+    'market.requestBooking': 'Request booking',
+    'market.message': 'Message',
+    'market.hideReviews': 'Hide reviews',
+    'market.reviews.one': 'Reviews (1)',
+    'market.reviews.other': 'Reviews ({count})',
+    'market.loadingReviews': 'Loading reviews…',
+    'market.noReviews': 'No reviews yet.',
+    'market.visit': 'visit {id}',
+    'market.report': 'Report',
+    'market.role.client': 'Family',
+    'market.role.caregiver': 'Caregiver',
+    'market.role.nurse': 'Nurse',
+    'market.role.physio': 'Physiotherapist',
+    'market.role.pharmacy': 'Pharmacy',
+    'market.role.admin': 'Admin',
+
+    // --- Store-generated messages (care/visits stores) -----------------------
+    // English text here is the *reference* rendering of a message a store or a
+    // pure helper authors; the store holds only the key. Wording is kept
+    // identical to the previous hard-coded strings so behaviour is unchanged.
+    'market.error.searchUnavailable':
+      'Search is unavailable right now. Please try again later.',
+    'market.error.savedLoadFailed':
+      'Could not load your saved searches. Please try again.',
+    'market.error.savedSaveFailed': 'Could not save the search. Please try again.',
+    'market.error.savedRenameFailed':
+      'Could not rename the search. Please try again.',
+    'market.error.savedDeleteFailed':
+      'Could not delete the search. Please try again.',
+    'market.error.favoriteFailed':
+      'Could not update favorites. Please try again.',
+
+    'chat.error.notConnected':
+      'Not connected — message will not reach the caregiver yet.',
+    'chat.error.noConversationAttachment':
+      'Open a conversation before attaching a file.',
+    'chat.error.noConversationContext':
+      'Open a conversation before sharing context.',
+    'chat.error.reselectAttachment':
+      'Re-select the attachment to retry sending.',
+    'chat.error.invalidFile': 'Invalid file.',
+    'chat.error.unsupportedType':
+      'Unsupported file type. Allowed: images, PDF, and voice notes.',
+    'chat.error.fileTooLarge': 'File is larger than the 10 MB limit.',
+    'chat.error.uploadNoUrl': 'Upload did not return a URL.',
+    'chat.error.uploadFailed': 'Upload failed. Tap to retry.',
+
+    'review.error.selectVisit': 'Select the visit you want to review.',
+    'review.error.bookingMissing': 'This booking does not exist.',
+    'review.error.notCompleted':
+      'You can rate this visit once it is completed.',
+    'review.error.alreadyRated': 'You already rated this visit.',
+    'review.error.selfReview': 'Caregivers cannot review themselves.',
+    'review.error.loadFailed':
+      'Could not load the reviews. Please try again.',
+    'review.error.submitFailed':
+      'Could not submit the review. Please try again.',
+    'review.error.updateFailed':
+      'Could not update the review. Please try again.',
+
+    'booking.error.loadFailed':
+      'Could not load your bookings. Please try again.',
+    'booking.error.dateRequired': 'Set a date and time before sending.',
+    'booking.error.sendFailed':
+      'Could not send the request. Please try again.',
+    'booking.error.onlyProviderAccepts':
+      'Only the provider can accept this booking.',
+    'booking.error.notInvolvedParty':
+      'Only the client or provider of this booking can cancel it.',
+    'booking.error.notFound': 'Booking not found.',
+    'booking.error.rescheduleNotAllowed':
+      'This booking can no longer be rescheduled.',
+    'booking.error.stale':
+      'Someone else updated this booking. Refreshing…',
+    'booking.error.rescheduleFailed':
+      'Could not reschedule. Please try again.',
+    'booking.error.noProposal':
+      'There is no reschedule proposal to confirm.',
+    'booking.error.confirmFailed': 'Could not confirm. Please try again.',
+    'booking.error.invalidTransition':
+      'Cannot move this booking from "{from}" to "{to}".',
+    'booking.error.updateFailed':
+      'Could not update the booking. Please try again.',
+
+    // --- Notification copy (app-authored) ------------------------------------
+    'notifications.error.loadFailed':
+      'Could not load notifications. Please try again.',
+    'notify.bookingCancelled': 'Booking cancelled',
+    'notify.cancelledFree':
+      'Cancelled inside the free window — full refund on its way.',
+    'notify.cancelledLate': 'Cancelled late — a {fee}€ fee applies.',
+    'notify.rescheduleProposed': 'Reschedule proposed',
+    'notify.newTime': 'New time: {when}',
+    'notify.rescheduleConfirmed': 'Reschedule confirmed',
+    'notify.agreedTime': 'Agreed time: {when}',
+    'notify.status.requested': 'Booking requested',
+    'notify.status.accepted': 'Booking accepted',
+    'notify.status.inProgress': 'Visit started',
+    'notify.status.completed': 'Visit completed',
+    'notify.bookingUpdated': 'Booking updated',
+    'notify.bookingBody': '{name} · {when}',
+    'notify.escrowReleased': 'Visit completed — escrow released.',
+    'notify.vitalsTitle': '{vital} outside reference range',
+    'notify.vitalsBody':
+      'Latest reading is outside the expected range — check the trends view.',
+    'notify.screeningTitle': '{check} is due',
+    'notify.screeningOverdue':
+      'This preventive check is overdue for your age group — book a visit or mark it done.',
+    'notify.screeningRecommended':
+      'A preventive check is recommended for your age group.',
+    'notify.disputeOpened': 'Dispute opened',
+    'notify.disputeOpenedBody':
+      'A dispute has been opened for booking {booking}.',
+    'notify.disputeResolvedClient': 'Dispute resolved in your favour',
+    'notify.disputeResolvedProvider':
+      'Dispute resolved in favour of the provider',
+    'notify.partialRefund': 'Partial refund of {amount}€ processed.',
+    'notify.fullRefund': 'Full refund processed.',
+    'notify.escrowReleasedProvider': 'Escrow released to the provider.',
+    'notify.disputeRejected': 'Dispute rejected',
+    'notify.disputeRejectedBody':
+      'The dispute was rejected — escrow released.',
+    'notify.testReminderTitle': 'Test reminder: {name}',
+    'notify.testReminderBody':
+      '{preview}. This is how your reminder will look.',
+    'notify.testReminderToast': 'Test reminder sent for {name}',
+    'notify.caregiverCopyTitle': 'Caregiver copy: {name}',
+    'notify.caregiverCopyBody':
+      'Duplicate reminder for {relationship}: time for {dose}.',
+    'notify.caregiverCopyBodyPlain': 'Duplicate reminder: time for {dose}.',
+    'notify.reminderTitle': 'Reminder: {name}',
+    'notify.reminderBody': 'Time for {dose} ({preview}).',
+
+    // --- Shared vocabulary (used by page batches) ----------------------------
+    'common.loading': 'Loading…',
+    'common.retry': 'Retry',
+    'common.save': 'Save',
+    'common.cancel': 'Cancel',
+    'common.close': 'Close',
+    'common.confirm': 'Confirm',
+    'common.delete': 'Delete',
+    'common.edit': 'Edit',
+    'common.add': 'Add',
+    'common.search': 'Search',
+    'common.filters': 'Filters',
+    'common.clear': 'Clear',
+    'common.back': 'Back',
+    'common.next': 'Next',
+    'common.submit': 'Submit',
+    'common.required': 'Required',
+    'common.optional': 'Optional',
+    'common.yes': 'Yes',
+    'common.no': 'No',
+    'common.all': 'All',
+    'common.none': 'None',
+    'common.empty': 'Nothing here yet',
+    'common.error': 'Something went wrong',
+    'common.saved': 'Saved',
+    'common.saving': 'Saving…',
+    'common.sending': 'Sending…',
+
+    // --- Store-authored messages ---------------------------------------------
+    // Fallbacks a store raises when a request fails with no server message.
+    // A store cannot inject I18n, so it holds the key and the page resolves it
+    // per locale; the English rendering below is the reference locale's text.
+    'store.readOnly': 'This view is read-only for your role.',
+
+    'store.orders.notFound': 'Order not found. Refresh the list and try again.',
+    'store.orders.invalidTransition': 'Cannot move an order from {from} to {to}.',
+    'store.orders.updateFailed': 'Could not update the order. Please try again.',
+    'store.orders.onlyDeliveredToMeds': 'Only delivered orders can be added to your medications.',
+    'store.orders.noMedsToImport': 'This order has no medications to import.',
+    'store.orders.addMedsFailed': 'Could not add these medications. Please try again.',
+    'store.orders.onlyDeliveredToHistory': 'Only delivered orders can be added to your medical history.',
+    'store.orders.historyUnavailable': 'Medical history is not available right now.',
+    'store.orders.noMedsForHistory': 'This order has no medications to add to your history.',
+    'store.orders.historyPartial': 'Could not add all items to your medical history.',
+    'store.orders.historyFailed': 'Could not add these prescriptions to your medical history.',
+    'store.orders.statusTitle': 'Pharmacy order {status}',
+    'store.orders.statusBody': 'Order {id} is now {status}.',
+    'store.orders.statusBodyAt': 'Order {id} is now {status} at {pharmacy}.',
+
+    'store.paymentMethods.loadFailed': 'Could not load your payment methods.',
+    'store.paymentMethods.cardDeclined': 'Your card was declined. Please try another.',
+    'store.paymentMethods.tokenizeFailed': 'Could not tokenize your card. Please try again.',
+    'store.paymentMethods.saveFailed': 'Could not save your payment method. Please try again.',
+    'store.paymentMethods.defaultFailed': 'Could not set this as your default payment method.',
+    'store.paymentMethods.removeFailed': 'Could not remove this payment method.',
+
+    'store.disputes.loadFailed': 'Could not load your disputes. Please try again.',
+    'store.disputes.queueFailed': 'Could not load the dispute queue. Please try again.',
+    'store.disputes.openFailed': 'Could not open the dispute. Please try again.',
+    'store.disputes.resolveFailed': 'Could not resolve the dispute. Please try again.',
+    'store.disputes.updateFailed': 'Could not update the dispute. Please try again.',
+
+    'store.contacts.loadFailed': 'Could not load your contacts. Please try again.',
+    'store.contacts.saveFailed': 'Could not save this contact. Please try again.',
+    'store.contacts.updateFailed': 'Could not update this contact.',
+    'store.contacts.primaryFailed': 'Could not set the primary contact.',
+
+    'store.history.loadFailed': 'Could not load your {kind}. Please try again.',
+    'store.history.addFailed': 'Could not save this {kind}. Please try again.',
+    'store.history.updateFailed': 'Could not update this record.',
+    'store.history.addToMedsFailed': 'Could not add this prescription to medications.',
+    'store.history.kind.conditions': 'conditions',
+    'store.history.kind.allergies': 'allergies',
+    'store.history.kind.immunizations': 'immunizations',
+    'store.history.kind.events': 'medical events',
+    'store.history.kind.symptoms': 'symptoms',
+    'store.history.kind.prescriptions': 'prescriptions',
+    'store.history.one.conditions': 'condition',
+    'store.history.one.allergies': 'allergy',
+    'store.history.one.immunizations': 'immunization',
+    'store.history.one.events': 'medical event',
+    'store.history.one.symptoms': 'symptom',
+    'store.history.one.prescriptions': 'prescription',
+
+    'store.export.consentPdf': 'Please confirm the export consent before generating the PDF.',
+    'store.export.pdfFailed': 'Could not generate the PDF. Please try again.',
+    'store.export.nothingToRetry': 'Nothing to retry yet — start an export first.',
+    'store.export.consentFhir': 'Please confirm the export consent before generating the FHIR bundle.',
+    'store.export.fhirInvalid': 'FHIR bundle failed validation: {detail}',
+    'store.export.fhirFailed': 'Could not generate the FHIR bundle. Please try again.',
+
+    'store.medications.addFailed': 'Could not add the medication. Please try again.',
+    'store.medications.logDoseFailed': 'Could not log the dose. Please try again.',
+    'store.medications.archiveFailed': 'Could not archive the medication.',
+    'store.medications.instructionsFailed': 'Could not save the instructions. Please try again.',
+
+    'store.escrow.holdFailed': 'Could not place the escrow hold.',
+    'store.escrow.partialRefundFailed': 'Could not process the partial refund.',
+    'store.escrow.releaseFailed': 'Could not release the escrow.',
+    'store.escrow.refundFailed': 'Could not refund the escrow.',
+
+    'store.visit.saveFailed': 'Could not save the visit. Please try again.',
+    'store.visit.checkInLocation': 'Could not check in — enable location access to stamp your visit.',
+    'store.visit.checkOutLocation': 'Could not check out — enable location access to stamp your visit.',
+    'store.visit.gpsUnavailable': 'Live tracking unavailable — GPS error.',
+
+    'store.screening.reasonRequired': 'A reason is required to waive a screening.',
+    'store.screening.snoozeLimit': 'This screening can only be snoozed {max} times.',
+    'store.screening.invalidDate': 'Choose a valid date to schedule this screening.',
+    'store.screening.updateFailed': 'Could not update the screening. Please try again.',
+
+    'store.vetting.submitFailed': 'Could not submit your licence. Please try again.',
+    'store.vetting.reviewFailed': 'Could not review the submission.',
+
+    'store.payout.loadFailed': 'Could not load your payout account.',
+    'store.payout.saveFailed': 'Could not save your payout account. Please try again.',
+
+    'store.prescriptions.scanFailed': 'The barcode could not be read. Please try again or enter the details manually.',
+
+    'store.reminders.saveFailed': 'Could not save reminder preferences. Please try again.',
+    'store.reminders.unknownTimezone': 'Unknown timezone "{timezone}". Use an IANA name like Europe/Athens.',
+
+    'store.consents.loadFailed': 'Could not load consent settings.',
+    'store.consents.saveFailed': 'Could not save consent.',
+    'store.auditConsent.loadFailed': 'Could not load your consent settings.',
+    'store.auditConsent.saveFailed': 'Could not save your consent settings. Please try again.',
+
+    'store.profile.saveFailed': 'Could not save your profile. Please try again.',
+    'store.wallet.syncFailed': 'Could not sync your health wallet. Please try again.',
+    'store.shifts.saveFailed': 'Could not save your availability. Please try again.',
+    'store.clinicalLog.saveFailed': 'Could not save the clinical log. Please try again.',
+    'store.carePlan.saveFailed': 'Could not update the care plan. Please try again.',
+    'store.vitals.saveFailed': 'Could not save the reading. Please try again.',
+
+    'store.bluetooth.unsupported': 'Web Bluetooth is not supported in this browser or context.',
+    'store.bluetooth.insecureContext': 'Web Bluetooth requires a secure context (HTTPS or localhost).',
+    'store.bluetooth.connectFailed': 'Failed to connect to the device.',
+    'store.bluetooth.streamFailed': 'Could not start the simulated device stream.',
+    'store.bluetooth.gattFailed': 'Failed to set up GATT notifications.',
+    'store.bluetooth.implausible': 'Implausible reading received — verify the device placement.',
+    'store.bluetooth.parseFailed': 'Could not parse data from the device.',
+    'store.bluetooth.reconnecting': 'Connection lost. Reconnecting ({attempt}/{max})…',
+    'store.bluetooth.connectionLost': 'Connection lost. Please reconnect your device.',
+    'store.bluetooth.adapterUnavailable': 'Bluetooth adapter not available for reconnection.',
+
+    'store.savedSearch.availableNow': 'available now',
+    'store.savedSearch.all': 'All caregivers',
+  },
+
+  el: {
+    // --- Brand ---------------------------------------------------------------
+    'brand.name': 'CareMarketplace',
+    'brand.tagline': 'Φροντίδα & υγεία, σε ένα σημείο',
+
+    // --- Navigation ----------------------------------------------------------
+    'nav.mainNavigation': 'Κύρια πλοήγηση',
+    'nav.openMenu': 'Άνοιγμα πλοήγησης',
+    'nav.closeMenu': 'Κλείσιμο πλοήγησης',
+    'nav.youAreHere': 'Βρίσκεστε εδώ',
+
+    'nav.group.care': 'Φροντίδα',
+    'nav.group.health': 'Υγεία',
+    'nav.group.finance': 'Οικονομικά',
+    'nav.group.account': 'Λογαριασμός',
+    'nav.group.admin': 'Διαχείριση',
+
+    'nav.marketplace': 'Αγορά',
+    'nav.bookings': 'Κρατήσεις',
+    'nav.liveVisit': 'Ζωντανή επίσκεψη',
+    'nav.onboarding': 'Ένταξη παρόχου',
+    'nav.shifts': 'Βάρδιες',
+    'nav.visits': 'Επισκέψεις',
+    'nav.clinicalLog': 'Κλινικό αρχείο',
+    'nav.carePlan': 'Πλάνο φροντίδας',
+    'nav.vitals': 'Ζωτικά σημεία',
+    'nav.payments': 'Πληρωμές',
+    'nav.disputes': 'Διαφορές',
+    'nav.healthRecord': 'Φάκελος υγείας',
+    'nav.screenings': 'Προληπτική φροντίδα',
+    'nav.medications': 'Φάρμακα',
+    'nav.consents': 'Συγκαταθέσεις',
+    'nav.prescriptions': 'Συνταγές',
+    'nav.pharmacyOrders': 'Παραγγελίες φαρμακείου',
+    'nav.pharmacy': 'Φαρμακείο',
+    'nav.chat': 'Συνομιλία',
+    'nav.admin': 'Διαχείριση',
+    'nav.profile': 'Προφίλ',
+
+    // --- Account / shell controls -------------------------------------------
+    'account.logIn': 'Σύνδεση',
+    'account.logOut': 'Αποσύνδεση',
+    'account.switchToDark': 'Μετάβαση σε σκούρο θέμα',
+    'account.switchToLight': 'Μετάβαση σε φωτεινό θέμα',
+    'account.language': 'Γλώσσα',
+    'account.languageEn': 'Αγγλικά',
+    'account.languageEl': 'Ελληνικά',
+
+    // --- Notifications -------------------------------------------------------
+    'notifications.title': 'Ειδοποιήσεις',
+    'notifications.unread': 'Ειδοποιήσεις, {count} μη αναγνωσμένες',
+    'notifications.none': 'Ειδοποιήσεις',
+    'notifications.markAllRead': 'Σήμανση όλων ως αναγνωσμένων',
+    'notifications.mutes': 'Σίγαση',
+    'notifications.mutesHint':
+      'Οι σιγημένες κατηγορίες δεν θα εμφανίζονται στο πάνελ, στα μηνύματα ή στις ειδοποιήσεις push.',
+    'notifications.browserPush': 'Ειδοποιήσεις push του περιηγητή',
+    'notifications.loading': 'Φόρτωση…',
+    'notifications.allCaughtUp': 'Είστε ενημερωμένοι 🎉',
+    'notifications.loadMore': 'Φόρτωση περισσότερων',
+    'notifications.retry': 'Δοκιμάστε ξανά',
+    'notifications.close': 'Κλείσιμο ειδοποιήσεων',
+    'notifications.today': 'Σήμερα',
+    'notifications.yesterday': 'Χθες',
+
+    // --- Connection / sync ---------------------------------------------------
+    'offline.title': 'Είστε εκτός σύνδεσης',
+    'offline.body':
+      'Οι ενέργειές σας αποθηκεύονται προσωρινά και θα συγχρονιστούν αυτόματα μόλις επανέλθει η σύνδεση.',
+    'offline.pending.one': '{count} ενέργεια σε αναμονή συγχρονισμού',
+    'offline.pending.other': '{count} ενέργειες σε αναμονή συγχρονισμού',
+    'offline.failed': '{count} απέτυχαν',
+    'offline.retryNow': 'Συγχρονισμός τώρα',
+
+    'update.available': 'Υπάρχει διαθέσιμη νέα έκδοση.',
+    'update.reload': 'Επαναφόρτωση',
+
+    // --- Demo backend banner -------------------------------------------------
+    'demo.badge': 'Λειτουργία επίδειξης',
+    'demo.body':
+      'Οι κλήσεις API απαντώνται από προσωρινό backend επίδειξης — τίποτα δεν αποθηκεύεται στον διακομιστή.',
+
+    // --- Consents page -------------------------------------------------------
+    'consents.title': 'Ρυθμίσεις συγκατάθεσης',
+    'consents.intro':
+      'Οι ρυθμίσεις αυτές ελέγχουν πώς κοινοποιούνται τα δεδομένα υγείας σας. Μπορείτε να ανακαλέσετε οποιαδήποτε συγκατάθεση οποτεδήποτε. Η ανάκληση δεν διαγράφει δεδομένα που έχουν ήδη υποστεί επεξεργασία.',
+    'consents.reConsentTitle': 'Απαιτείται ενέργεια: νέοι όροι συγκατάθεσης',
+    'consents.reConsentBody':
+      'Οι όροι για τις παρακάτω κατηγορίες ενημερώθηκαν και απαιτούν εκ νέου συγκατάθεση:',
+    'consents.reviewDocument': 'Δείτε το ενημερωμένο έγγραφο (έκδ. {version})',
+    'consents.reConsentNow': 'Εκ νέου συγκατάθεση',
+    'consents.active': 'Ενεργή',
+    'consents.notGranted': 'Δεν έχει δοθεί',
+    'consents.effective': 'Ισχύει από:',
+    'consents.notYetSet': 'Δεν έχει οριστεί',
+    'consents.withdraw': 'Ανάκληση',
+    'consents.grant': 'Χορήγηση',
+    'consents.status.withdrawn': 'Ανακλήθηκε: {purpose}.',
+    'consents.status.granted': 'Χορηγήθηκε: {purpose}.',
+    'consents.status.failed': 'Δεν ήταν δυνατή η ενημέρωση: {purpose}. Δοκιμάστε ξανά.',
+    'consents.status.reConfirmed': 'Όλες οι ενημερωμένες συγκαταθέσεις επιβεβαιώθηκαν εκ νέου.',
+
+    // --- Vitals page ---------------------------------------------------------
+    'vitals.title': 'Ζωτικά σημεία',
+    'vitals.subtitle': 'Καταγράψτε μετρήσεις και παρακολουθήστε τις τάσεις τους.',
+    'vitals.alerts': 'Ειδοποιήσεις ορίων',
+    'vitals.alertText': '⚠️ {label} {value} — εκτός φυσιολογικού εύρους ({range}).',
+    'vitals.logReading': 'Καταγραφή μέτρησης',
+    'vitals.type': 'Τύπος',
+    'vitals.valueIn': 'Τιμή σε {unit}',
+    'vitals.diastolic': 'Διαστολική (mmHg)',
+    'vitals.saveReading': 'Αποθήκευση μέτρησης',
+    'vitals.trends': 'Τάσεις',
+    'vitals.latest': 'Τελευταία: {value} · {date}',
+    'vitals.range.bloodPressure': '90–140/60–90 mmHg',
+    'vitals.range.glucose': '70–180 mg/dL',
+    'vitals.range.spo2': '≥95%',
+    'vitals.range.weight': '—',
+    'vitals.range.temperature': '36–37,8 °C',
+    'vitals.range.heartRate': '60–100 bpm',
+
+    // --- Preventive care (screenings) ----------------------------------------
+    'screening.title': 'Προληπτική φροντίδα',
+    'screening.disclaimerLead':
+      'Οι υπενθυμίσεις αυτές ακολουθούν γενικές οδηγίες πρόληψης με βάση την ηλικία και το φύλο. Δεν αποτελούν ',
+    'screening.disclaimerStrong': 'ιατρική συμβουλή',
+    'screening.disclaimerRest':
+      ' — ακολουθείτε πάντα τη σύσταση του θεράποντος ιατρού σας.',
+    'screening.readOnly': 'Προβάλλετε αυτό το αρχείο μόνο για ανάγνωση (πρόσβαση οικογένειας).',
+    'screening.tablist': 'Προβολές προληπτικού ελέγχου',
+    'screening.tabDue': 'Εκκρεμούν ({count})',
+    'screening.tabUpcoming': 'Προσεχή ({count})',
+    'screening.tabHistory': 'Ιστορικό ({count})',
+    'screening.nothingDue': 'Δεν εκκρεμεί κάτι αυτή τη στιγμή. 🎉',
+    'screening.noUpcoming':
+      'Δεν υπάρχουν προσεχείς έλεγχοι — θα εμφανιστούν μόλις ολοκληρώσετε έναν.',
+    'screening.noHistory': 'Δεν υπάρχουν ακόμη ολοκληρωμένοι ή παραλειφθέντες έλεγχοι.',
+    'screening.overdue': 'εκπρόθεσμο',
+    'screening.recommendedEvery': 'Συνιστάται κάθε {count} μήνες',
+    'screening.nextDue': 'Επόμενος στις {date} · κάθε {count} μήνες',
+    'screening.waivedOn': 'Παραλείφθηκε {date}',
+    'screening.completedOn': 'Ολοκληρώθηκε {date}',
+    'screening.bookVisit': 'Κράτηση επίσκεψης',
+    'screening.markDone': 'Σήμανση ως ολοκληρωμένο',
+    'screening.schedule': 'Προγραμματισμός',
+    'screening.scheduleDate': 'Ημερομηνία προγραμματισμού',
+    'screening.snooze': 'Αναβολή 30 ημ.',
+    'screening.reason': 'Αιτιολογία',
+    'screening.reasonForWaiving': 'Αιτιολογία παράλειψης',
+    'screening.waive': 'Παράλειψη',
+    'screening.waiveEllipsis': 'Παράλειψη…',
+    // Rule names, keyed by ScreeningType.
+    'screening.rule.mammography': 'Μαστογραφία',
+    'screening.rule.cardioCheck': 'Καρδιολογικός έλεγχος',
+    'screening.rule.cervicalSmear': 'Έλεγχος τραχήλου μήτρας',
+    'screening.rule.colorectalScreening': 'Έλεγχος παχέος εντέρου (τεστ FIT)',
+    'screening.rule.fluVaccine': 'Εμβολιασμός κατά της γρίπης',
+    'screening.rule.boneDensity': 'Μέτρηση οστικής πυκνότητας',
+
+    // --- Contacts & phone numbers --------------------------------------------
+    'contacts.title': 'Επαφές & Τηλέφωνα',
+    'contacts.subtitle':
+      'Οι επαφές έκτακτης ανάγκης (ICE) εμφανίζονται στη σύνοψη υγείας και στην εξαγωγή FHIR. Η ομάδα φροντίδας κρατά τα τηλέφωνα γιατρών, φαρμακείων και φροντιστών.',
+    'contacts.readOnly': 'Προβολή μόνο — δεν έχετε δικαίωμα επεξεργασίας.',
+    'contacts.add': '+ Προσθήκη',
+    'contacts.nameLabel': 'Όνομα *',
+    'contacts.relationshipHint': 'Σχέση (π.χ. κόρη, σύζυγος)',
+    'contacts.roleLabel': 'Ρόλος',
+    'contacts.phoneLabel': 'Τηλέφωνο *',
+    'contacts.altPhoneLabel': 'Δεύτερο τηλέφωνο',
+    'contacts.emailLabel': 'Ηλεκτρονικό ταχυδρομείο',
+    'contacts.addressLabel': 'Διεύθυνση',
+    'contacts.priorityLabel': 'Προτεραιότητα',
+    'contacts.primaryLabel': 'Κύρια επαφή',
+    'contacts.notesLabel': 'Σημειώσεις',
+    'contacts.primaryBadge': 'Κύρια',
+    'contacts.setPrimary': 'Ορισμός ως κύρια',
+    'contacts.edit': 'Επεξεργασία',
+    'contacts.archive': 'Αρχειοθέτηση',
+    'contacts.emptyEmergency':
+      'Δεν έχετε καταχωρήσει επαφή έκτακτης ανάγκης. Προσθέστε τουλάχιστον μία.',
+    'contacts.emptyCare': 'Δεν έχετε καταχωρήσει επαφή στην ομάδα φροντίδας.',
+    'contacts.footerLead': 'Το προσωπικό σας τηλέφωνο βρίσκεται στο ',
+    'contacts.footerProfile': 'προφίλ',
+    'contacts.footerMid': '. Οι αριθμοί χρησιμοποιούνται και για ειδοποιήσεις SMS/φωνής στις ',
+    'contacts.footerReminders': 'υπενθυμίσεις',
+    'contacts.validation.unknown_kind': 'Άγνωστη κατηγορία επαφής.',
+    'contacts.validation.name_required': 'Το όνομα είναι υποχρεωτικό.',
+    'contacts.validation.phone_invalid': 'Το τηλέφωνο πρέπει να έχει τουλάχιστον 6 ψηφία.',
+    'contacts.validation.email_invalid': 'Το email δεν είναι έγκυρο.',
+    'contacts.validation.generic': 'Ελέγξτε τα στοιχεία.',
+
+    // --- Medications ---------------------------------------------------------
+    'medications.title': 'Φάρμακα',
+    'medications.subtitle': 'Οι σημερινές δόσεις, η συμμόρφωση και οι ανανεώσεις.',
+    'medications.missedAlert.one': '{count} φάρμακο με χαμένη δόση σήμερα:',
+    'medications.missedAlert.other': '{count} φάρμακα με χαμένη δόση σήμερα:',
+    'medications.refillNeeded': '💊 Απαιτείται ανανέωση σύντομα:',
+    'medications.todaySchedule': 'Σημερινό πρόγραμμα',
+    'medications.none':
+      'Δεν υπάρχουν ενεργά φάρμακα. Προσθέστε τα με την ομάδα φροντίδας σας.',
+    'medications.critical': 'κρίσιμο',
+    'medications.slot.taken': '✓ ελήφθη',
+    'medications.slot.skipped': '⊘ παραλείφθηκε',
+    'medications.slot.missed': '✗ χαμένη (πέρασαν {minutes} λεπτά χάριτος)',
+    'medications.slot.pending': '○ εκκρεμεί',
+    'medications.taken': '✓ Ελήφθη',
+    'medications.skip': 'Παράλειψη',
+    'medications.loggedBy': 'Καταχωρήθηκε από {name}',
+    'medications.adherence7': 'Συμμόρφωση 7 ημερών',
+    'medications.days30': '30 ημέρες',
+    'medications.adherenceAriaLabel':
+      'Συμμόρφωση 7 ημερών {pct} τοις εκατό, {taken} από {scheduled} προγραμματισμένες δόσεις',
+    'medications.checkInteractions': 'Έλεγχος αλληλεπιδράσεων',
+    'medications.archive': 'Αρχειοθέτηση {name}',
+    'medications.adherenceOverview': 'Επισκόπηση συμμόρφωσης',
+    'medications.overall7': 'Σύνολο (7 ημέρες):',
+    'medications.overall30': 'Σύνολο (30 ημέρες):',
+    'medications.ofScheduled': 'των προγραμματισμένων δόσεων ελήφθησαν',
+    'medications.addMedication': 'Προσθήκη φαρμάκου',
+    'medications.name': 'Όνομα',
+    'medications.dose': 'Δοσολογία',
+    'medications.dosePlaceholder': 'π.χ. 10 mg',
+    'medications.dailyTime': 'Ημερήσια ώρα',
+    'medications.criticalMedication': 'Κρίσιμο φάρμακο',
+    'medications.addButton': 'Προσθήκη φαρμάκου',
+    'medications.refillOverdue': '{name} (εκπρόθεσμο)',
+    'medications.refillDays': '{name} ({days} ημ. απομένουν)',
+    'medications.status.markedTaken': '{name} στις {time} σημειώθηκε ως ελήφθη.',
+    'medications.status.markedSkipped': '{name} στις {time} σημειώθηκε ως παράλειψη.',
+    'medications.status.logFailed': 'Δεν ήταν δυνατή η ενημέρωση: {name}.',
+    'medications.status.addInvalid':
+      'Συμπληρώστε όνομα, δοσολογία και ημερήσια ώρα (HH:MM) για να προσθέσετε φάρμακο.',
+    'medications.status.added': 'Το {name} προστέθηκε στο σημερινό πρόγραμμα.',
+    'medications.status.addFailed': 'Δεν ήταν δυνατή η προσθήκη: {name}.',
+    'medications.status.archived': 'Το {name} αρχειοθετήθηκε. Το ιστορικό διατηρείται.',
+    'medications.status.archiveFailed': 'Δεν ήταν δυνατή η αρχειοθέτηση: {name}.',
+
+    // --- Medical history register --------------------------------------------
+    'history.title': 'Ιατρικό ιστορικό',
+    'history.disclaimerLead':
+      'Καταγράψτε διαγνώσεις, αλλεργίες, εμβολιασμούς, ιατρικά συμβάντα, συμπτώματα και συνταγές. Το ιστορικό σας είναι ',
+    'history.disclaimerStrong': 'προσωπικό αρχείο',
+    'history.disclaimerRest':
+      ' — μοιράζεται μόνο όταν το επιτρέψετε. Οι κωδικοί ICD-11 είναι ενδεικτικό υποσύνολο, όχι ιατρική συμβουλή.',
+    'history.readOnlyRecipientLead': 'Προβολή ιστορικού: ',
+    'history.readOnlyRecipientRest': ' — πρόσβαση οικογένειας, μόνο για ανάγνωση.',
+    'history.readOnly': 'Προβολή μόνο για ανάγνωση (πρόσβαση οικογένειας).',
+    'history.categories': 'Κατηγορίες ιστορικού',
+    'history.timelineFilters': 'Φίλτρα χρονολογίου',
+    'history.filterAll': 'Όλα',
+    'history.closeForm': 'Κλείσιμο φόρμας',
+    'history.timeline': 'Χρονολόγιο',
+    'history.timelineEmpty':
+      'Το χρονολόγιο θα γεμίσει όταν προσθέσετε τις πρώτες εγγραφές.',
+    'history.notes': 'Σημειώσεις',
+    'history.archive': 'Αρχειοθέτηση',
+    'history.conditions.name': 'Όνομα',
+    'history.conditions.icd11': 'Κωδικός ICD-11 (αναζήτηση στα ελληνικά)',
+    'history.conditions.icd11Placeholder': 'π.χ. BA00 ή «διαβήτης»',
+    'history.conditions.status': 'Κατάσταση',
+    'history.conditions.diagnosed': 'Ημερομηνία διάγνωσης',
+    'history.conditions.addBtn': '+ Προσθήκη πάθησης',
+    'history.conditions.empty': 'Καμία καταγεγραμμένη πάθηση.',
+    'history.conditions.resolved': 'Ολοκληρώθηκε',
+    'history.allergies.substance': 'Αλλεργιογόνο',
+    'history.allergies.kind': 'Τύπος',
+    'history.allergies.severity': 'Σοβαρότητα',
+    'history.allergies.reaction': 'Αντίδραση',
+    'history.allergies.confirmed': 'Ημερομηνία επιβεβαίωσης',
+    'history.allergies.addBtn': '+ Προσθήκη αλλεργίας',
+    'history.allergies.empty': 'Καμία καταγεγραμμένη αλλεργία.',
+    'history.immunizations.vaccine': 'Εμβόλιο',
+    'history.immunizations.dose': 'Δόση',
+    'history.immunizations.administered': 'Ημερομηνία χορήγησης',
+    'history.immunizations.addBtn': '+ Προσθήκη εμβολιασμού',
+    'history.immunizations.empty': 'Κανένας καταγεγραμμένος εμβολιασμός.',
+    'history.immunizations.doseNumber': 'Δόση {count}',
+    'history.immunizations.fromWallet': 'από Gov.gr Wallet',
+    'history.events.kind': 'Τύπος',
+    'history.events.description': 'Περιγραφή',
+    'history.events.facility': 'Φορέας / Νοσοκομείο',
+    'history.events.date': 'Ημερομηνία',
+    'history.events.addBtn': '+ Προσθήκη συμβάντος',
+    'history.events.empty': 'Κανένα καταγεγραμμένο ιατρικό συμβάν.',
+    'history.symptoms.name': 'Σύμπτωμα',
+    'history.symptoms.severity': 'Ένταση',
+    'history.symptoms.onset': 'Έναρξη',
+    'history.symptoms.addBtn': '+ Προσθήκη συμπτώματος',
+    'history.symptoms.empty': 'Κανένα καταγεγραμμένο σύμπτωμα.',
+    'history.symptoms.resolved': 'Υποχώρησε',
+    'history.prescriptions.drug': 'Φάρμακο',
+    'history.prescriptions.dose': 'Δοσολογία',
+    'history.prescriptions.dosePlaceholder': 'π.χ. 500mg ×2',
+    'history.prescriptions.instructions': 'Οδηγίες',
+    'history.prescriptions.instructionsPlaceholder': 'π.χ. πρωί και βράδυ',
+    'history.prescriptions.prescriber': 'Συνταγογράφος',
+    'history.prescriptions.issued': 'Ημερομηνία έκδοσης',
+    'history.prescriptions.duration': 'Διάρκεια (ημέρες)',
+    'history.prescriptions.addBtn': '+ Προσθήκη συνταγής',
+    'history.prescriptions.empty': 'Καμία καταγεγραμμένη συνταγή.',
+    'history.prescriptions.complete': 'Ολοκληρώθηκε',
+    'history.prescriptions.toMedications': '+ Στα φάρμακα',
+    'history.prescriptions.reminderFromRx': '+ Υπενθύμιση από συνταγή',
+    'history.prescriptions.inMedications': '✓ στο πρόγραμμα φαρμάκων',
+    'history.prescriptions.linkScanned': 'Σύνδεση με σκαναρισμένη συνταγή',
+    'history.prescriptions.scannedLabel': 'Σκαναρισμένη συνταγή',
+    'history.prescriptions.linkPlaceholder': 'Σύνδεση με σκαναρισμένη συνταγή…',
+    'history.prescriptions.link': 'Σύνδεση',
+
+    // --- Medicine instructions sheet (health-record batch 2) -----------------
+    'medicine.toggle': '💊 Πώς να το πάρετε: {name}',
+    'medicine.catalogAvailable':
+      'Διαθέσιμη πρόταση από τον κατάλογο ({name}). Γενικές πληροφορίες, όχι ιατρική συμβουλή — ρωτήστε τον γιατρό ή τον φαρμακοποιό σας.',
+    'medicine.replaceWithCatalog': 'Αντικατάσταση με την πρόταση του καταλόγου',
+    'medicine.keepEdits': 'Διατήρηση των αλλαγών μου',
+    'medicine.autofill': 'Αυτόματη συμπλήρωση από τον κατάλογο',
+    'medicine.legend': 'Οδηγίες για {name}',
+    'medicine.doseForm': 'Μορφή δόσης',
+    'medicine.doseFormPlaceholder': 'π.χ. Δισκίο / Σιρόπι',
+    'medicine.route': 'Οδός χορήγησης',
+    'medicine.food': 'Τροφή',
+    'medicine.maxDaily': 'Μέγιστες δόσεις ανά ημέρα',
+    'medicine.maxDailySummary': 'έως {count}/ημέρα',
+    'medicine.warnings': 'Προειδοποιήσεις (μία ανά γραμμή)',
+    'medicine.warningsAria': 'Προειδοποιήσεις',
+    'medicine.sideEffects': 'Πιθανές ανεπιθύμητες ενέργειες',
+    'medicine.storage': 'Φύλαξη',
+    'medicine.special': 'Ειδικές οδηγίες',
+    'medicine.save': 'Αποθήκευση οδηγιών',
+    'medicine.clear': 'Καθαρισμός δελτίου',
+    'medicine.suggested': 'προτεινόμενο: {summary}',
+    'medicine.status.noCatalog': 'Δεν υπάρχει καταχώριση στον κατάλογο για αυτό το φάρμακο.',
+    'medicine.status.willReplace':
+      'Το τρέχον δελτίο σας θα αντικατασταθεί. Επιβεβαιώστε για να φορτωθεί η πρόταση του καταλόγου.',
+    'medicine.status.loaded':
+      'Η πρόταση του καταλόγου φορτώθηκε — ελέγξτε και αποθηκεύστε.',
+    'medicine.status.kept': 'Οι αλλαγές σας διατηρήθηκαν.',
+    'medicine.status.saved': 'Οι οδηγίες αποθηκεύτηκαν.',
+    'medicine.status.saveFailed': 'Δεν ήταν δυνατή η αποθήκευση των οδηγιών.',
+    'medicine.status.cleared': 'Το δελτίο καθαρίστηκε.',
+    'medicine.status.clearFailed': 'Δεν ήταν δυνατός ο καθαρισμός του δελτίου.',
+
+    // --- Reminders (health-record batch 2) -----------------------------------
+    'reminders.title': 'Ρυθμίσεις υπενθυμίσεων',
+    'reminders.channelsFor': 'Κανάλια υπενθύμισης για {name}',
+    'reminders.channel.inapp': 'Εντός εφαρμογής',
+    'reminders.channel.push': 'Push προγράμματος περιήγησης',
+    'reminders.channel.sms': 'SMS (διακομιστής)',
+    'reminders.channel.voice': 'Φωνητική κλήση (διακομιστής)',
+    'reminders.channelHelp.inapp':
+      'Πάντα διαθέσιμο. Εμφανίζεται στο κέντρο ειδοποιήσεων.',
+    'reminders.channelHelp.push':
+      'Χρειάζεται άδεια του προγράμματος περιήγησης. Λειτουργεί και με κλειστή καρτέλα (PWA).',
+    'reminders.channelHelp.sms': 'Χρειάζεται αριθμό τηλεφώνου και συγκατάθεση για SMS παρακάτω.',
+    'reminders.channelHelp.voice':
+      'Χρειάζεται αριθμό τηλεφώνου και συγκατάθεση για φωνητικές κλήσεις παρακάτω.',
+    'reminders.sendTest': 'Αποστολή δοκιμαστικής υπενθύμισης',
+    'reminders.sendTestFor': 'Αποστολή δοκιμαστικής υπενθύμισης για {name}',
+    'reminders.quietHours': 'Ώρες κοινής ησυχίας',
+    'reminders.quietHelp':
+      'Οι μη κρίσιμες υπενθυμίσεις παύουν μεταξύ αυτών των ωρών. Οι κρίσιμες υπενθυμίσεις φαρμάκων περνούν πάντα. Οι ώρες είναι στη ζώνη ώρας σας παρακάτω. Τώρα: {summary}.',
+    'reminders.quietEnable': 'Ενεργοποίηση ωρών κοινής ησυχίας',
+    'reminders.quietOff': 'ανενεργό',
+    'reminders.startsAt': 'Έναρξη',
+    'reminders.endsAt': 'Λήξη',
+    'reminders.timezone': 'Ζώνη ώρας',
+    'reminders.timezoneHelp':
+      'Όνομα IANA, π.χ. Europe/Athens. Οι ώρες δόσεων εμφανίζονται σε αυτή τη ζώνη.',
+    'reminders.timezoneUnknown':
+      'Άγνωστη ζώνη ώρας «{value}». Χρησιμοποιήστε όνομα IANA όπως Europe/Athens.',
+    'reminders.smsVoice': 'SMS & φωνητικές κλήσεις',
+    'reminders.telephonyHelp':
+      'Οι υπενθυμίσεις SMS και φωνής αποστέλλονται από τον διακομιστή (προσομοίωση σε λειτουργία demo). Κατάσταση: SMS {sms}, φωνή {voice}. Και τα δύο χρειάζονται αριθμό τηλεφώνου και τη συγκατάθεσή σας.',
+    'reminders.telephony.pending': 'εκκρεμεί',
+    'reminders.telephony.configured': 'ρυθμισμένο',
+    'reminders.phone': 'Αριθμός τηλεφώνου',
+    'reminders.consentSms': 'Συναινώ σε υπενθυμίσεις φαρμάκων μέσω SMS',
+    'reminders.consentVoice': 'Συναινώ σε υπενθυμίσεις φαρμάκων μέσω φωνητικής κλήσης',
+    'reminders.consentHelp':
+      'Η συγκατάθεση καταγράφεται με χρονοσφραγίδα και μπορεί να ανακληθεί εδώ οποτεδήποτε (GDPR· τροφοδοτεί το μητρώο συγκαταθέσεων). Η ανάκληση σταματά τις νέες υπενθυμίσεις αλλά διατηρεί το ιστορικό.',
+    'reminders.familyCopy': 'Κοινοποίηση σε συγγενή',
+    'reminders.caregiverCopy': 'Αποστολή κρίσιμων υπενθυμίσεων και στον φροντιστή μου',
+    'reminders.caregiverHelp':
+      'Ενεργοποίηση ανά σχέση: ο φροντιστής σας λαμβάνει αντίγραφο στο κέντρο ειδοποιήσεων για τις κρίσιμες υπενθυμίσεις φαρμάκων.',
+    'reminders.relationship': 'Σχέση',
+    'reminders.relationshipPlaceholder': 'π.χ. κόρη, νοσηλευτής',
+    'reminders.enablePush': 'Ενεργοποίηση push προγράμματος περιήγησης',
+    'reminders.pushState': 'Τρέχουσα κατάσταση: {state}.',
+    'reminders.push.enabled': 'το push είναι ενεργό',
+    'reminders.push.blocked': 'το push είναι αποκλεισμένο στο πρόγραμμα περιήγησης',
+    'reminders.push.unsupported': 'το push δεν υποστηρίζεται εδώ',
+    'reminders.push.disabled': 'το push δεν είναι ενεργό',
+    'reminders.history': 'Ιστορικό υπενθυμίσεων',
+    'reminders.historyEmpty':
+      'Δεν έχουν σταλεί υπενθυμίσεις ακόμη. Χρησιμοποιήστε «Αποστολή δοκιμαστικής υπενθύμισης» σε ένα φάρμακο.',
+    'reminders.historyAria': 'Προσπάθειες παράδοσης υπενθυμίσεων',
+    'reminders.historyVia': 'μέσω {channel} — {status}',
+
+    // --- Prescription reminder wizard (health-record batch 2) ----------------
+    'rx.title': 'Υπενθύμιση για {drug}',
+    'rx.confidence.parsed': 'από τη συνταγή',
+    'rx.confidence.defaulted': 'προεπιλογή — ελέγξτε το',
+    'rx.prnNote':
+      'Η συνταγή είναι «κατά περίπτωση» (SOS). Δεν δημιουργείται σταθερό πρόγραμμα εκτός αν ορίσετε ώρες παρακάτω.',
+    'rx.scheduleLegend': 'Πρόγραμμα δόσεων',
+    'rx.kind.daily': 'Καθημερινά',
+    'rx.kind.interval': 'Κάθε N ημέρες',
+    'rx.kind.weekly': 'Εβδομαδιαία',
+    'rx.time': 'Ώρα',
+    'rx.timeN': 'Ώρα {n}',
+    'rx.newTime': 'Νέα ώρα',
+    'rx.addTime': '+ Προσθήκη ώρας',
+    'rx.addOneTime': 'Προσθέστε τουλάχιστον μία ώρα.',
+    'rx.remove': 'Αφαίρεση',
+    'rx.everyDays': 'Κάθε πόσες ημέρες',
+    'rx.weekdays': 'Ημέρες',
+    'rx.weekday.0': 'Κυρ',
+    'rx.weekday.1': 'Δευ',
+    'rx.weekday.2': 'Τρι',
+    'rx.weekday.3': 'Τετ',
+    'rx.weekday.4': 'Πεμ',
+    'rx.weekday.5': 'Παρ',
+    'rx.weekday.6': 'Σαβ',
+    'rx.channelsLegend': 'Κανάλια υπενθύμισης',
+    'rx.instructions': 'Οδηγίες λήψης: {summary}',
+    'rx.smsVoiceHint':
+      'Τα SMS/φωνητικά χρειάζονται αριθμό τηλεφώνου και συγκατάθεση στις ρυθμίσεις υπενθυμίσεων.',
+    'rx.confirm': 'Δημιουργία φαρμάκου & υπενθύμισης',
+    'rx.success': '{drug} προστέθηκε στα φάρμακα με πρόγραμμα.',
+    'rx.error.noTime': 'Ορίστε τουλάχιστον μία ώρα λήψης.',
+    'rx.error.failed': 'Δεν ήταν δυνατή η δημιουργία της υπενθύμισης.',
+
+    // --- Chat (care/visits batch) --------------------------------------------
+    'chat.title': 'Συνομιλίες',
+    'chat.subtitle': 'Μιλήστε με τους φροντιστές σας σε ένα σημείο',
+    'chat.conversations': 'Συνομιλίες',
+    'chat.empty':
+      'Δεν υπάρχουν συνομιλίες ακόμη. Βρείτε έναν φροντιστή στην αγορά και πατήστε «Μήνυμα».',
+    'chat.selectPrompt': 'Επιλέξτε μια συνομιλία για να ξεκινήσετε.',
+    'chat.placeholder': 'Γράψτε ένα μήνυμα…',
+    'chat.messageLabel': 'Μήνυμα',
+    'chat.send': 'Αποστολή',
+    'chat.unread': '{count} μη αναγνωσμένα μηνύματα',
+    'chat.notDelivered': 'δεν παραδόθηκε',
+    'chat.sending': 'αποστολή…',
+
+    // --- Reviews (care/visits batch) -----------------------------------------
+    'review.title': 'Αξιολογήστε την επίσκεψη',
+    'review.subtitle':
+      'Η γνώμη σας βοηθά άλλες οικογένειες να επιλέξουν με σιγουριά',
+    'review.empty':
+      'Δεν υπάρχει κάτι για αξιολόγηση ακόμη. Μπορείτε να αξιολογήσετε μια επίσκεψη αφού ολοκληρωθεί η κράτησή της, και κάθε επίσκεψη αξιολογείται μία φορά.',
+    'review.visit': 'Επίσκεψη',
+    'review.yourRating': 'Η βαθμολογία σας',
+    'review.star': 'αστέρι',
+    'review.stars': 'αστέρια',
+    'review.ratingError': 'Επιλέξτε βαθμολογία από 1 έως 5 αστέρια.',
+    'review.comment': 'Σχόλιο (προαιρετικό)',
+    'review.commentError': 'Κρατήστε το σχόλιο κάτω από {max} χαρακτήρες.',
+    'review.submit': 'Υποβολή αξιολόγησης',
+    'review.thanks': 'Ευχαριστούμε — η αξιολόγησή σας δημοσιεύτηκε.',
+
+    // --- Bookings (care/visits batch) ----------------------------------------
+    'booking.title': 'Αίτημα κράτησης',
+    'booking.subtitle':
+      'Ζητήστε επίσκεψη και παρακολουθήστε την από το αίτημα έως την ολοκλήρωση',
+    'booking.dateTime': 'Ημερομηνία & ώρα',
+    'booking.note': 'Σημείωση',
+    'booking.send': 'Αποστολή αιτήματος',
+    'booking.pushTitle': 'Μην χάσετε καμία ενημέρωση κράτησης.',
+    'booking.pushBody':
+      'Επιτρέψτε τις ειδοποιήσεις push για να μαθαίνετε για αποδοχές, υπενθυμίσεις και ειδοποιήσεις ακόμη και με κλειστή την εφαρμογή.',
+    'booking.enableNotifications': 'Ενεργοποίηση ειδοποιήσεων',
+    'booking.notNow': 'Όχι τώρα',
+    'booking.yourBookings': 'Οι κρατήσεις σας',
+    'booking.empty': 'Δεν υπάρχουν κρατήσεις ακόμη. Ζητήστε μία από την αγορά.',
+    'booking.accept': 'Αποδοχή',
+    'booking.start': 'Έναρξη επίσκεψης',
+    'booking.complete': 'Ολοκλήρωση (αποδέσμευση escrow)',
+    'booking.cancel': 'Ακύρωση',
+    'booking.reschedule': 'Πρόταση νέας ώρας',
+    'booking.dispute': 'Άνοιγμα διαφοράς',
+    'booking.rateVisit': 'Αξιολογήστε την επίσκεψη',
+    'booking.freeCancel':
+      'Δωρεάν ακύρωση ({hours}ώ+ πριν την έναρξη) — πλήρης επιστροφή.',
+    'booking.lateCancel': 'Καθυστερημένη ακύρωση — χρέωση {fee}€, επιστροφή {refund}€.',
+    'booking.proposedAt':
+      'Προτάθηκε νέα ώρα: {when} — αναμένεται επιβεβαίωση από τον/την {role}.',
+    'booking.roleProvider': 'φροντιστή',
+    'booking.roleClient': 'πελάτη',
+    'booking.confirmNewTime': 'Επιβεβαίωση νέας ώρας',
+    'booking.rescheduled':
+      'Μεταπρογραμματίστηκε για {when} — συμφώνησαν και οι δύο πλευρές.',
+    'booking.history': 'Ιστορικό',
+    'booking.liveStatus': '{total} κρατήσεις, {completed} ολοκληρωμένες.',
+    'booking.status.requested': 'ζητήθηκε',
+    'booking.status.accepted': 'έγινε δεκτή',
+    'booking.status.in_progress': 'σε εξέλιξη',
+    'booking.status.completed': 'ολοκληρώθηκε',
+    'booking.status.cancelled': 'ακυρώθηκε',
+    'booking.status.disputed': 'υπό αμφισβήτηση',
+    'booking.event.created': 'δημιουργήθηκε',
+    'booking.event.accepted': 'έγινε δεκτή',
+    'booking.event.started': 'ξεκίνησε',
+    'booking.event.completed': 'ολοκληρώθηκε',
+    'booking.event.cancelled': 'ακυρώθηκε',
+    'booking.event.rescheduled': 'μεταπρογραμματίστηκε',
+    'booking.event.disputed': 'αμφισβητήθηκε',
+
+    // --- Marketplace (care/visits batch) -------------------------------------
+    'market.title': 'Αγορά υπηρεσιών',
+    'market.subtitle': 'Βρείτε και κλείστε αξιόπιστη φροντίδα κοντά σας',
+    'market.searchPlaceholder': 'Αναζήτηση φροντιστών…',
+    'market.searchLabel': 'Αναζήτηση φροντιστών',
+    'market.availableNow': 'Διαθέσιμοι τώρα',
+    'market.sortBy': 'Ταξινόμηση κατά',
+    'market.sort.relevance': 'Καλύτερη αντιστοίχιση',
+    'market.sort.distance': 'Απόσταση',
+    'market.sort.rating': 'Βαθμολογία',
+    'market.sort.price': 'Τιμή (χαμηλή → υψηλή)',
+    'market.maxRate': 'Μέγιστο €/ώρα',
+    'market.maxRateLabel': 'Μέγιστη ωριαία χρέωση σε ευρώ',
+    'market.budgetPlaceholder': 'Προϋπολογισμός',
+    'market.useLocation': 'Χρήση τοποθεσίας μου',
+    'market.usingLocation': '📍 Χρήση τοποθεσίας μου',
+    'market.minRating': 'Ελάχιστη βαθμολογία',
+    'market.any': 'Οποιαδήποτε',
+    'market.favoritesOnly': 'Μόνο αγαπημένα',
+    'market.search': 'Αναζήτηση',
+    'market.reset': 'Επαναφορά',
+    'market.searchName': 'Όνομα αναζήτησης',
+    'market.newName': 'Νέο όνομα',
+    'market.saveName': 'Αποθήκευση ονόματος',
+    'market.saveSearch': 'Αποθήκευση αναζήτησης',
+    'market.saveSearchTitle':
+      'Συνδεθείτε ως οικογένεια για να αποθηκεύετε αναζητήσεις',
+    'market.savedSearches': 'Αποθηκευμένες αναζητήσεις',
+    'market.loadingSaved': 'Φόρτωση αποθηκευμένων αναζητήσεων…',
+    'market.savedEmpty':
+      'Δεν υπάρχουν αποθηκευμένες αναζητήσεις — ορίστε φίλτρα και πατήστε «Αποθήκευση αναζήτησης».',
+    'market.rename': 'μετονομασία',
+    'market.delete': 'διαγραφή',
+    'market.favoritesAvailable.one': '{count} αγαπημένο διαθέσιμο τώρα: {names}',
+    'market.favoritesAvailable.other': '{count} αγαπημένα διαθέσιμα τώρα: {names}',
+    'market.searching': 'Αναζήτηση…',
+    'market.noFavoritesMatch':
+      'Κανένα αγαπημένο δεν ταιριάζει με τα τρέχοντα φίλτρα. Αφαιρέστε το φίλτρο «Μόνο αγαπημένα» ή προσθέστε φροντιστές στα αγαπημένα με το κουμπί ♡.',
+    'market.noMatch': 'Κανένας φροντιστής δεν ταιριάζει με τα τρέχοντα φίλτρα.',
+    'market.addFavorite': 'Προσθήκη του/της {name} στα αγαπημένα',
+    'market.removeFavorite': 'Αφαίρεση του/της {name} από τα αγαπημένα',
+    'market.favoriteTitle':
+      'Συνδεθείτε ως οικογένεια για να αποθηκεύετε αγαπημένα',
+    'market.ratedAria': 'Βαθμολογία {rating} από 5 με {count} αξιολογήσεις',
+    'market.reviewsCount.one': '1 αξιολόγηση',
+    'market.reviewsCount.other': '{count} αξιολογήσεις',
+    'market.availableNowChip': 'διαθέσιμος τώρα',
+    'market.why': 'γιατί αυτά τα αποτελέσματα;',
+    'market.scoreBreakdown': 'Ανάλυση βαθμολογίας',
+    'market.breakdown.rating': 'Βαθμολογία ★: {pct}',
+    'market.breakdown.availableNow': 'Διαθέσιμο τώρα: {pct}',
+    'market.breakdown.distance': 'Ζώνη απόστασης: {pct}',
+    'market.breakdown.price': 'Καταλληλότητα τιμής: {pct}',
+    'market.breakdown.speciality': 'Αντιστοίχιση ειδικότητας: {pct}',
+    'market.breakdown.history': 'Ολοκληρωμένες επισκέψεις: {pct}',
+    'market.breakdown.cancellations': 'Πρόσφατες ακυρώσεις: −{pct}',
+    'market.requestBooking': 'Αίτημα κράτησης',
+    'market.message': 'Μήνυμα',
+    'market.hideReviews': 'Απόκρυψη αξιολογήσεων',
+    'market.reviews.one': 'Αξιολογήσεις (1)',
+    'market.reviews.other': 'Αξιολογήσεις ({count})',
+    'market.loadingReviews': 'Φόρτωση αξιολογήσεων…',
+    'market.noReviews': 'Δεν υπάρχουν αξιολογήσεις ακόμη.',
+    'market.visit': 'επίσκεψη {id}',
+    'market.report': 'Αναφορά',
+    'market.role.client': 'Οικογένεια',
+    'market.role.caregiver': 'Φροντιστής',
+    'market.role.nurse': 'Νοσηλευτής',
+    'market.role.physio': 'Φυσιοθεραπευτής',
+    'market.role.pharmacy': 'Φαρμακείο',
+    'market.role.admin': 'Διαχειριστής',
+
+    // --- Store-generated messages (care/visits stores) -----------------------
+    'market.error.searchUnavailable':
+      'Η αναζήτηση δεν είναι διαθέσιμη αυτή τη στιγμή. Δοκιμάστε ξανά αργότερα.',
+    'market.error.savedLoadFailed':
+      'Δεν ήταν δυνατή η φόρτωση των αποθηκευμένων αναζητήσεων. Δοκιμάστε ξανά.',
+    'market.error.savedSaveFailed':
+      'Δεν ήταν δυνατή η αποθήκευση της αναζήτησης. Δοκιμάστε ξανά.',
+    'market.error.savedRenameFailed':
+      'Δεν ήταν δυνατή η μετονομασία της αναζήτησης. Δοκιμάστε ξανά.',
+    'market.error.savedDeleteFailed':
+      'Δεν ήταν δυνατή η διαγραφή της αναζήτησης. Δοκιμάστε ξανά.',
+    'market.error.favoriteFailed':
+      'Δεν ήταν δυνατή η ενημέρωση των αγαπημένων. Δοκιμάστε ξανά.',
+
+    'chat.error.notConnected':
+      'Χωρίς σύνδεση — το μήνυμα δεν θα φτάσει ακόμη στον φροντιστή.',
+    'chat.error.noConversationAttachment':
+      'Ανοίξτε μια συνομιλία πριν επισυνάψετε αρχείο.',
+    'chat.error.noConversationContext':
+      'Ανοίξτε μια συνομιλία πριν κοινοποιήσετε στοιχεία.',
+    'chat.error.reselectAttachment':
+      'Επιλέξτε ξανά το συνημμένο για να το στείλετε.',
+    'chat.error.invalidFile': 'Μη έγκυρο αρχείο.',
+    'chat.error.unsupportedType':
+      'Μη υποστηριζόμενος τύπος αρχείου. Επιτρέπονται: εικόνες, PDF και φωνητικά σημειώματα.',
+    'chat.error.fileTooLarge': 'Το αρχείο υπερβαίνει το όριο των 10 MB.',
+    'chat.error.uploadNoUrl': 'Η μεταφόρτωση δεν επέστρεψε διεύθυνση URL.',
+    'chat.error.uploadFailed': 'Η μεταφόρτωση απέτυχε. Πατήστε για επανάληψη.',
+
+    'review.error.selectVisit':
+      'Επιλέξτε την επίσκεψη που θέλετε να αξιολογήσετε.',
+    'review.error.bookingMissing': 'Αυτή η κράτηση δεν υπάρχει.',
+    'review.error.notCompleted':
+      'Μπορείτε να αξιολογήσετε αυτή την επίσκεψη αφού ολοκληρωθεί.',
+    'review.error.alreadyRated': 'Έχετε ήδη αξιολογήσει αυτή την επίσκεψη.',
+    'review.error.selfReview':
+      'Οι φροντιστές δεν μπορούν να αξιολογήσουν τον εαυτό τους.',
+    'review.error.loadFailed':
+      'Δεν ήταν δυνατή η φόρτωση των αξιολογήσεων. Δοκιμάστε ξανά.',
+    'review.error.submitFailed':
+      'Δεν ήταν δυνατή η υποβολή της αξιολόγησης. Δοκιμάστε ξανά.',
+    'review.error.updateFailed':
+      'Δεν ήταν δυνατή η ενημέρωση της αξιολόγησης. Δοκιμάστε ξανά.',
+
+    'booking.error.loadFailed':
+      'Δεν ήταν δυνατή η φόρτωση των κρατήσεών σας. Δοκιμάστε ξανά.',
+    'booking.error.dateRequired': 'Ορίστε ημερομηνία και ώρα πριν την αποστολή.',
+    'booking.error.sendFailed':
+      'Δεν ήταν δυνατή η αποστολή του αιτήματος. Δοκιμάστε ξανά.',
+    'booking.error.onlyProviderAccepts':
+      'Μόνο ο φροντιστής μπορεί να αποδεχθεί αυτή την κράτηση.',
+    'booking.error.notInvolvedParty':
+      'Μόνο ο πελάτης ή ο φροντιστής αυτής της κράτησης μπορεί να την ακυρώσει.',
+    'booking.error.notFound': 'Η κράτηση δεν βρέθηκε.',
+    'booking.error.rescheduleNotAllowed':
+      'Αυτή η κράτηση δεν μπορεί πλέον να μεταπρογραμματιστεί.',
+    'booking.error.stale':
+      'Κάποιος άλλος ενημέρωσε αυτή την κράτηση. Ανανέωση…',
+    'booking.error.rescheduleFailed':
+      'Δεν ήταν δυνατός ο μεταπρογραμματισμός. Δοκιμάστε ξανά.',
+    'booking.error.noProposal':
+      'Δεν υπάρχει πρόταση μεταπρογραμματισμού για επιβεβαίωση.',
+    'booking.error.confirmFailed':
+      'Δεν ήταν δυνατή η επιβεβαίωση. Δοκιμάστε ξανά.',
+    'booking.error.invalidTransition':
+      'Δεν είναι δυνατή η μετάβαση αυτής της κράτησης από «{from}» σε «{to}».',
+    'booking.error.updateFailed':
+      'Δεν ήταν δυνατή η ενημέρωση της κράτησης. Δοκιμάστε ξανά.',
+
+    // --- Notification copy (app-authored) ------------------------------------
+    'notifications.error.loadFailed':
+      'Δεν ήταν δυνατή η φόρτωση των ειδοποιήσεων. Δοκιμάστε ξανά.',
+    'notify.bookingCancelled': 'Η κράτηση ακυρώθηκε',
+    'notify.cancelledFree':
+      'Ακυρώθηκε εντός του δωρεάν παραθύρου — πλήρης επιστροφή σε εξέλιξη.',
+    'notify.cancelledLate': 'Ακυρώθηκε καθυστερημένα — ισχύει χρέωση {fee}€.',
+    'notify.rescheduleProposed': 'Προτάθηκε νέα ώρα',
+    'notify.newTime': 'Νέα ώρα: {when}',
+    'notify.rescheduleConfirmed': 'Ο μεταπρογραμματισμός επιβεβαιώθηκε',
+    'notify.agreedTime': 'Συμφωνημένη ώρα: {when}',
+    'notify.status.requested': 'Ζητήθηκε κράτηση',
+    'notify.status.accepted': 'Η κράτηση έγινε δεκτή',
+    'notify.status.inProgress': 'Η επίσκεψη ξεκίνησε',
+    'notify.status.completed': 'Η επίσκεψη ολοκληρώθηκε',
+    'notify.bookingUpdated': 'Η κράτηση ενημερώθηκε',
+    'notify.bookingBody': '{name} · {when}',
+    'notify.escrowReleased':
+      'Η επίσκεψη ολοκληρώθηκε — το escrow αποδεσμεύτηκε.',
+    'notify.vitalsTitle': '{vital} εκτός φυσιολογικών ορίων',
+    'notify.vitalsBody':
+      'Η τελευταία μέτρηση είναι εκτός αναμενόμενου εύρους — δείτε την προβολή τάσεων.',
+    'notify.screeningTitle': 'Ο έλεγχος «{check}» εκκρεμεί',
+    'notify.screeningOverdue':
+      'Αυτός ο προληπτικός έλεγχος εκκρεμεί για την ηλικιακή σας ομάδα — κλείστε επίσκεψη ή σημειώστε τον ως ολοκληρωμένο.',
+    'notify.screeningRecommended':
+      'Συνιστάται προληπτικός έλεγχος για την ηλικιακή σας ομάδα.',
+    'notify.disputeOpened': 'Άνοιγμα διαφοράς',
+    'notify.disputeOpenedBody': 'Άνοιξε διαφορά για την κράτηση {booking}.',
+    'notify.disputeResolvedClient': 'Η διαφορά επιλύθηκε υπέρ σας',
+    'notify.disputeResolvedProvider':
+      'Η διαφορά επιλύθηκε υπέρ του φροντιστή',
+    'notify.partialRefund': 'Επεξεργάστηκε μερική επιστροφή {amount}€.',
+    'notify.fullRefund': 'Επεξεργάστηκε πλήρης επιστροφή.',
+    'notify.escrowReleasedProvider':
+      'Το escrow αποδεσμεύτηκε στον φροντιστή.',
+    'notify.disputeRejected': 'Η διαφορά απορρίφθηκε',
+    'notify.disputeRejectedBody':
+      'Η διαφορά απορρίφθηκε — το escrow αποδεσμεύτηκε.',
+    'notify.testReminderTitle': 'Δοκιμαστική υπενθύμιση: {name}',
+    'notify.testReminderBody':
+      '{preview}. Έτσι θα εμφανίζεται η υπενθύμισή σας.',
+    'notify.testReminderToast':
+      'Δοκιμαστική υπενθύμιση στάλθηκε για {name}',
+    'notify.caregiverCopyTitle': 'Κοινοποίηση σε φροντιστή: {name}',
+    'notify.caregiverCopyBody':
+      'Διπλότυπο υπενθύμισης για {relationship}: ώρα για {dose}.',
+    'notify.caregiverCopyBodyPlain': 'Διπλότυπο υπενθύμισης: ώρα για {dose}.',
+    'notify.reminderTitle': 'Υπενθύμιση: {name}',
+    'notify.reminderBody': 'Ώρα για {dose} ({preview}).',
+
+    // --- Shared vocabulary (used by page batches) ----------------------------
+    'common.loading': 'Φόρτωση…',
+    'common.retry': 'Δοκιμάστε ξανά',
+    'common.save': 'Αποθήκευση',
+    'common.cancel': 'Άκυρο',
+    'common.close': 'Κλείσιμο',
+    'common.confirm': 'Επιβεβαίωση',
+    'common.delete': 'Διαγραφή',
+    'common.edit': 'Επεξεργασία',
+    'common.add': 'Προσθήκη',
+    'common.search': 'Αναζήτηση',
+    'common.filters': 'Φίλτρα',
+    'common.clear': 'Καθαρισμός',
+    'common.back': 'Πίσω',
+    'common.next': 'Επόμενο',
+    'common.submit': 'Υποβολή',
+    'common.required': 'Υποχρεωτικό',
+    'common.optional': 'Προαιρετικό',
+    'common.yes': 'Ναι',
+    'common.no': 'Όχι',
+    'common.all': 'Όλα',
+    'common.none': 'Κανένα',
+    'common.empty': 'Δεν υπάρχει τίποτα ακόμη',
+    'common.error': 'Κάτι πήγε στραβά',
+    'common.saved': 'Αποθηκεύτηκε',
+    'common.saving': 'Αποθήκευση…',
+    'common.sending': 'Αποστολή…',
+
+    // --- Μηνύματα από τα stores ----------------------------------------------
+    'store.readOnly': 'Αυτή η προβολή είναι μόνο για ανάγνωση για τον ρόλο σας.',
+
+    'store.orders.notFound': 'Η παραγγελία δεν βρέθηκε. Ανανεώστε τη λίστα και δοκιμάστε ξανά.',
+    'store.orders.invalidTransition': 'Δεν είναι δυνατή η μετάβαση της παραγγελίας από {from} σε {to}.',
+    'store.orders.updateFailed': 'Δεν ήταν δυνατή η ενημέρωση της παραγγελίας. Δοκιμάστε ξανά.',
+    'store.orders.onlyDeliveredToMeds': 'Μόνο οι παραδοθείσες παραγγελίες μπορούν να προστεθούν στα φάρμακά σας.',
+    'store.orders.noMedsToImport': 'Αυτή η παραγγελία δεν έχει φάρμακα για εισαγωγή.',
+    'store.orders.addMedsFailed': 'Δεν ήταν δυνατή η προσθήκη αυτών των φαρμάκων. Δοκιμάστε ξανά.',
+    'store.orders.onlyDeliveredToHistory': 'Μόνο οι παραδοθείσες παραγγελίες μπορούν να προστεθούν στο ιατρικό ιστορικό σας.',
+    'store.orders.historyUnavailable': 'Το ιατρικό ιστορικό δεν είναι διαθέσιμο αυτή τη στιγμή.',
+    'store.orders.noMedsForHistory': 'Αυτή η παραγγελία δεν έχει φάρμακα για προσθήκη στο ιστορικό σας.',
+    'store.orders.historyPartial': 'Δεν ήταν δυνατή η προσθήκη όλων των στοιχείων στο ιατρικό ιστορικό σας.',
+    'store.orders.historyFailed': 'Δεν ήταν δυνατή η προσθήκη αυτών των συνταγών στο ιατρικό ιστορικό σας.',
+    'store.orders.statusTitle': 'Παραγγελία φαρμακείου: {status}',
+    'store.orders.statusBody': 'Η παραγγελία {id} είναι τώρα {status}.',
+    'store.orders.statusBodyAt': 'Η παραγγελία {id} είναι τώρα {status} στο {pharmacy}.',
+
+    'store.paymentMethods.loadFailed': 'Δεν ήταν δυνατή η φόρτωση των μεθόδων πληρωμής σας.',
+    'store.paymentMethods.cardDeclined': 'Η κάρτα σας απορρίφθηκε. Δοκιμάστε άλλη.',
+    'store.paymentMethods.tokenizeFailed': 'Δεν ήταν δυνατή η καταχώριση της κάρτας σας. Δοκιμάστε ξανά.',
+    'store.paymentMethods.saveFailed': 'Δεν ήταν δυνατή η αποθήκευση της μεθόδου πληρωμής. Δοκιμάστε ξανά.',
+    'store.paymentMethods.defaultFailed': 'Δεν ήταν δυνατός ο ορισμός ως προεπιλεγμένης μεθόδου πληρωμής.',
+    'store.paymentMethods.removeFailed': 'Δεν ήταν δυνατή η αφαίρεση αυτής της μεθόδου πληρωμής.',
+
+    'store.disputes.loadFailed': 'Δεν ήταν δυνατή η φόρτωση των διαφορών σας. Δοκιμάστε ξανά.',
+    'store.disputes.queueFailed': 'Δεν ήταν δυνατή η φόρτωση της ουράς διαφορών. Δοκιμάστε ξανά.',
+    'store.disputes.openFailed': 'Δεν ήταν δυνατό το άνοιγμα της διαφοράς. Δοκιμάστε ξανά.',
+    'store.disputes.resolveFailed': 'Δεν ήταν δυνατή η επίλυση της διαφοράς. Δοκιμάστε ξανά.',
+    'store.disputes.updateFailed': 'Δεν ήταν δυνατή η ενημέρωση της διαφοράς. Δοκιμάστε ξανά.',
+
+    'store.contacts.loadFailed': 'Δεν ήταν δυνατή η φόρτωση των επαφών σας. Δοκιμάστε ξανά.',
+    'store.contacts.saveFailed': 'Δεν ήταν δυνατή η αποθήκευση αυτής της επαφής. Δοκιμάστε ξανά.',
+    'store.contacts.updateFailed': 'Δεν ήταν δυνατή η ενημέρωση αυτής της επαφής.',
+    'store.contacts.primaryFailed': 'Δεν ήταν δυνατός ο ορισμός της κύριας επαφής.',
+
+    'store.history.loadFailed': 'Δεν ήταν δυνατή η φόρτωση: {kind}. Δοκιμάστε ξανά.',
+    'store.history.addFailed': 'Δεν ήταν δυνατή η αποθήκευση: {kind}. Δοκιμάστε ξανά.',
+    'store.history.updateFailed': 'Δεν ήταν δυνατή η ενημέρωση αυτής της εγγραφής.',
+    'store.history.addToMedsFailed': 'Δεν ήταν δυνατή η προσθήκη αυτής της συνταγής στα φάρμακα.',
+    'store.history.kind.conditions': 'παθήσεις και διαγνώσεις',
+    'store.history.kind.allergies': 'αλλεργίες',
+    'store.history.kind.immunizations': 'εμβολιασμούς',
+    'store.history.kind.events': 'ιατρικά συμβάντα',
+    'store.history.kind.symptoms': 'συμπτώματα',
+    'store.history.kind.prescriptions': 'συνταγές',
+    'store.history.one.conditions': 'πάθηση',
+    'store.history.one.allergies': 'αλλεργία',
+    'store.history.one.immunizations': 'εμβολιασμό',
+    'store.history.one.events': 'ιατρικό συμβάν',
+    'store.history.one.symptoms': 'σύμπτωμα',
+    'store.history.one.prescriptions': 'συνταγή',
+
+    'store.export.consentPdf': 'Επιβεβαιώστε τη συγκατάθεση εξαγωγής πριν δημιουργήσετε το PDF.',
+    'store.export.pdfFailed': 'Δεν ήταν δυνατή η δημιουργία του PDF. Δοκιμάστε ξανά.',
+    'store.export.nothingToRetry': 'Δεν υπάρχει κάτι για νέα προσπάθεια — ξεκινήστε πρώτα μια εξαγωγή.',
+    'store.export.consentFhir': 'Επιβεβαιώστε τη συγκατάθεση εξαγωγής πριν δημιουργήσετε το πακέτο FHIR.',
+    'store.export.fhirInvalid': 'Το πακέτο FHIR απέτυχε την επικύρωση: {detail}',
+    'store.export.fhirFailed': 'Δεν ήταν δυνατή η δημιουργία του πακέτου FHIR. Δοκιμάστε ξανά.',
+
+    'store.medications.addFailed': 'Δεν ήταν δυνατή η προσθήκη του φαρμάκου. Δοκιμάστε ξανά.',
+    'store.medications.logDoseFailed': 'Δεν ήταν δυνατή η καταγραφή της δόσης. Δοκιμάστε ξανά.',
+    'store.medications.archiveFailed': 'Δεν ήταν δυνατή η αρχειοθέτηση του φαρμάκου.',
+    'store.medications.instructionsFailed': 'Δεν ήταν δυνατή η αποθήκευση των οδηγιών. Δοκιμάστε ξανά.',
+
+    'store.escrow.holdFailed': 'Δεν ήταν δυνατή η δέσμευση του ποσού.',
+    'store.escrow.partialRefundFailed': 'Δεν ήταν δυνατή η επεξεργασία της μερικής επιστροφής.',
+    'store.escrow.releaseFailed': 'Δεν ήταν δυνατή η αποδέσμευση του ποσού.',
+    'store.escrow.refundFailed': 'Δεν ήταν δυνατή η επιστροφή του ποσού.',
+
+    'store.visit.saveFailed': 'Δεν ήταν δυνατή η αποθήκευση της επίσκεψης. Δοκιμάστε ξανά.',
+    'store.visit.checkInLocation': 'Δεν ήταν δυνατή η προσέλευση — ενεργοποιήστε την πρόσβαση τοποθεσίας για να σημειωθεί η επίσκεψη.',
+    'store.visit.checkOutLocation': 'Δεν ήταν δυνατή η αποχώρηση — ενεργοποιήστε την πρόσβαση τοποθεσίας για να σημειωθεί η επίσκεψη.',
+    'store.visit.gpsUnavailable': 'Η ζωντανή παρακολούθηση δεν είναι διαθέσιμη — σφάλμα GPS.',
+
+    'store.screening.reasonRequired': 'Απαιτείται αιτιολόγηση για την παράβλεψη ενός ελέγχου.',
+    'store.screening.snoozeLimit': 'Αυτός ο έλεγχος μπορεί να αναβληθεί μόνο {max} φορές.',
+    'store.screening.invalidDate': 'Επιλέξτε έγκυρη ημερομηνία για τον προγραμματισμό αυτού του ελέγχου.',
+    'store.screening.updateFailed': 'Δεν ήταν δυνατή η ενημέρωση του ελέγχου. Δοκιμάστε ξανά.',
+
+    'store.vetting.submitFailed': 'Δεν ήταν δυνατή η υποβολή της άδειάς σας. Δοκιμάστε ξανά.',
+    'store.vetting.reviewFailed': 'Δεν ήταν δυνατή η αξιολόγηση της υποβολής.',
+
+    'store.payout.loadFailed': 'Δεν ήταν δυνατή η φόρτωση του λογαριασμού πληρωμών σας.',
+    'store.payout.saveFailed': 'Δεν ήταν δυνατή η αποθήκευση του λογαριασμού πληρωμών σας. Δοκιμάστε ξανά.',
+
+    'store.prescriptions.scanFailed': 'Δεν ήταν δυνατή η ανάγνωση του barcode. Δοκιμάστε ξανά ή εισαγάγετε τα στοιχεία χειροκίνητα.',
+
+    'store.reminders.saveFailed': 'Δεν ήταν δυνατή η αποθήκευση των προτιμήσεων υπενθύμισης. Δοκιμάστε ξανά.',
+    'store.reminders.unknownTimezone': 'Άγνωστη ζώνη ώρας «{timezone}». Χρησιμοποιήστε όνομα IANA, π.χ. Europe/Athens.',
+
+    'store.consents.loadFailed': 'Δεν ήταν δυνατή η φόρτωση των ρυθμίσεων συγκατάθεσης.',
+    'store.consents.saveFailed': 'Δεν ήταν δυνατή η αποθήκευση της συγκατάθεσης.',
+    'store.auditConsent.loadFailed': 'Δεν ήταν δυνατή η φόρτωση των ρυθμίσεων συγκατάθεσής σας.',
+    'store.auditConsent.saveFailed': 'Δεν ήταν δυνατή η αποθήκευση των ρυθμίσεων συγκατάθεσής σας. Δοκιμάστε ξανά.',
+
+    'store.profile.saveFailed': 'Δεν ήταν δυνατή η αποθήκευση του προφίλ σας. Δοκιμάστε ξανά.',
+    'store.wallet.syncFailed': 'Δεν ήταν δυνατός ο συγχρονισμός του πορτοφολιού υγείας. Δοκιμάστε ξανά.',
+    'store.shifts.saveFailed': 'Δεν ήταν δυνατή η αποθήκευση της διαθεσιμότητάς σας. Δοκιμάστε ξανά.',
+    'store.clinicalLog.saveFailed': 'Δεν ήταν δυνατή η αποθήκευση του κλινικού αρχείου. Δοκιμάστε ξανά.',
+    'store.carePlan.saveFailed': 'Δεν ήταν δυνατή η ενημέρωση του πλάνου φροντίδας. Δοκιμάστε ξανά.',
+    'store.vitals.saveFailed': 'Δεν ήταν δυνατή η αποθήκευση της μέτρησης. Δοκιμάστε ξανά.',
+
+    'store.bluetooth.unsupported': 'Το Web Bluetooth δεν υποστηρίζεται σε αυτόν τον περιηγητή ή περιβάλλον.',
+    'store.bluetooth.insecureContext': 'Το Web Bluetooth απαιτεί ασφαλές περιβάλλον (HTTPS ή localhost).',
+    'store.bluetooth.connectFailed': 'Η σύνδεση με τη συσκευή απέτυχε.',
+    'store.bluetooth.streamFailed': 'Δεν ήταν δυνατή η εκκίνηση της προσομοιωμένης ροής δεδομένων.',
+    'store.bluetooth.gattFailed': 'Η ρύθμιση των ειδοποιήσεων GATT απέτυχε.',
+    'store.bluetooth.implausible': 'Λήφθηκε μη ρεαλιστική μέτρηση — ελέγξτε τη θέση της συσκευής.',
+    'store.bluetooth.parseFailed': 'Δεν ήταν δυνατή η ανάλυση δεδομένων από τη συσκευή.',
+    'store.bluetooth.reconnecting': 'Η σύνδεση χάθηκε. Επανασύνδεση ({attempt}/{max})…',
+    'store.bluetooth.connectionLost': 'Η σύνδεση χάθηκε. Συνδέστε ξανά τη συσκευή σας.',
+    'store.bluetooth.adapterUnavailable': 'Ο προσαρμογέας Bluetooth δεν είναι διαθέσιμος για επανασύνδεση.',
+
+    'store.savedSearch.availableNow': 'διαθέσιμοι τώρα',
+    'store.savedSearch.all': 'Όλοι οι φροντιστές',
+  },
+};

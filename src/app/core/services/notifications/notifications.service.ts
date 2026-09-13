@@ -2,6 +2,8 @@ import { Injectable, inject, signal, computed } from '@angular/core';
 import { ApiClient } from '../../api/api.client';
 import { WebSocketClient, WsEnvelope } from '../ws/websocket.client';
 import { Router } from '@angular/router';
+import { TranslatableMessage, translateStatic } from '../../i18n/i18n.service';
+import { LocalizedMessage } from '../../i18n/localized-message';
 
 /**
  * Notification center (FEATURE_PLAN.md §4), built on the §3 seam. Backend is
@@ -37,6 +39,12 @@ export interface AppNotification {
   kind: NotificationKind;
   title: string;
   body: string;
+  /**
+   * Present when the app (not the server) authored this notification, so the
+   * shell can render the title/body in the active language. `title`/`body`
+   * stay populated with the English rendering for logs and non-DI consumers.
+   */
+  source?: { title: TranslatableMessage; body: TranslatableMessage };
   /** Route to navigate to when activated (kind→route map used as fallback). */
   link?: string;
   /** Opaque backend payload (ids, amounts, …); UI renders title/body. */
@@ -48,6 +56,8 @@ export interface AppNotification {
 export interface AppToast {
   id: string;
   text: string;
+  /** Present when the app authored the toast; see {@link AppNotification.source}. */
+  source?: TranslatableMessage;
   tone: 'info' | 'success' | 'error';
 }
 
@@ -125,7 +135,7 @@ export class NotificationsService {
   private readonly _toasts = signal<AppToast[]>([]);
   private readonly _loading = signal(false);
   /** Last load error message (empty = no error; drives the panel error state). */
-  private readonly _error = signal('');
+  private readonly _error = new LocalizedMessage();
   /** Kinds the user muted (no panel entry, no toast, no push). */
   private readonly _mutes = signal<Set<NotificationKind>>(this.loadMutes());
   /** Set once the first backend load completed (empty-state handling). */
@@ -134,7 +144,9 @@ export class NotificationsService {
   readonly items = this._items.asReadonly();
   readonly toasts = this._toasts.asReadonly();
   readonly loading = this._loading.asReadonly();
-  readonly error = this._error.asReadonly();
+  /** Translatable source of the error (null when the message came from the server). */
+  readonly errorSource = this._error.source;
+  readonly error = this._error.value;
   readonly loaded = this._loaded.asReadonly();
   readonly mutes = this._mutes.asReadonly();
 
@@ -161,7 +173,7 @@ export class NotificationsService {
       return;
     }
     this._loading.set(true);
-    this._error.set('');
+    this._error.clear();
     this.api
       .get<{ items: AppNotification[]; unread: number }>('/me/notifications')
       .subscribe({
@@ -172,7 +184,7 @@ export class NotificationsService {
         },
         error: () => {
           this._loading.set(false);
-          this._error.set('Could not load notifications. Please try again.');
+          this._error.set({ key: 'notifications.error.loadFailed' });
         },
       });
   }
@@ -226,19 +238,46 @@ export class NotificationsService {
     }
   }
 
-  /** In-app emit (feature-3 seam; kept for local-only events). */
-  notify(kind: NotificationKind, title: string, body: string, link?: string): void {
+  /**
+   * In-app emit (feature-3 seam; kept for local-only events).
+   *
+   * Pass a {@link TranslatableMessage} for copy the app authors — the panel then
+   * renders it in the active language. A plain string is treated as
+   * server-provided copy and shown verbatim.
+   */
+  notify(
+    kind: NotificationKind,
+    title: string | TranslatableMessage,
+    body: string | TranslatableMessage,
+    link?: string
+  ): void {
+    const titleSource = typeof title === 'string' ? null : title;
+    const bodySource = typeof body === 'string' ? null : body;
     this.ingest(
-      { id: nextId('ntf'), kind, title, body, link, createdAtMs: Date.now(), readAtMs: null },
+      {
+        id: nextId('ntf'),
+        kind,
+        title: typeof title === 'string' ? title : translateStatic(title.key, title.params),
+        body: typeof body === 'string' ? body : translateStatic(body.key, body.params),
+        ...(titleSource && bodySource
+          ? { source: { title: titleSource, body: bodySource } }
+          : {}),
+        link,
+        createdAtMs: Date.now(),
+        readAtMs: null,
+      },
       false
     );
   }
 
-  toast(text: string, tone: AppToast['tone'] = 'info'): void {
-    if (this._toasts().some((t) => t.text === text)) {
+  /** See {@link notify} — a `TranslatableMessage` is resolved per locale. */
+  toast(text: string | TranslatableMessage, tone: AppToast['tone'] = 'info'): void {
+    const source = typeof text === 'string' ? null : text;
+    const rendered = typeof text === 'string' ? text : translateStatic(text.key, text.params);
+    if (this._toasts().some((t) => t.text === rendered)) {
       return;
     }
-    const toast: AppToast = { id: nextId('tst'), text, tone };
+    const toast: AppToast = { id: nextId('tst'), text: rendered, source: source ?? undefined, tone };
     this._toasts.update((list) => [...list.slice(-4), toast]);
     setTimeout(() => {
       this._toasts.update((list) => list.filter((t) => t.id !== toast.id));

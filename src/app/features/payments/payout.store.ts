@@ -1,6 +1,7 @@
 import { Injectable, inject, signal, computed } from '@angular/core';
 import { Observable, map, catchError, of } from 'rxjs';
 import { ApiClient } from '../../core/api/api.client';
+import { LocalizedMessage } from '../../core/i18n/localized-message';
 
 /**
  * Provider-side payout-state (FEATURE_PLAN.md §13.4, §13.9). Tracks the
@@ -47,13 +48,15 @@ export class PayoutStore {
   private readonly _account = signal<PayoutAccount | null>(null);
   private readonly _loading = signal(false);
   private readonly _saving = signal(false);
-  private readonly _error = signal('');
+  private readonly _error = new LocalizedMessage();
   private readonly _saved = signal(false);
 
   readonly account = this._account.asReadonly();
   readonly loading = this._loading.asReadonly();
   readonly saving = this._saving.asReadonly();
-  readonly error = this._error.asReadonly();
+  /** Translatable source of the message (null for server-provided text). */
+  readonly errorSource = this._error.source;
+  readonly error = this._error.value;
   readonly saved = this._saved.asReadonly();
 
   readonly status = computed(() => this._account()?.status ?? 'not_started');
@@ -61,7 +64,7 @@ export class PayoutStore {
 
   load(): void {
     this._loading.set(true);
-    this._error.set('');
+    this._error.clear();
     this.api.get<PayoutAccount>('/me/payout-account').subscribe({
       next: (account) => {
         this._account.set(account);
@@ -70,10 +73,9 @@ export class PayoutStore {
       error: (err) => {
         this._loading.set(false);
         if (err?.status !== 404) {
-          this._error.set(
-            (err as { error?: { message?: string } })?.error?.message ??
-              'Could not load your payout account.'
-          );
+          this._error.setFromServer((err as { error?: { message?: string } })?.error?.message, {
+              key: 'store.payout.loadFailed',
+            });
         }
       },
     });
@@ -82,7 +84,7 @@ export class PayoutStore {
   save(patch: PayoutAccountPatch): Observable<boolean> {
     this._saving.set(true);
     this._saved.set(false);
-    this._error.set('');
+    this._error.clear();
     return this.api.put<PayoutAccount>('/me/payout-account', patch).pipe(
       map((account) => {
         this._account.set(account);
@@ -92,10 +94,9 @@ export class PayoutStore {
       }),
       catchError((error) => {
         this._saving.set(false);
-        this._error.set(
-          (error as { error?: { message?: string } })?.error?.message ??
-            'Could not save your payout account. Please try again.'
-        );
+        this._error.setFromServer((error as { error?: { message?: string } })?.error?.message, {
+            key: 'store.payout.saveFailed',
+          });
         return of(false);
       })
     );

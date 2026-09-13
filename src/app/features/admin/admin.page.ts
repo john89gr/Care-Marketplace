@@ -6,6 +6,7 @@ import {
   CertificationStatus,
   daysUntilExpiry,
 } from '../../core/services/integrations/certification-status';
+import { I18n } from '../../core/i18n/i18n.service';
 
 function formatDate(ms: number): string {
   return new Date(ms).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
@@ -24,7 +25,7 @@ function formatDate(ms: number): string {
       @if (store.loading()) {
         <p>Loading…</p>
       } @else if (store.error()) {
-        <p class="error" role="alert">{{ store.error() }}</p>
+        <p class="error" role="alert">{{ i18n.message(store.errorSource(), store.error()) }}</p>
       } @else if (pending().length === 0) {
         <p>No submissions awaiting review.</p>
       } @else {
@@ -171,6 +172,8 @@ function formatDate(ms: number): string {
   `,
 })
 export class AdminPage implements OnInit {
+  protected readonly i18n = inject(I18n);
+
   readonly store = inject(VettingStore);
   readonly reviewStore = inject(ReviewsStore);
 

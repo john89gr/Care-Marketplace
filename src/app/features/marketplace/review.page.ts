@@ -8,21 +8,16 @@ import {
   MAX_COMMENT_LENGTH,
 } from './reviews.store';
 import { SessionStore } from '../../core/auth/session';
-
-function formatDate(ms: number): string {
-  return new Date(ms).toLocaleDateString(undefined, {
-    day: 'numeric',
-    month: 'short',
-    year: 'numeric',
-  });
-}
+import { I18n } from '../../core/i18n/i18n.service';
 
 /**
  * Review form (FEATURE_PLAN.md §1): rate a completed visit 1–5 stars with an
  * optional comment. One review per completed booking; the star picker is a
  * native radio group so it stays keyboard- and screen-reader-friendly. The
- * fields are signal-backed with explicit change handlers (the pattern used by
- * the marketplace/export pages in this build).
+ * fields are signal-backed with explicit change handlers.
+ *
+ * Bilingual. The star radios are labelled "<n> star(s)" — English keeps that
+ * exact wording because the E2E suite addresses them by accessible name.
  */
 @Component({
   selector: 'app-review',
@@ -30,34 +25,36 @@ function formatDate(ms: number): string {
   imports: [],
   template: `
     <section class="review">
-      <h1>Rate your visit</h1>
+      <header class="page-header">
+        <h1 class="page-title">{{ i18n.t('review.title') }}</h1>
+        <p class="page-subtitle">{{ i18n.t('review.subtitle') }}</p>
+      </header>
 
       @if (store.loading()) {
-        <p>Loading…</p>
+        <p class="meta">{{ i18n.t('common.loading') }}</p>
       } @else if (eligible().length === 0) {
-        <p>
-          Nothing to review yet. You can rate a visit once its booking is
-          completed, and each visit can be rated once.
-        </p>
+        <p class="empty-state">{{ i18n.t('review.empty') }}</p>
       } @else {
-        <form (submit)="submit($event)">
-          <label for="booking-select">Visit</label>
-          <select
-            id="booking-select"
-            [value]="bookingId()"
-            (change)="onBookingChange($any($event.target).value)"
-          >
-            @for (booking of eligible(); track booking.id) {
-              <option [value]="booking.id">
-                {{ booking.caregiverName }} · {{ formatDate(booking.scheduledAtMs) }}
-              </option>
-            }
-          </select>
+        <form class="card" (submit)="submit($event)">
+          <label class="field" for="booking-select">
+            <span class="field-label">{{ i18n.t('review.visit') }}</span>
+            <select
+              id="booking-select"
+              [value]="bookingId()"
+              (change)="onBookingChange($any($event.target).value)"
+            >
+              @for (booking of eligible(); track booking.id) {
+                <option [value]="booking.id">
+                  {{ booking.caregiverName }} · {{ formatDate(booking.scheduledAtMs) }}
+                </option>
+              }
+            </select>
+          </label>
 
           <fieldset class="stars">
-            <legend>Your rating</legend>
+            <legend class="field-label">{{ i18n.t('review.yourRating') }}</legend>
             @for (star of stars; track star) {
-              <label class="star" [attr.aria-label]="star + ' star' + (star > 1 ? 's' : '')">
+              <label class="star" [attr.aria-label]="starLabel(star)">
                 <input
                   type="radio"
                   [value]="star"
@@ -68,63 +65,107 @@ function formatDate(ms: number): string {
                 <span aria-hidden="true">{{ rating() >= star ? '★' : '☆' }}</span>
               </label>
             }
-            <span class="rating-value" aria-hidden="true">{{ rating() }} / {{ MAX_RATING }}</span>
+            <span class="rating-value" aria-hidden="true">
+              {{ rating() }} / {{ MAX_RATING }}
+            </span>
           </fieldset>
           @if (showRatingError()) {
-            <p class="error" role="alert">Choose a rating between 1 and 5 stars.</p>
+            <p class="error" role="alert">{{ i18n.t('review.ratingError') }}</p>
           }
 
-          <label for="comment">Comment (optional)</label>
-          <textarea
-            id="comment"
-            rows="4"
-            [value]="comment()"
-            (input)="comment.set($any($event.target).value)"
-            [attr.maxlength]="MAX_COMMENT_LENGTH"
-            aria-describedby="comment-count"
-            [attr.aria-invalid]="showCommentError() ? true : null"
-          ></textarea>
+          <label class="field" for="comment">
+            <span class="field-label">{{ i18n.t('review.comment') }}</span>
+            <textarea
+              id="comment"
+              rows="4"
+              [value]="comment()"
+              (input)="comment.set($any($event.target).value)"
+              [attr.maxlength]="MAX_COMMENT_LENGTH"
+              aria-describedby="comment-count"
+              [attr.aria-invalid]="showCommentError() ? true : null"
+            ></textarea>
+          </label>
           <p class="meta" id="comment-count" aria-hidden="true">
             {{ comment().length }} / {{ MAX_COMMENT_LENGTH }}
           </p>
           @if (showCommentError()) {
             <p class="error" role="alert">
-              Keep your comment under {{ MAX_COMMENT_LENGTH }} characters.
+              {{ i18n.t('review.commentError', { max: MAX_COMMENT_LENGTH }) }}
             </p>
           }
 
-          <button type="submit" [disabled]="store.submitting()">
-            {{ store.submitting() ? 'Sending…' : 'Submit review' }}
-          </button>
+          <div class="card-actions">
+            <button type="submit" class="btn" [disabled]="store.submitting()">
+              {{ store.submitting() ? i18n.t('common.sending') : i18n.t('review.submit') }}
+            </button>
+          </div>
         </form>
       }
 
       <div aria-live="polite">
         @if (store.submitted()) {
-          <p class="success" role="status">Thank you — your review is published.</p>
+          <p class="success" role="status">{{ i18n.t('review.thanks') }}</p>
         } @else if (store.validationError()) {
-          <p class="error" role="alert">{{ store.validationError() }}</p>
+          <p class="error" role="alert">
+            {{ i18n.message(store.validationErrorSource(), store.validationError()) }}
+          </p>
         } @else if (store.error()) {
-          <p class="error" role="alert">{{ store.error() }}</p>
+          <p class="error" role="alert">{{ i18n.message(store.errorSource(), store.error()) }}</p>
         }
       </div>
     </section>
   `,
   styles: `
-    label, legend { display: block; margin: 0.75rem 0 0.25rem; font-weight: 600; }
-    select, textarea { width: 100%; max-width: 28rem; }
-    .stars { border: none; padding: 0; display: flex; align-items: center; gap: 0.25rem; }
-    .star input { position: absolute; opacity: 0; width: 1px; height: 1px; }
-    .star span { font-size: 1.6rem; cursor: pointer; }
-    .star input:focus-visible + span { outline: 2px solid var(--accent, #4f7cff); outline-offset: 2px; }
-    .rating-value { margin-left: 0.5rem; font-weight: 400; }
-    .success { color: var(--success, #1d7a3d); }
-    .error { color: var(--danger, #c62828); }
-    button[type='submit'] { margin-top: 0.75rem; }
+    .review form {
+      max-width: 32rem;
+      display: grid;
+      gap: var(--space-2);
+    }
+    .stars {
+      border: none;
+      padding: 0;
+      display: flex;
+      align-items: center;
+      gap: 0.25rem;
+      margin: 0;
+    }
+    .star {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.15rem;
+      margin: 0;
+      font-weight: var(--weight-normal);
+    }
+    .star input {
+      position: absolute;
+      opacity: 0;
+      width: 1px;
+      height: 1px;
+    }
+    .star span {
+      font-size: 1.6rem;
+      cursor: pointer;
+      line-height: 1;
+    }
+    .star input:focus-visible + span {
+      outline: 2px solid var(--accent);
+      outline-offset: 2px;
+      border-radius: var(--radius-sm);
+    }
+    .rating-value {
+      margin-left: var(--space-2);
+      font-weight: var(--weight-normal);
+      color: var(--text-muted);
+    }
+    .success {
+      color: var(--success);
+      font-weight: var(--weight-semibold);
+    }
   `,
 })
 export class ReviewPage implements OnInit {
   readonly store = inject(ReviewsStore);
+  protected readonly i18n = inject(I18n);
   private readonly bookings = inject(BookingStore);
   private readonly session = inject(SessionStore);
   private readonly route = inject(ActivatedRoute);
@@ -156,6 +197,11 @@ export class ReviewPage implements OnInit {
   readonly showCommentError = computed(
     () => this.comment().length > MAX_COMMENT_LENGTH && this.submitAttempted()
   );
+
+  /** "5 stars" / "1 star" — the accessible name the E2E suite addresses. */
+  starLabel(star: number): string {
+    return `${star} ${this.i18n.t(star > 1 ? 'review.stars' : 'review.star')}`;
+  }
 
   /** My reviews (to exclude already-rated bookings). */
   private readonly myReviewedBookingIds = computed(() => {
@@ -253,6 +299,10 @@ export class ReviewPage implements OnInit {
   }
 
   formatDate(ms: number): string {
-    return formatDate(ms);
+    return new Date(ms).toLocaleDateString(this.i18n.locale(), {
+      day: 'numeric',
+      month: 'short',
+      year: 'numeric',
+    });
   }
 }
