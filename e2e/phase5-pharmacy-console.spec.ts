@@ -89,21 +89,21 @@ test('pharmacy console advances an order through the fulfilment pipeline', async
   await expect(page.getByText('Deliver to: Mitropoleos 12, Athens')).toBeVisible();
   await expect(page.getByText(/Atorvastatin/)).toBeVisible();
   // Routed order offers the next legal actions only.
-  await expect(page.locator('.chip[data-status="routed"]')).toBeVisible();
+  await expect(page.locator('[data-status="routed"]')).toBeVisible();
   await expect(page.getByRole('button', { name: 'Accepted' })).toBeVisible();
 
   // Each fulfilment action replaces the chip and yields the next legal action.
   await page.getByRole('button', { name: 'Accepted' }).click();
-  await expect(page.locator('.chip[data-status="accepted"]')).toBeVisible();
+  await expect(page.locator('[data-status="accepted"]')).toBeVisible();
 
   await page.getByRole('button', { name: 'Preparing' }).click();
-  await expect(page.locator('.chip[data-status="preparing"]')).toBeVisible();
+  await expect(page.locator('[data-status="preparing"]')).toBeVisible();
 
   await page.getByRole('button', { name: 'Out for delivery' }).click();
-  await expect(page.locator('.chip[data-status="out_for_delivery"]')).toBeVisible();
+  await expect(page.locator('[data-status="out_for_delivery"]')).toBeVisible();
 
   await page.getByRole('button', { name: 'Delivered' }).click();
-  await expect(page.locator('.chip[data-status="delivered"]')).toBeVisible();
+  await expect(page.locator('[data-status="delivered"]')).toBeVisible();
   await expect(page.getByText('No further actions.')).toBeVisible();
 
   // The same store kept the mock in sync end to end.
@@ -127,7 +127,7 @@ test('a terminal order shows no fulfilment buttons', async ({ page }) => {
   );
 
   await page.goto('/pharmacy');
-  await expect(page.locator('.chip[data-status="delivered"]')).toBeVisible();
+  await expect(page.locator('[data-status="delivered"]')).toBeVisible();
   await expect(page.getByText('No further actions.')).toBeVisible();
   await expect(page.getByRole('button', { name: 'Delivered' })).toHaveCount(0);
 });
@@ -140,5 +140,5 @@ test('non-pharmacy roles are blocked from the console (RBAC guard)', async ({ pa
 
   await page.goto('/pharmacy');
   await expect(page).toHaveURL(/\/forbidden/);
-  await expect(page.getByRole('heading', { name: /Accès refusé/ })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Access denied' })).toBeVisible();
 });

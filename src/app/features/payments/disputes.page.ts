@@ -19,55 +19,91 @@ function formatTimeDiff(ms: number): string {
   return `${days}d ${hours % 24}h`;
 }
 
+/** Badge tone per dispute state (the label carries the meaning, not the colour). */
+const STATE_TONES: Record<string, string> = {
+  open: 'warning',
+  under_review: 'info',
+  resolved_client: 'success',
+  resolved_provider: 'success',
+  rejected: 'danger',
+};
+
 @Component({
   selector: 'app-disputes',
   standalone: true,
   imports: [AdminQueueComponent, DisputeDetailComponent],
   template: `
     <section class="disputes">
-      <h1>Dispute resolution</h1>
+      <header class="page-header">
+        <div>
+          <h1 class="page-title">{{ i18n.t('disputes.title') }}</h1>
+        </div>
+      </header>
 
       @if (store.loading()) {
-        <p>Loading…</p>
-      } @else if (store.error()) {
-        <p class="error" role="alert">{{ i18n.message(store.errorSource(), store.error()) }}</p>
+        <div class="grid grid-2" aria-hidden="true">
+          <div class="skeleton block"></div>
+          <div class="skeleton block"></div>
+        </div>
       }
 
       @if (isAdmin()) {
         <admin-queue />
       }
 
-      <h2>My disputes</h2>
-      @if (store.disputes().length === 0) {
-        <p>No disputes yet.</p>
-        @if (isAdmin()) {
-          <p>The admin queue above shows all open disputes.</p>
-        }
-      } @else {
-        <ul class="results">
-          @for (dispute of store.disputes(); track dispute.id) {
-            <li class="card" (click)="select(dispute)" tabindex="0">
-              <div class="row">
-                <h3>Dispute {{ dispute.id }}</h3>
-                <span class="chip" [class.warn]="dispute.state === 'open'"
-                  [class.info]="dispute.state === 'under_review'"
-                  [class.ok]="dispute.state.startsWith('resolved')"
-                  [class.bad]="dispute.state === 'rejected'">
-                  {{ dispute.state }}
-                </span>
-              </div>
-              <p class="meta">Booking {{ dispute.bookingId }} · {{ DISPUTE_REASON_LABELS[dispute.reason] }}</p>
-              <p class="meta">{{ formatDate(dispute.createdAtMs) }} · opened by {{ dispute.openedByName }}</p>
-              @if (dispute.resolution) {
-                <p class="meta">
-                  Resolved: {{ dispute.resolution }}
-                  @if (dispute.refundCents) { · −{{ (dispute.refundCents / 100).toFixed(2) }}€ to client }
-                </p>
-              }
-            </li>
+      <section class="section">
+        <div class="section-header">
+          <h2 class="section-title">{{ i18n.t('disputes.mine') }}</h2>
+          @if (openCount() > 0) {
+            <span class="badge warning">
+              <span class="dot"></span>{{ openCount() }}
+            </span>
           }
-        </ul>
-      }
+        </div>
+
+        @if (store.disputes().length === 0) {
+          <div class="empty-state">
+            <span class="empty-icon" aria-hidden="true">⚖️</span>
+            <p>{{ i18n.t('disputes.empty') }}</p>
+            @if (isAdmin()) {
+              <p class="meta">{{ i18n.t('disputes.adminHint') }}</p>
+            }
+          </div>
+        } @else {
+          <ul class="results">
+            @for (dispute of store.disputes(); track dispute.id) {
+              <li class="card interactive dispute-card" (click)="select(dispute)" tabindex="0">
+                <div class="row">
+                  <div>
+                    <h3>{{ i18n.t('disputes.itemTitle', { id: dispute.id }) }}</h3>
+                    <p class="meta">
+                      {{ i18n.t('payments.bookingRef', { id: dispute.bookingId }) }} ·
+                      {{ DISPUTE_REASON_LABELS[dispute.reason] }}
+                    </p>
+                  </div>
+                  <span [class]="'badge ' + stateTone(dispute.state)">
+                    <span class="dot"></span>{{ dispute.state }}
+                  </span>
+                </div>
+
+                <p class="meta">
+                  {{ formatDate(dispute.createdAtMs) }} ·
+                  {{ i18n.t('disputes.openedBy', { name: dispute.openedByName }) }}
+                </p>
+
+                @if (dispute.resolution) {
+                  <p class="meta resolved">
+                    {{ i18n.t('disputes.resolved', { resolution: dispute.resolution }) }}
+                    @if (dispute.refundCents) {
+                      {{ i18n.t('disputes.refundToClient', { amount: (dispute.refundCents / 100).toFixed(2) }) }}
+                    }
+                  </p>
+                }
+              </li>
+            }
+          </ul>
+        }
+      </section>
 
       @if (selected()) {
         <dispute-detail [dispute]="selected()!" (close)="select(null)" />
@@ -79,15 +115,28 @@ function formatTimeDiff(ms: number): string {
     </section>
   `,
   styles: `
-    h2 { margin: 1.5rem 0 0.75rem; font-size: 1.15rem; }
-    .row { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; }
-    .chip.ok { background: var(--success); color: #fff; }
-    .chip.bad { background: var(--danger); color: #fff; }
-    .chip.warn { background: var(--warning); color: #fff; }
-    .chip.info { background: var(--info, #0d6efd); color: #fff; }
-    .results li.card { cursor: pointer; }
-    .actions { margin-top: 0.75rem; display: flex; gap: 0.5rem; }
-    .policy { margin-top: 0.5rem; font-weight: 600; }
+    .section {
+      margin-bottom: 0;
+    }
+    .section-title {
+      text-transform: none;
+    }
+    .dispute-card {
+      cursor: pointer;
+    }
+    .dispute-card .row {
+      align-items: center;
+    }
+    .dispute-card h3 {
+      margin: 0 0 0.15rem;
+      font-size: var(--text-md);
+    }
+    .dispute-card .meta {
+      margin: 0;
+    }
+    .resolved {
+      color: var(--success);
+    }
   `,
 })
 export class DisputesPage implements OnInit {
@@ -113,6 +162,15 @@ export class DisputesPage implements OnInit {
 
   select(dispute: Dispute | null): void {
     this.selected.set(dispute);
+  }
+
+  stateTone(state: string): string {
+    return STATE_TONES[state] ?? '';
+  }
+
+  /** Time a dispute has been open, for the SLA hint (admin queue owns the flag). */
+  ageLabel(dispute: Dispute): string {
+    return formatTimeDiff(Date.now() - dispute.createdAtMs);
   }
 
   formatDate(ms: number): string {

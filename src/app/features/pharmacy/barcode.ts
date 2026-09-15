@@ -15,11 +15,19 @@ export interface ParsedPrescriptionPayload {
 export const UNKNOWN_PRESCRIBER = 'Unknown prescriber';
 
 export class BarcodeParseError extends Error {
+  /**
+   * Dictionary key for `message`, so a page renders the failure in the active
+   * language while `message` stays the English text the specs assert.
+   */
+  readonly errorKey: string;
+
   constructor(
-    message = 'The barcode could not be read. Please check the code or enter the details manually.'
+    message = 'The barcode could not be read. Please check the code or enter the details manually.',
+    errorKey = 'pharmacy.error.unreadableBarcode'
   ) {
     super(message);
     this.name = 'BarcodeParseError';
+    this.errorKey = errorKey;
   }
 }
 
@@ -31,7 +39,10 @@ export class BarcodeParseError extends Error {
 export function parseBarcodePayload(raw: string): ParsedPrescriptionPayload {
   const text = (raw ?? '').trim();
   if (!text) {
-    throw new BarcodeParseError('No barcode data found. Please scan again or enter the details manually.');
+    throw new BarcodeParseError(
+      'No barcode data found. Please scan again or enter the details manually.',
+      'pharmacy.error.noData'
+    );
   }
   const fromJson = tryParseJsonPayload(text);
   if (fromJson) {
@@ -57,7 +68,10 @@ export function parseBarcodePayload(raw: string): ParsedPrescriptionPayload {
 export function parseManualEntry(raw: string): ParsedPrescriptionPayload {
   const text = (raw ?? '').trim();
   if (!text) {
-    throw new BarcodeParseError('Enter at least one medication line (name, dose and quantity).');
+    throw new BarcodeParseError(
+      'Enter at least one medication line (name, dose and quantity).',
+      'pharmacy.error.noLines'
+    );
   }
   const meds: ParsedMed[] = [];
   for (const chunk of text.split(/[\n;]+/)) {
@@ -72,7 +86,8 @@ export function parseManualEntry(raw: string): ParsedPrescriptionPayload {
   }
   if (meds.length === 0) {
     throw new BarcodeParseError(
-      'We could not read that code. Use one line per medication, e.g. “Amoxicillin | 500 mg | x21”.'
+      'We could not read that code. Use one line per medication, e.g. “Amoxicillin | 500 mg | x21”.',
+      'pharmacy.error.lineFormat'
     );
   }
   return { prescriber: UNKNOWN_PRESCRIBER, meds };

@@ -14,44 +14,75 @@ const SPECIALTIES: Record<string, string[]> = {
   [ROLES.PHYSIO]: ['Post-stroke rehab', 'Respiratory physio', 'Mobility training', 'Sports massage'],
 };
 
+/**
+ * Specialty name → dictionary key. The English name is what the API stores
+ * (it is submitted with the submission), so only the *label* translates.
+ */
+const SPECIALTY_KEYS: Record<string, string> = {
+  'Elderly care': 'vetting.specialty.elderlyCare',
+  Childcare: 'vetting.specialty.childcare',
+  'Meal preparation': 'vetting.specialty.mealPreparation',
+  'Mobility support': 'vetting.specialty.mobilitySupport',
+  Injections: 'vetting.specialty.injections',
+  'Wound care': 'vetting.specialty.woundCare',
+  'IV therapy': 'vetting.specialty.ivTherapy',
+  'Pressure ulcer care': 'vetting.specialty.pressureUlcer',
+  'Post-stroke rehab': 'vetting.specialty.postStrokeRehab',
+  'Respiratory physio': 'vetting.specialty.respiratoryPhysio',
+  'Mobility training': 'vetting.specialty.mobilityTraining',
+  'Sports massage': 'vetting.specialty.sportsMassage',
+};
+
 @Component({
   selector: 'app-onboarding',
   standalone: true,
   imports: [ReactiveFormsModule],
   template: `
     <section class="onboarding">
-      <h1>Professional onboarding</h1>
+      <header class="page-header">
+        <div>
+          <h1 class="page-title">{{ i18n.t('vetting.title') }}</h1>
+        </div>
+      </header>
 
       @if (store.certificationStatus() === 'expiring_soon') {
-        <p class="banner warning" role="status">
-          ⚠️ Your licence expires in {{ expiryDays() }} days. Renew it to stay visible in the marketplace.
+        <p class="alert warning" role="status">
+          <span class="alert-icon" aria-hidden="true">⏳</span>
+          <span>{{ i18n.t('vetting.expiringSoon', { days: expiryDays() ?? 0 }) }}</span>
         </p>
       } @else if (store.certificationStatus() === 'expired') {
-        <p class="banner bad" role="alert">
-          ❌ Your licence has expired. You are temporarily hidden from the marketplace until you renew and re-submit for review.
+        <p class="alert danger" role="alert">
+          <span class="alert-icon" aria-hidden="true">⚠️</span>
+          <span>{{ i18n.t('vetting.expired') }}</span>
         </p>
       }
 
       @if (store.loading()) {
-        <p>Loading…</p>
+        <div class="skeleton block" aria-hidden="true"></div>
       } @else if (store.isApproved()) {
-        <p class="status ok" role="status">
-          ✅ Licence approved — you are fully onboarded and visible in the marketplace.
+        <p class="alert success" role="status">
+          <span class="alert-icon" aria-hidden="true">✅</span>
+          <span>{{ i18n.t('vetting.approved') }}</span>
         </p>
       } @else if (store.isPending()) {
-        <p class="status" role="status">
-          ⏳ Licence under review — an administrator is vetting your submission.
+        <p class="alert info" role="status">
+          <span class="alert-icon" aria-hidden="true">🕓</span>
+          <span>{{ i18n.t('vetting.pending') }}</span>
         </p>
       } @else {
         @if (store.isRejected()) {
-          <p class="status bad" role="alert">
-            ❌ Your previous submission was rejected:
-            {{ store.mine()?.note || 'no reason given' }}. Correct it and resubmit.
+          <p class="alert danger" role="alert">
+            <span class="alert-icon" aria-hidden="true">⚠️</span>
+            <span>
+              {{ i18n.t('vetting.rejected', { note: store.mine()?.note || i18n.t('vetting.noReason') }) }}
+            </span>
           </p>
         }
 
-        <form [formGroup]="form" (ngSubmit)="submit()">
-          <label>Licence number
+        <form class="card vetting-form" [formGroup]="form" (ngSubmit)="submit()">
+          <label class="field">
+            <span class="field-label">{{ i18n.t('profile.licenceNumber') }}</span>
+            <!-- Placeholder is a licence-format example: it is not prose. -->
             <input
               type="text"
               formControlName="licenceNumber"
@@ -59,35 +90,50 @@ const SPECIALTIES: Record<string, string[]> = {
               aria-describedby="licence-hint"
             />
             @if (form.controls.licenceNumber.dirty && form.controls.licenceNumber.errors) {
-              <span class="error" id="licence-hint">Licence: 5–20 letters, digits or hyphens.</span>
+              <span class="field-error" id="licence-hint">{{ i18n.t('profile.licenceError') }}</span>
             }
           </label>
 
           <fieldset>
-            <legend>Specialties</legend>
-            @for (specialty of specialties(); track specialty) {
-              <label class="check">
-                <input
-                  type="checkbox"
-                  [checked]="selected().includes(specialty)"
-                  (change)="toggleSpecialty(specialty)"
-                />
-                {{ specialty }}
-              </label>
-            }
+            <legend>{{ i18n.t('vetting.specialties') }}</legend>
+            <div class="specialty-grid">
+              @for (specialty of specialties(); track specialty) {
+                <label class="specialty">
+                  <input
+                    type="checkbox"
+                    [checked]="selected().includes(specialty)"
+                    (change)="toggleSpecialty(specialty)"
+                  />
+                  <span>{{ specialtyLabel(specialty) }}</span>
+                </label>
+              }
+            </div>
             @if (selected().length === 0) {
-              <span class="error">Pick at least one specialty.</span>
+              <span class="field-error">{{ i18n.t('vetting.pickSpecialty') }}</span>
             }
           </fieldset>
 
-          <label>Note (optional)
+          <label class="field">
+            <span class="field-label">{{ i18n.t('vetting.note') }}</span>
             <textarea rows="3" formControlName="note"
-              placeholder="Certifications, experience, languages…"></textarea>
+              [attr.placeholder]="i18n.t('vetting.notePlaceholder')"></textarea>
           </label>
 
-          <button type="submit" [disabled]="store.submitting() || form.invalid || selected().length === 0">
-            {{ store.submitting() ? 'Submitting…' : (store.isRejected() ? 'Resubmit' : 'Submit for review') }}
-          </button>
+          <div class="card-actions">
+            <button
+              type="submit"
+              class="btn"
+              [disabled]="store.submitting() || form.invalid || selected().length === 0"
+            >
+              {{
+                store.submitting()
+                  ? i18n.t('vetting.submitting')
+                  : store.isRejected()
+                    ? i18n.t('vetting.resubmit')
+                    : i18n.t('vetting.submit')
+              }}
+            </button>
+          </div>
 
           @if (store.error()) {
             <p class="error" role="alert">{{ i18n.message(store.errorSource(), store.error()) }}</p>
@@ -97,33 +143,50 @@ const SPECIALTIES: Record<string, string[]> = {
     </section>
   `,
   styles: `
-    .status {
-      border-radius: 0.75rem;
-      padding: 0.75rem 1rem;
-      background: var(--accent-soft);
-      margin: 0 0 1rem;
+    .alert {
+      margin-bottom: var(--space-4);
     }
-    .status.ok { background: color-mix(in srgb, var(--success) 12%, transparent); }
-    .status.bad { background: var(--danger-soft); color: var(--danger); }
-    .banner {
-      border-radius: 0.75rem;
-      padding: 0.75rem 1rem;
-      margin: 0 0 1rem;
-      border: 1px solid var(--border);
+    .vetting-form {
+      display: grid;
+      gap: var(--space-4);
+      max-width: 38rem;
     }
-    .banner.warning { background: color-mix(in srgb, var(--warning, #b8860b) 12%, transparent); color: var(--warning, #8a6d00); }
-    .banner.bad { background: var(--danger-soft); color: var(--danger); }
     fieldset {
-      border: 1px solid var(--border);
-      border-radius: 0.75rem;
-      padding: 0.75rem 1rem;
-      display: flex;
-      flex-direction: column;
-      gap: 0.5rem;
+      display: grid;
+      gap: var(--space-3);
     }
-    legend { color: var(--text-muted); font-size: 0.85rem; padding-inline: 0.25rem; }
-    label.check { flex-direction: row; align-items: center; gap: 0.5rem; color: var(--text); }
-    label.check input { width: auto; }
+    .specialty-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr));
+      gap: var(--space-2);
+    }
+    .specialty {
+      flex-direction: row;
+      align-items: center;
+      gap: var(--space-2);
+      padding: var(--space-2) var(--space-3);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      color: var(--text);
+      cursor: pointer;
+      transition:
+        background-color var(--dur-fast) ease,
+        border-color var(--dur-fast) ease;
+    }
+    .specialty:hover {
+      background: var(--surface-raised);
+      border-color: var(--border-strong);
+    }
+    .specialty:has(input:checked) {
+      background: var(--accent-soft);
+      border-color: var(--accent);
+      font-weight: var(--weight-medium);
+    }
+    .card-actions {
+      margin-top: 0;
+      padding-top: var(--space-3);
+      border-top: 1px solid var(--border);
+    }
   `,
 })
 export class OnboardingPage implements OnInit {
@@ -150,6 +213,11 @@ export class OnboardingPage implements OnInit {
 
   ngOnInit(): void {
     this.store.loadMine();
+  }
+
+  /** Specialty label for the active language (the stored value stays English). */
+  specialtyLabel(specialty: string): string {
+    return this.i18n.t(SPECIALTY_KEYS[specialty] ?? specialty);
   }
 
   toggleSpecialty(specialty: string): void {

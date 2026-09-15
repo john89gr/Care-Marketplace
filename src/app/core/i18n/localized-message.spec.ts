@@ -60,9 +60,12 @@ describe('app-authored message keys', () => {
    * dictionaries and be genuinely translated.
    */
   const files = [
+    'src/app/core/auth/auth.api.ts',
     'src/app/core/services/notifications/notifications.service.ts',
     'src/app/core/services/audit/consent.store.ts',
     'src/app/core/services/bluetooth/bluetooth.service.ts',
+    'src/app/features/admin/audit-viewer.component.ts',
+    'src/app/features/admin/consents-admin.component.ts',
     'src/app/features/consents/consent.store.ts',
     'src/app/features/health-record/contacts.store.ts',
     'src/app/features/health-record/export.service.ts',
@@ -75,6 +78,7 @@ describe('app-authored message keys', () => {
     'src/app/features/home-health/clinical-log.store.ts',
     'src/app/features/home-health/shifts.store.ts',
     'src/app/features/home-health/visit.store.ts',
+    'src/app/features/integrations/gov-gr-auth.page.ts',
     'src/app/features/integrations/wallet.store.ts',
     'src/app/features/marketplace/booking.store.ts',
     'src/app/features/marketplace/chat.store.ts',
@@ -118,7 +122,7 @@ describe('app-authored message keys', () => {
   it('covers every store that owns a message slot', () => {
     // A new `LocalizedMessage` store must be added to the list above, or its
     // keys go unverified.
-    const roots = ['src/app/core/services', 'src/app/features'];
+    const roots = ['src/app/core/auth', 'src/app/core/services', 'src/app/features'];
     const found: string[] = [];
     const walk = (dir: string): void => {
       for (const entry of readdirSync(resolve(process.cwd(), dir), { withFileTypes: true })) {

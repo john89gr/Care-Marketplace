@@ -114,13 +114,20 @@ server-pushed or server-authored text stays verbatim.
 once, in the language active at save time, and the name is then user data — a
 later language switch does not rewrite it.
 
-**Converted so far** (shell + 6 pages + 3 components): the app chrome, vitals,
-preventive care, medications, the medical-history register, contacts & phone
-numbers, consent settings, the medicine-instructions sheet, the
-reminder channel/settings component and prescription reminder wizard, and the
-care/visits batch — marketplace search, booking lifecycle, chat and reviews.
-The remaining feature *pages* are still English-only (their store messages are
-not) and are converted in themed batches.
+**Coverage.** Every page and component renders through `I18n` — the app chrome,
+the health-record surfaces (vitals, preventive care, medications, the
+medical-history register, contacts & phone numbers, consent settings, the
+health-summary export and the PHR dashboard), marketplace search, the booking
+lifecycle, chat and reviews, payments/escrow/disputes (including the admin
+queue), pharmacy (console, orders, prescription scan), admin (vetting, licence
+and certificate expiry, audit trail, consent oversight), profile, provider
+onboarding, the Gov.gr health wallet and identity flow, and the home-health
+batch (shifts, visits, live tracking, care plan, clinical log), plus the
+medicine-instructions, reminder-settings and prescription-reminder components.
+What deliberately stays untranslated: machine tokens the API returns
+(`in_progress`, `rescheduled`, event kinds), and locale-invariant units
+(`km`, `€/h`, `SpO2 (%)`, clinical ranges) — English reads the raw value, Greek
+gets copy.
 
 Some pages were Greek-first (the history register, contacts, the reminder
 wizard), so their Playwright specs run under `test.use({ locale: 'el-GR' })`.
@@ -137,7 +144,7 @@ normally in English.
 ## Design system
 
 `src/styles.css` is the single source of truth — design tokens (colour,
-spacing, radius, elevation, type scale) plus reusable component classes
+spacing, radius, elevation, motion, type scale) plus reusable component classes
 (`.btn`, `.card`, `.badge`, `.table`, `.tabs`, `.field`, `.empty-state`, …).
 
 - **Tokens first.** Reference `var(--…)` rather than hard-coded values so light
@@ -146,14 +153,24 @@ spacing, radius, elevation, type scale) plus reusable component classes
 - **Shell layout.** A sidebar dashboard: grouped, role-filtered navigation, a
   topbar carrying the language switch, theme toggle and notification bell, and
   an off-canvas drawer below 60 rem.
-- **Migration state.** The shell and the six health-record pages below are on
-  the new system. The legacy page classes (`.filters`, `.results`, `.error`,
-  the offline/sync banners) are kept deliberately in a section at the bottom of
-  the stylesheet, because the ~31 not-yet-migrated feature pages still use
-  them. They are removed as each page moves over.
+- **Page vocabulary.** Every page opens with a `.page-header`
+  (`.page-title` / `.page-subtitle` / `.page-actions`) and builds its body from
+  `.card`, `.stats-grid`, `.grid-*`, `.badge`, `.alert`, `.filter-bar`,
+  `.empty-state` (with `.empty-icon`), `.skeleton` and `.tabs`.
+- **Status is never colour-only.** Statuses render as a `.badge` with a
+  `.dot` and a text label (and, where the E2E suite needs a stable hook, a
+  `data-status` attribute rather than a presentational class).
+- **Migration state.** Shell, auth, marketplace, home-health, health-record,
+  pharmacy, payments/disputes, integrations, consents, admin and profile are on
+  the system. The legacy page classes (`.filters`, `.results`, `.error`, the
+  offline/sync banners) are kept deliberately in a section at the bottom of the
+  stylesheet for the few remaining call sites.
 
-Converted: shell, vitals, preventive care, medications, medical history,
-contacts & phone numbers, consent settings.
+Converted: every routed page — auth, marketplace, booking, review, chat,
+profile, onboarding, visits, shifts, care plan, clinical log, the health-record
+dashboards (vitals, screenings, medications, history, contacts, export),
+prescriptions, pharmacy + orders, payments, disputes + admin queue, wallet,
+Gov.gr, consents, admin, audit and consents admin.
 
 ## Real API server + Postgres
 

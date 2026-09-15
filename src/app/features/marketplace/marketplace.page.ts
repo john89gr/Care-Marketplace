@@ -47,8 +47,8 @@ import { ROLES, Role } from '../../core/auth/roles';
         <p class="page-subtitle">{{ i18n.t('market.subtitle') }}</p>
       </header>
 
-      <div class="filters toolbar">
-        <label class="field">
+      <div class="filter-bar">
+        <label class="field search-field">
           <span class="visually-hidden">{{ i18n.t('market.searchLabel') }}</span>
           <input
             type="search"
@@ -127,10 +127,11 @@ import { ROLES, Role } from '../../core/auth/roles';
           {{ i18n.t('market.favoritesOnly') }}
         </label>
 
-        <button type="button" class="btn" (click)="onSearch()">
-          {{ i18n.t('market.search') }}
-        </button>
-        <button type="button" class="btn secondary" (click)="reset()">
+        <div class="filter-actions">
+          <button type="button" class="btn" (click)="onSearch()">
+            {{ i18n.t('market.search') }}
+          </button>
+          <button type="button" class="btn secondary" (click)="reset()">
           {{ i18n.t('market.reset') }}
         </button>
 
@@ -160,7 +161,8 @@ import { ROLES, Role } from '../../core/auth/roles';
           >
             {{ i18n.t('market.saveSearch') }}
           </button>
-        }
+          }
+        </div>
       </div>
 
       <div class="saved" [attr.aria-label]="i18n.t('market.savedSearches')">
@@ -225,15 +227,21 @@ import { ROLES, Role } from '../../core/auth/roles';
       } @else if (store.error()) {
         <p class="error" role="alert">{{ i18n.message(store.errorSource(), store.error()) }}</p>
       } @else if (!store.hasResults()) {
-        <p class="empty-state">
-          {{ store.filters().favoritesOnly ? i18n.t('market.noFavoritesMatch') : i18n.t('market.noMatch') }}
-        </p>
+        <div class="empty-state">
+          <span class="empty-icon" aria-hidden="true">🔍</span>
+          <p>
+            {{ store.filters().favoritesOnly ? i18n.t('market.noFavoritesMatch') : i18n.t('market.noMatch') }}
+          </p>
+        </div>
       } @else {
         <ul class="results">
           @for (card of store.results(); track card.id) {
-            <li class="card">
+            <li class="card interactive">
               <div class="card-head">
-                <h3>{{ card.displayName }}</h3>
+                <div class="cg-id">
+                  <span class="avatar soft" aria-hidden="true">{{ initials(card.displayName) }}</span>
+                  <h3>{{ card.displayName }}</h3>
+                </div>
                 <button
                   type="button"
                   class="heart"
@@ -252,26 +260,39 @@ import { ROLES, Role } from '../../core/auth/roles';
                 </button>
               </div>
 
-              <p class="roles">
-                @for (role of card.roles; track role) {
-                  <span class="badge">{{ roleLabel(role) }}</span>
-                }
-              </p>
-
-              <p class="meta">
-                <span
-                  [attr.aria-label]="
-                    i18n.t('market.ratedAria', { rating: card.rating, count: card.reviewCount ?? 0 })
-                  "
-                >
-                  ★ {{ card.rating }}
+              <div class="cg-facts">
+                <span class="fact">
+                  <span class="fact-icon" aria-hidden="true">★</span>
+                  <span
+                    class="fact-value"
+                    [attr.aria-label]="
+                      i18n.t('market.ratedAria', { rating: card.rating, count: card.reviewCount ?? 0 })
+                    "
+                  >
+                    {{ card.rating }}
+                  </span>
+                </span>
+                <span class="fact">
+                  <span class="fact-icon" aria-hidden="true">📍</span>
+                  <span class="fact-value">{{ card.distanceKm }} km</span>
+                </span>
+                <span class="fact">
+                  <span class="fact-icon" aria-hidden="true">💶</span>
+                  <span class="fact-value">{{ card.hourlyRate }}€/h</span>
                 </span>
                 <span class="badge info">
                   {{ i18n.t('market.reviewsCount', { count: card.reviewCount ?? 0 }) }}
                 </span>
-                · {{ card.distanceKm }} km · {{ card.hourlyRate }}€/h
                 @if (card.availableNow) {
-                  <span class="badge success">{{ i18n.t('market.availableNowChip') }}</span>
+                  <span class="badge success">
+                    <span class="dot"></span>{{ i18n.t('market.availableNowChip') }}
+                  </span>
+                }
+              </div>
+
+              <p class="roles">
+                @for (role of card.roles; track role) {
+                  <span class="badge accent">{{ roleLabel(role) }}</span>
                 }
                 @if (store.filters().sort === 'relevance') {
                   <button
@@ -353,8 +374,17 @@ import { ROLES, Role } from '../../core/auth/roles';
     </section>
   `,
   styles: `
-    .filters {
+    .filter-bar {
       align-items: flex-end;
+    }
+    .filter-bar .search-field {
+      flex: 1 1 18rem;
+    }
+    .filter-actions {
+      display: flex;
+      align-items: flex-end;
+      gap: var(--space-2);
+      flex-wrap: wrap;
     }
     .check {
       display: flex;
@@ -411,9 +441,42 @@ import { ROLES, Role } from '../../core/auth/roles';
     }
     .card-head {
       display: flex;
-      align-items: center;
+      align-items: flex-start;
       justify-content: space-between;
       gap: var(--space-2);
+    }
+    .cg-id {
+      display: flex;
+      align-items: center;
+      gap: var(--space-3);
+      min-width: 0;
+    }
+    .cg-id h3 {
+      margin: 0;
+      font-size: var(--text-md);
+    }
+    .cg-facts {
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: var(--space-2) var(--space-3);
+      margin: var(--space-3) 0;
+      color: var(--text-muted);
+      font-size: var(--text-sm);
+    }
+    .fact {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.35rem;
+    }
+    .fact-icon {
+      font-size: var(--text-sm);
+      line-height: 1;
+    }
+    .fact-value {
+      font-weight: var(--weight-semibold);
+      color: var(--text);
+      font-variant-numeric: tabular-nums;
     }
     .heart {
       font-size: 1.35rem;
@@ -487,6 +550,16 @@ export class MarketplacePage implements OnInit, OnDestroy {
   readonly renameValue = signal('');
   readonly savingSearch = signal(false);
   readonly saveName = signal('');
+
+  /** Initials for a caregiver card's avatar (decorative). */
+  protected initials(name: string): string {
+    return name
+      .trim()
+      .split(/\s+/)
+      .slice(0, 2)
+      .map((part) => part.charAt(0).toUpperCase())
+      .join('');
+  }
 
   /** Debounce handle for free-text query input (subtask 12). */
   private queryTimer: ReturnType<typeof setTimeout> | null = null;

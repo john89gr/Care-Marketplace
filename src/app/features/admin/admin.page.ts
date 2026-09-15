@@ -12,163 +12,267 @@ function formatDate(ms: number): string {
   return new Date(ms).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
 }
 
+/** Badge tone per certification status (the label carries the meaning). */
+const CERT_TONES: Record<CertificationStatus, string> = {
+  valid: 'success',
+  expiring_soon: 'warning',
+  expired: 'danger',
+};
+
 @Component({
   selector: 'app-admin',
   standalone: true,
   imports: [],
   template: `
     <section class="admin">
-      <h1>Admin & compliance</h1>
+      <header class="page-header">
+        <div>
+          <h1 class="page-title">{{ i18n.t('admin.title') }}</h1>
+        </div>
+      </header>
 
-      <h2>Licence vetting queue</h2>
-
-      @if (store.loading()) {
-        <p>Loading…</p>
-      } @else if (store.error()) {
-        <p class="error" role="alert">{{ i18n.message(store.errorSource(), store.error()) }}</p>
-      } @else if (pending().length === 0) {
-        <p>No submissions awaiting review.</p>
-      } @else {
-        <ul class="results">
-          @for (submission of pending(); track submission.id) {
-            <li class="card">
-              <div class="row">
-                <h3>{{ submission.providerName }}</h3>
-                <span class="chip">pending</span>
-              </div>
-              <p class="meta">Licence {{ submission.licenceNumber }} · submitted {{ formatDate(submission.submittedAtMs) }}</p>
-              <p class="roles">
-                @for (specialty of submission.specialties; track specialty) {
-                  <span class="chip">{{ specialty }}</span>
-                }
-              </p>
-              @if (submission.note) {
-                <p class="meta">Note: {{ submission.note }}</p>
-              }
-              <p class="actions">
-                <button type="button" (click)="review(submission, 'approved')">Approve</button>
-                <button type="button" class="secondary" (click)="review(submission, 'rejected')">Reject</button>
-              </p>
-            </li>
-          }
-        </ul>
-      }
-
-       @if (reviewed().length > 0) {
-        <h2>Recently reviewed</h2>
-        <ul class="results">
-          @for (submission of reviewed(); track submission.id) {
-            <li class="card">
-              <div class="row">
-                <h3>{{ submission.providerName }}</h3>
-                <span class="chip" [class.ok]="submission.status === 'approved'"
-                  [class.bad]="submission.status === 'rejected'">
-                  {{ submission.status }}
-                </span>
-              </div>
-              <p class="meta">Licence {{ submission.licenceNumber }} · reviewed {{ formatDate(submission.reviewedAtMs ?? submission.submittedAtMs) }}</p>
-            </li>
-          }
-        </ul>
-      }
-
-      <h2>Certification expiry</h2>
-      <div class="controls">
-        <label>
-          Show
-          <select [value]="certFilter()" (change)="setCertFilter($any($event.target).value)">
-            <option value="expiring_soon">Expiring soon</option>
-            <option value="expired">Expired</option>
-            <option value="valid">Valid</option>
-            <option value="all">All</option>
-          </select>
-        </label>
+      <div class="stats-grid">
+        <div class="stat-card warning">
+          <span class="stat-label">{{ i18n.t('admin.vettingQueue') }}</span>
+          <span class="stat-value">{{ pending().length }}</span>
+        </div>
+        <div class="stat-card info">
+          <span class="stat-label">{{ i18n.t('admin.certExpiry') }}</span>
+          <span class="stat-value">{{ expiring().length }}</span>
+        </div>
+        <div class="stat-card danger">
+          <span class="stat-label">{{ i18n.t('admin.flaggedReviews') }}</span>
+          <span class="stat-value">{{ reviewStore.flagged().length }}</span>
+        </div>
       </div>
-      @if (expiring().length === 0) {
-        <p class="meta">No certificates match the current filter.</p>
-      } @else {
-        <table class="expiry" role="table">
-          <caption>Providers whose licence or certificate is expiring or expired, sorted by soonest expiry.</caption>
-          <thead>
-            <tr>
-              <th scope="col">Provider</th>
-              <th scope="col">Licence</th>
-              <th scope="col">Expires</th>
-              <th scope="col">Days left</th>
-              <th scope="col">Status</th>
-              <th scope="col">Certs</th>
-            </tr>
-          </thead>
-          <tbody>
-            @for (submission of expiring(); track submission.id) {
-              <tr>
-                <td>{{ submission.providerName }}</td>
-                <td>{{ submission.licenceNumber }}</td>
-                <td>{{ submission.expiresAtMs ? formatDate(submission.expiresAtMs) : '—' }}</td>
-                <td>{{ daysOf(submission) ?? '—' }}</td>
-                <td>
-                  <span class="chip"
-                    [class.ok]="statusOf(submission) === 'valid'"
-                    [class.warning]="statusOf(submission) === 'expiring_soon'"
-                    [class.bad]="statusOf(submission) === 'expired'">
-                    {{ statusOf(submission) }}
-                  </span>
-                </td>
-                <td>
-                  @for (cert of submission.certifications; track cert.id) {
-                    <span class="chip">{{ cert.name }} · {{ cert.expiresAtMs ? formatDate(cert.expiresAtMs) : 'no expiry' }}</span>
-                  } @empty {
-                    <span class="meta">none</span>
+
+      <section class="section">
+        <div class="section-header">
+          <h2 class="section-title">{{ i18n.t('admin.vettingQueue') }}</h2>
+        </div>
+
+        @if (store.loading()) {
+          <div class="grid grid-2" aria-hidden="true">
+            <div class="skeleton block"></div>
+            <div class="skeleton block"></div>
+          </div>
+        } @else if (store.error()) {
+          <p class="error" role="alert">{{ i18n.message(store.errorSource(), store.error()) }}</p>
+        } @else if (pending().length === 0) {
+          <div class="empty-state">
+            <span class="empty-icon" aria-hidden="true">✅</span>
+            <p>{{ i18n.t('admin.vettingEmpty') }}</p>
+          </div>
+        } @else {
+          <ul class="results">
+            @for (submission of pending(); track submission.id) {
+              <li class="card interactive">
+                <div class="row">
+                  <div>
+                    <h3>{{ submission.providerName }}</h3>
+                    <p class="meta">
+                      {{
+                        i18n.t('admin.licenceSubmitted', {
+                          licence: submission.licenceNumber,
+                          date: formatDate(submission.submittedAtMs),
+                        })
+                      }}
+                    </p>
+                  </div>
+                  <span class="badge warning"><span class="dot"></span>{{ i18n.t('admin.pending') }}</span>
+                </div>
+
+                <p class="roles">
+                  @for (specialty of submission.specialties; track specialty) {
+                    <span class="badge accent">{{ specialty }}</span>
                   }
-                </td>
-              </tr>
+                </p>
+
+                @if (submission.note) {
+                  <p class="meta">{{ i18n.t('admin.note', { note: submission.note }) }}</p>
+                }
+
+                <div class="card-actions">
+                  <button type="button" class="btn" (click)="review(submission, 'approved')">
+                    {{ i18n.t('admin.approve') }}
+                  </button>
+                  <button
+                    type="button"
+                    class="btn secondary"
+                    (click)="review(submission, 'rejected')"
+                  >
+                    {{ i18n.t('admin.reject') }}
+                  </button>
+                </div>
+              </li>
             }
-          </tbody>
-        </table>
+          </ul>
+        }
+      </section>
+
+      @if (reviewed().length > 0) {
+        <section class="section">
+          <div class="section-header">
+            <h2 class="section-title">{{ i18n.t('admin.recentlyReviewed') }}</h2>
+          </div>
+          <ul class="results">
+            @for (submission of reviewed(); track submission.id) {
+              <li class="card">
+                <div class="row">
+                  <div>
+                    <h3>{{ submission.providerName }}</h3>
+                    <p class="meta">
+                      {{
+                        i18n.t('admin.licenceReviewed', {
+                          licence: submission.licenceNumber,
+                          date: formatDate(submission.reviewedAtMs ?? submission.submittedAtMs),
+                        })
+                      }}
+                    </p>
+                  </div>
+                  <span [class]="'badge ' + (submission.status === 'approved' ? 'success' : 'danger')">
+                    <span class="dot"></span>{{ submission.status }}
+                  </span>
+                </div>
+              </li>
+            }
+          </ul>
+        </section>
       }
+
+      <section class="section">
+        <div class="section-header">
+          <h2 class="section-title">{{ i18n.t('admin.certExpiry') }}</h2>
+        </div>
+
+        <div class="filter-bar cert-filter">
+          <label class="field">
+            <span class="field-label">{{ i18n.t('admin.show') }}</span>
+            <select [value]="certFilter()" (change)="setCertFilter($any($event.target).value)">
+              <option value="expiring_soon">{{ i18n.t('admin.certStatus.expiringSoon') }}</option>
+              <option value="expired">{{ i18n.t('admin.certStatus.expired') }}</option>
+              <option value="valid">{{ i18n.t('admin.certStatus.valid') }}</option>
+              <option value="all">{{ i18n.t('common.all') }}</option>
+            </select>
+          </label>
+        </div>
+
+        @if (expiring().length === 0) {
+          <div class="empty-state">
+            <span class="empty-icon" aria-hidden="true">🛡️</span>
+            <p>{{ i18n.t('admin.certEmpty') }}</p>
+          </div>
+        } @else {
+          <div class="table-wrap">
+            <table class="table expiry" role="table">
+              <caption class="cert-caption">{{ i18n.t('admin.certCaption') }}</caption>
+              <thead>
+                <tr>
+                  <th scope="col">{{ i18n.t('admin.col.provider') }}</th>
+                  <th scope="col">{{ i18n.t('admin.col.licence') }}</th>
+                  <th scope="col">{{ i18n.t('admin.col.expires') }}</th>
+                  <th scope="col">{{ i18n.t('admin.col.daysLeft') }}</th>
+                  <th scope="col">{{ i18n.t('admin.col.status') }}</th>
+                  <th scope="col">{{ i18n.t('admin.col.certs') }}</th>
+                </tr>
+              </thead>
+              <tbody>
+                @for (submission of expiring(); track submission.id) {
+                  <tr>
+                    <td>{{ submission.providerName }}</td>
+                    <td class="mono">{{ submission.licenceNumber }}</td>
+                    <td>{{ submission.expiresAtMs ? formatDate(submission.expiresAtMs) : '—' }}</td>
+                    <td class="num">{{ daysOf(submission) ?? '—' }}</td>
+                    <td>
+                      <span [class]="'badge ' + certTone(submission)">
+                        <span class="dot"></span>{{ certStatusLabel(submission) }}
+                      </span>
+                    </td>
+                    <td>
+                      @for (cert of submission.certifications; track cert.id) {
+                        <span class="badge outline">
+                          {{ cert.name }} ·
+                          {{ cert.expiresAtMs ? formatDate(cert.expiresAtMs) : i18n.t('admin.noExpiry') }}
+                        </span>
+                      } @empty {
+                        <span class="meta">{{ i18n.t('admin.certsNone') }}</span>
+                      }
+                    </td>
+                  </tr>
+                }
+              </tbody>
+            </table>
+          </div>
+        }
+      </section>
 
       @if (reviewStore.flagged().length > 0) {
-        <h2>Flagged reviews</h2>
-        <ul class="results">
-          @for (review of reviewStore.flagged(); track review.id) {
-            <li class="card">
-              <div class="row">
-                <h3>{{ review.authorName }} · ★ {{ review.rating }}</h3>
-                <span class="chip">flagged</span>
-              </div>
-              <p class="meta">{{ review.comment }}</p>
-              <p class="actions">
-                <button type="button"
-                  [disabled]="reviewStore.actingId() === review.id"
-                  (click)="moderate(review, 'published')">
-                  Publish
-                </button>
-                <button type="button" class="secondary"
-                  [disabled]="reviewStore.actingId() === review.id"
-                  (click)="moderate(review, 'removed')">
-                  Remove
-                </button>
-              </p>
-            </li>
-          }
-        </ul>
+        <section class="section">
+          <div class="section-header">
+            <h2 class="section-title">{{ i18n.t('admin.flaggedReviews') }}</h2>
+          </div>
+          <ul class="results">
+            @for (review of reviewStore.flagged(); track review.id) {
+              <li class="card">
+                <div class="row">
+                  <div>
+                    <h3>{{ review.authorName }} · ★ {{ review.rating }}</h3>
+                    <p class="meta">{{ review.comment }}</p>
+                  </div>
+                  <span class="badge danger"><span class="dot"></span>{{ i18n.t('admin.flagged') }}</span>
+                </div>
+                <div class="card-actions">
+                  <button type="button" class="btn"
+                    [disabled]="reviewStore.actingId() === review.id"
+                    (click)="moderate(review, 'published')">
+                    {{ i18n.t('admin.publish') }}
+                  </button>
+                  <button type="button" class="btn secondary"
+                    [disabled]="reviewStore.actingId() === review.id"
+                    (click)="moderate(review, 'removed')">
+                    {{ i18n.t('admin.removeReview') }}
+                  </button>
+                </div>
+              </li>
+            }
+          </ul>
+        </section>
       }
     </section>
   `,
   styles: `
-    h2 { margin: 1.5rem 0 0.75rem; font-size: 1.15rem; }
-    .row { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; }
-    .controls { margin: 0.5rem 0 0.75rem; }
-    .controls label { display: inline-flex; align-items: center; gap: 0.35rem; }
-    .chip.ok { background: var(--success); color: #fff; }
-    .chip.bad { background: var(--danger); color: #fff; }
-    .chip.warning { background: var(--warning, #b8860b); color: #fff; }
-    .chip { display: inline-block; border-radius: 999px; padding: 0.15rem 0.6rem; font-size: 0.8rem; margin-right: 0.25rem; }
-    .actions { margin-top: 0.75rem; display: flex; gap: 0.5rem; }
-    .expiry { width: 100%; border-collapse: collapse; margin-top: 0.5rem; }
-    .expiry caption { text-align: left; color: var(--text-muted); font-size: 0.85rem; padding-bottom: 0.25rem; }
-    .expiry th, .expiry td { text-align: left; padding: 0.4rem 0.5rem; border-bottom: 1px solid var(--border); }
-    .expiry th { font-size: 0.8rem; color: var(--text-muted); }
+    .row {
+      align-items: center;
+    }
+    .row h3 {
+      margin: 0 0 0.15rem;
+      font-size: var(--text-md);
+    }
+    .row .meta {
+      margin: 0;
+    }
+    .roles {
+      display: flex;
+      flex-wrap: wrap;
+      gap: var(--space-1);
+      margin: var(--space-2) 0 0;
+    }
+    .cert-filter {
+      max-width: 22rem;
+    }
+    .cert-caption {
+      padding: var(--space-3) var(--space-3) 0;
+      text-align: left;
+      color: var(--text-muted);
+      font-size: var(--text-sm);
+    }
+    .expiry td.mono {
+      font-family: var(--font-mono);
+      font-size: var(--text-xs);
+    }
+    .expiry td.num {
+      font-variant-numeric: tabular-nums;
+    }
   `,
 })
 export class AdminPage implements OnInit {
@@ -191,6 +295,20 @@ export class AdminPage implements OnInit {
   /** Status of a submission's licence, computed on demand (§14). */
   statusOf(submission: LicenceSubmission): CertificationStatus {
     return certificationStatus(submission.expiresAtMs, Date.now());
+  }
+
+  /** Certification status as display copy in the active language. */
+  certStatusLabel(submission: LicenceSubmission): string {
+    const keys: Record<CertificationStatus, string> = {
+      valid: 'admin.certStatus.valid',
+      expiring_soon: 'admin.certStatus.expiringSoon',
+      expired: 'admin.certStatus.expired',
+    };
+    return this.i18n.t(keys[this.statusOf(submission)] ?? '');
+  }
+
+  certTone(submission: LicenceSubmission): string {
+    return CERT_TONES[this.statusOf(submission)] ?? '';
   }
 
   /** Days left on the licence, or null when none is recorded. */

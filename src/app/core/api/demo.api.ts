@@ -1,5 +1,12 @@
-import { HttpEvent, HttpHandlerFn, HttpInterceptorFn, HttpRequest, HttpResponse } from '@angular/common/http';
-import { Observable, of } from 'rxjs';
+import {
+  HttpErrorResponse,
+  HttpEvent,
+  HttpHandlerFn,
+  HttpInterceptorFn,
+  HttpRequest,
+  HttpResponse,
+} from '@angular/common/http';
+import { Observable, mergeMap, of, throwError } from 'rxjs';
 import { isDemoMode } from './demo.mode';
 
 /**
@@ -1921,7 +1928,7 @@ function shiftAvailability() {
 }
 
 /** Demo API router. Returns null when the request is not handled. */
-export const demoApi: HttpInterceptorFn = (req: HttpRequest<unknown>, next: HttpHandlerFn) => {
+const handleDemoRequest: HttpInterceptorFn = (req: HttpRequest<unknown>, next: HttpHandlerFn) => {
   if (!isDemoMode() || !req.url.startsWith('/api/')) {
     return next(req);
   }
@@ -3650,6 +3657,37 @@ export const demoApi: HttpInterceptorFn = (req: HttpRequest<unknown>, next: Http
   // Unknown /api route — let it hit the real network (404 from the dev server).
   return next(req);
 };
+
+/**
+ * Demo backend entry point.
+ *
+ * The handler answers errors by returning a bare `HttpResponse` with a 4xx/5xx
+ * status. Angular's `HttpClient` only raises an error for responses that come
+ * back through the XHR backend — a response an interceptor returns itself is
+ * delivered to the caller's `next` handler regardless of status. That mismatch
+ * with the real API is a trap: a store doing `next: (list) => this.items.set(list)`
+ * would store `{ message: 'Forbidden' }` and then crash on `list.filter(…)`.
+ * This wrapper restores the real-API contract, so every demo endpoint behaves
+ * like its Express counterpart and the feature stores' error paths are the ones
+ * that run.
+ */
+export const demoApi: HttpInterceptorFn = (req: HttpRequest<unknown>, next: HttpHandlerFn) =>
+  handleDemoRequest(req, next).pipe(
+    mergeMap((event) => {
+      if (event instanceof HttpResponse && event.status >= 400) {
+        return throwError(
+          () =>
+            new HttpErrorResponse({
+              status: event.status,
+              statusText: event.statusText,
+              url: event.url ?? req.url,
+              error: event.body,
+            })
+        );
+      }
+      return of(event);
+    })
+  );
 
 function sessionPayload(user: DemoUser, idVerifiedVia: 'email' | 'gov_gr' = 'email') {
   return {

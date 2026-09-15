@@ -11,9 +11,18 @@ import { PrescriptionsStore } from './prescriptions.store';
 import { OrdersStore } from './orders.store';
 import { ProfileStore } from '../profiles/profile.store';
 import { GeolocationService } from '../../core/services/geo/geolocation.service';
-import { addressFromProfile, statusLabel } from './pharmacy.models';
-import { BarcodeParseError, parseBarcodePayload, type ParsedPrescriptionPayload } from './barcode';
-import { I18n } from '../../core/i18n/i18n.service';
+import {
+  addressFromProfile,
+  statusLabel as statusLabelFor,
+  type PharmacyOrderStatus,
+} from './pharmacy.models';
+import {
+  BarcodeParseError,
+  UNKNOWN_PRESCRIBER,
+  parseBarcodePayload,
+  type ParsedPrescriptionPayload,
+} from './barcode';
+import { I18n, TranslatableMessage } from '../../core/i18n/i18n.service';
 
 /** Minimal shape of the browser BarcodeDetector API (not in all TS libs). */
 interface BarcodeDetectorLike {
@@ -31,131 +40,293 @@ function detectorConstructor(): (new () => BarcodeDetectorLike) | null {
   imports: [RouterLink],
   template: `
     <section class="prescriptions">
-      <h1>E-prescription scan</h1>
-      <p class="meta">
-        Scan the prescription barcode with your camera, or type the code (or
-        medication lines) below. The camera is optional — manual entry works
-        fully by keyboard.
-      </p>
-
-      <h2>1. Capture</h2>
-      @if (detectorAvailable) {
-        <div class="camera">
-          @if (!cameraOn()) {
-            <button type="button" (click)="startCamera()">Start camera scan</button>
-          } @else {
-            <button type="button" class="secondary" (click)="stopCamera()">Stop camera</button>
-          }
-          @if (cameraError()) {
-            <p class="error" role="alert">{{ cameraError() }}</p>
-          }
-          <video #video playsinline muted [hidden]="!cameraOn()" aria-label="Camera preview for barcode scanning"></video>
+      <header class="page-header">
+        <div>
+          <h1 class="page-title">{{ i18n.t('pharmacy.scanTitle') }}</h1>
+          <p class="page-subtitle">{{ i18n.t('pharmacy.scanIntro') }}</p>
         </div>
-      } @else {
-        <p class="meta" role="note">
-          Camera scanning is not supported in this browser — use manual entry below.
-        </p>
-      }
+      </header>
 
-      <h2><label for="rx-code">2. Code or medication lines</label></h2>
-      <textarea
-        id="rx-code"
-        #codeInput
-        rows="4"
-        [value]="code()"
-        (input)="onCodeInput($any($event.target).value)"
-        placeholder='Paste the scanned code, or type lines like:&#10;Insulin glargine | 10 units | x1'
-        aria-describedby="rx-code-help"
-      ></textarea>
-      <p class="meta" id="rx-code-help">
-        One medication per line: name, dose and quantity (e.g. “Amoxicillin | 500 mg | x21”).
-      </p>
-
-      <div class="fields">
-        <label>Prescriber (optional override)
-          <input
-            type="text"
-            [value]="prescriberOverride()"
-            (input)="prescriberOverride.set($any($event.target).value)"
-            autocomplete="off"
-          />
-        </label>
-        <label>Delivery address
-          <input
-            type="text"
-            [value]="deliveryAddress()"
-            (input)="deliveryAddress.set($any($event.target).value)"
-            autocomplete="street-address"
-          />
-        </label>
-      </div>
-
-      @if (previewError()) {
-        <p class="warning" role="status">{{ previewError() }}</p>
-      }
-      @if (preview()) {
-        <div class="preview">
-          <h3>Parsed medications (confirm before submitting)</h3>
-          <p class="meta">Prescriber: {{ prescriberOverride() || preview()!.prescriber }}</p>
-          <ul>
-            @for (med of preview()!.meds; track med.name) {
-              <li>{{ med.name }} — {{ med.dose || 'dose as directed' }} × {{ med.qty }}</li>
-            }
-          </ul>
-        </div>
-      }
-
-      <div class="actions">
-        <button type="button" (click)="submit()" [disabled]="store.scanning() || !code().trim()">
-          {{ store.scanning() ? 'Submitting…' : 'Submit prescription' }}
-        </button>
-      </div>
-
-      @if (store.error()) {
-        <div class="error-box" role="alert">
-          <p>{{ i18n.message(store.errorSource(), store.error()) }}</p>
-          <button type="button" class="secondary" (click)="retry()">Try again</button>
-        </div>
-      }
-
-      @if (store.lastResult()) {
-        <div class="result">
-          <h3 tabindex="-1" #resultHeading>Prescription confirmed</h3>
-          <p aria-live="polite">
-            @if (store.lastResult()!.order.status === 'failed') {
-              Routing failed — no partner pharmacy has stock right now.
-              <button type="button" class="secondary" (click)="submit()">Retry routing</button>
+      <div class="scan-grid">
+        <div class="card scan-form">
+          <div class="step">
+            <h2 class="section-title">
+              <span class="step-num" aria-hidden="true">1</span>
+              {{ i18n.t('pharmacy.step1') }}
+            </h2>
+            @if (detectorAvailable) {
+              <div class="camera">
+                @if (!cameraOn()) {
+                  <button type="button" class="btn secondary" (click)="startCamera()">
+                    {{ i18n.t('pharmacy.startCamera') }}
+                  </button>
+                } @else {
+                  <button type="button" class="btn secondary" (click)="stopCamera()">
+                    {{ i18n.t('pharmacy.stopCamera') }}
+                  </button>
+                }
+                @if (cameraError()) {
+                  <p class="error" role="alert">{{ i18n.message(cameraError(), '') }}</p>
+                }
+                <video
+                  #video
+                  playsinline
+                  muted
+                  [hidden]="!cameraOn()"
+                  [attr.aria-label]="i18n.t('pharmacy.cameraPreview')"
+                ></video>
+              </div>
             } @else {
-              Routed to <strong>{{ store.lastResult()!.order.pharmacyName }}</strong>
-              ({{ statusLabel(store.lastResult()!.order.status) }}).
+              <p class="alert info" role="note">
+                <span class="alert-icon" aria-hidden="true">ℹ️</span>
+                <span>{{ i18n.t('pharmacy.noCamera') }}</span>
+              </p>
             }
-          </p>
-          <ul>
-            @for (med of store.lastResult()!.prescription.meds; track med.name) {
-              <li>{{ med.name }} — {{ med.dose || 'dose as directed' }} × {{ med.qty }}</li>
-            }
-          </ul>
-          <a routerLink="/pharmacy-orders">Track in pharmacy orders →</a>
+          </div>
+
+          <div class="step">
+            <h2 class="section-title">
+              <span class="step-num" aria-hidden="true">2</span>
+              <label for="rx-code">{{ i18n.t('pharmacy.step2') }}</label>
+            </h2>
+            <textarea
+              id="rx-code"
+              #codeInput
+              rows="4"
+              [value]="code()"
+              (input)="onCodeInput($any($event.target).value)"
+              [attr.placeholder]="i18n.t('pharmacy.codePlaceholder')"
+              aria-describedby="rx-code-help"
+            ></textarea>
+            <p class="section-hint" id="rx-code-help">{{ i18n.t('pharmacy.codeHelp') }}</p>
+          </div>
+
+          <div class="fields">
+            <label class="field">
+              <span class="field-label">{{ i18n.t('pharmacy.prescriber') }}</span>
+              <input
+                type="text"
+                [value]="prescriberOverride()"
+                (input)="prescriberOverride.set($any($event.target).value)"
+                autocomplete="off"
+              />
+            </label>
+            <label class="field">
+              <span class="field-label">{{ i18n.t('pharmacy.deliveryAddress') }}</span>
+              <input
+                type="text"
+                [value]="deliveryAddress()"
+                (input)="deliveryAddress.set($any($event.target).value)"
+                autocomplete="street-address"
+              />
+            </label>
+          </div>
+
+          @if (previewError()) {
+            <p class="alert warning" role="status">
+              <span class="alert-icon" aria-hidden="true">⚠️</span>
+              <span>{{ i18n.message(previewError(), '') }}</span>
+            </p>
+          }
+
+          <div class="card-actions">
+            <button type="button" class="btn" (click)="submit()" [disabled]="store.scanning() || !code().trim()">
+              {{ store.scanning() ? i18n.t('pharmacy.submitting') : i18n.t('pharmacy.submit') }}
+            </button>
+          </div>
+
+          @if (store.error()) {
+            <p class="alert danger" role="alert">
+              <span class="alert-icon" aria-hidden="true">⚠️</span>
+              <span>
+                {{ i18n.message(store.errorSource(), store.error()) }}
+                <button type="button" class="link" (click)="retry()">
+                  {{ i18n.t('pharmacy.tryAgain') }}
+                </button>
+              </span>
+            </p>
+          }
         </div>
-      }
+
+        <div class="scan-side">
+          @if (preview()) {
+            <div class="card preview">
+              <h3 class="card-title">{{ i18n.t('pharmacy.parsedTitle') }}</h3>
+              <p class="meta">
+                {{ i18n.t('pharmacy.prescriberLabel', { name: prescriberText() }) }}
+              </p>
+              <ul class="med-list">
+                @for (med of preview()!.meds; track med.name) {
+                  <li>
+                    <span class="med-name">{{ med.name }}</span>
+                    <span class="med-dose">
+                      {{ med.dose || i18n.t('pharmacy.doseAsDirected') }} × {{ med.qty }}
+                    </span>
+                  </li>
+                }
+              </ul>
+            </div>
+          }
+
+          @if (store.lastResult()) {
+            <div class="card result">
+              <div class="result-head">
+                <span class="icon-bubble" aria-hidden="true">✅</span>
+                <h3 tabindex="-1" class="card-title" #resultHeading>{{ i18n.t('pharmacy.confirmed') }}</h3>
+              </div>
+              <p aria-live="polite" class="result-status">
+                @if (store.lastResult()!.order.status === 'failed') {
+                  {{ i18n.t('pharmacy.routingFailed') }}
+                  <button type="button" class="btn secondary sm" (click)="submit()">
+                    {{ i18n.t('pharmacy.retryRouting') }}
+                  </button>
+                } @else {
+                  {{
+                    i18n.t('pharmacy.routedTo', {
+                      name: store.lastResult()!.order.pharmacyName ?? '',
+                      status: statusLabel(store.lastResult()!.order.status),
+                    })
+                  }}
+                }
+              </p>
+              <ul class="med-list">
+                @for (med of store.lastResult()!.prescription.meds; track med.name) {
+                  <li>
+                    <span class="med-name">{{ med.name }}</span>
+                    <span class="med-dose">
+                      {{ med.dose || i18n.t('pharmacy.doseAsDirected') }} × {{ med.qty }}
+                    </span>
+                  </li>
+                }
+              </ul>
+              <a routerLink="/pharmacy-orders">{{ i18n.t('pharmacy.trackOrders') }} →</a>
+            </div>
+          }
+
+          @if (!preview() && !store.lastResult()) {
+            <div class="card side-hint">
+              <span class="icon-bubble lg" aria-hidden="true">📄</span>
+              <p class="meta">{{ i18n.t('pharmacy.codeHelp') }}</p>
+            </div>
+          }
+        </div>
+      </div>
     </section>
   `,
   styles: `
-    .prescriptions { display: grid; gap: 0.75rem; max-width: 40rem; }
-    .camera { display: grid; gap: 0.5rem; justify-items: start; }
-    video { width: 100%; max-width: 24rem; border-radius: 0.5rem; background: #000; }
-    textarea { width: 100%; font: inherit; padding: 0.6rem; border-radius: 0.5rem; border: 1px solid var(--border, #d9dee7); }
-    .fields { display: grid; gap: 0.6rem; }
-    label { display: grid; gap: 0.25rem; font-weight: 600; }
-    input[type='text'] { font: inherit; padding: 0.5rem 0.6rem; border-radius: 0.5rem; border: 1px solid var(--border, #d9dee7); min-height: 44px; }
-    button { min-height: 44px; padding: 0.5rem 1rem; cursor: pointer; }
-    .secondary { background: none; }
-    .preview, .result { border: 1px solid var(--border, #d9dee7); border-radius: 0.6rem; padding: 0.75rem 1rem; }
-    .error-box { border: 2px solid var(--danger, #c62828); border-radius: 0.6rem; padding: 0.75rem 1rem; }
-    .error { color: var(--danger, #c62828); }
-    .warning { color: var(--warning, #8a5a00); }
-    .meta { color: var(--text-muted); }
-    .actions { display: flex; gap: 0.5rem; }
+    .scan-grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1.4fr) minmax(16rem, 1fr);
+      gap: var(--space-4);
+      align-items: start;
+    }
+    @media (max-width: 52rem) {
+      .scan-grid {
+        grid-template-columns: minmax(0, 1fr);
+      }
+    }
+    .scan-form {
+      display: grid;
+      gap: var(--space-5);
+    }
+    .step {
+      display: grid;
+      gap: var(--space-2);
+    }
+    .step .section-title {
+      display: flex;
+      align-items: center;
+      gap: var(--space-2);
+      margin: 0;
+    }
+    .step .section-title label {
+      font: inherit;
+      color: inherit;
+      cursor: pointer;
+    }
+    .step-num {
+      display: grid;
+      place-items: center;
+      flex: none;
+      width: 1.6rem;
+      height: 1.6rem;
+      border-radius: var(--radius-full);
+      background: var(--accent-grad);
+      color: var(--accent-contrast);
+      font-size: var(--text-xs);
+      font-weight: var(--weight-bold);
+    }
+    .camera {
+      display: grid;
+      gap: var(--space-2);
+      justify-items: start;
+    }
+    video {
+      width: 100%;
+      max-width: 24rem;
+      border-radius: var(--radius-md);
+      background: #000;
+    }
+    .fields {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr));
+      gap: var(--space-3);
+    }
+    .card-actions {
+      margin-top: 0;
+      padding-top: var(--space-3);
+      border-top: 1px solid var(--border);
+    }
+    .scan-side {
+      display: grid;
+      gap: var(--space-4);
+      position: sticky;
+      top: calc(var(--topbar-height) + var(--space-4));
+    }
+    .med-list {
+      list-style: none;
+      margin: var(--space-3) 0;
+      padding: 0;
+      display: grid;
+      gap: var(--space-1);
+    }
+    .med-list li {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: var(--space-3);
+      padding: var(--space-2) var(--space-3);
+      border-radius: var(--radius-sm);
+      background: var(--surface-raised);
+      font-size: var(--text-sm);
+    }
+    .med-name {
+      font-weight: var(--weight-semibold);
+    }
+    .med-dose {
+      color: var(--text-muted);
+      white-space: nowrap;
+    }
+    .result {
+      border-color: var(--success);
+      box-shadow: 0 0 0 1px color-mix(in srgb, var(--success) 25%, transparent);
+    }
+    .result-head {
+      display: flex;
+      align-items: center;
+      gap: var(--space-3);
+    }
+    .result-status {
+      margin: var(--space-3) 0 0;
+    }
+    .side-hint {
+      display: grid;
+      justify-items: center;
+      text-align: center;
+      gap: var(--space-2);
+      border-style: dashed;
+      box-shadow: none;
+    }
   `,
 })
 export class PrescriptionsPage implements OnDestroy {
@@ -175,11 +346,21 @@ export class PrescriptionsPage implements OnDestroy {
   readonly prescriberOverride = signal('');
   readonly deliveryAddress = signal('');
   readonly preview = signal<ParsedPrescriptionPayload | null>(null);
-  readonly previewError = signal('');
+  readonly previewError = signal<TranslatableMessage | null>(null);
   readonly cameraOn = signal(false);
-  readonly cameraError = signal('');
+  /** Bilingual failure slots: an app key, or `null` when there is none. */
+  readonly cameraError = signal<TranslatableMessage | null>(null);
 
-  protected readonly statusLabel = statusLabel;
+  /** Pipeline status in the active language. */
+  statusLabel(status: PharmacyOrderStatus): string {
+    return statusLabelFor(status, this.i18n.language());
+  }
+
+  /** Prescriber line: the parser's "unknown" placeholder is translatable. */
+  prescriberText(): string {
+    const prescriber = this.prescriberOverride() || this.preview()?.prescriber || '';
+    return prescriber === UNKNOWN_PRESCRIBER ? this.i18n.t('pharmacy.unknownPrescriber') : prescriber;
+  }
 
   private stream: MediaStream | null = null;
   private scanTimer: ReturnType<typeof setInterval> | null = null;
@@ -214,18 +395,18 @@ export class PrescriptionsPage implements OnDestroy {
     this.store.clearError();
     if (!value.trim()) {
       this.preview.set(null);
-      this.previewError.set('');
+      this.previewError.set(null);
       return;
     }
     try {
       this.preview.set(parseBarcodePayload(value));
-      this.previewError.set('');
+      this.previewError.set(null);
     } catch (error) {
       this.preview.set(null);
       this.previewError.set(
         error instanceof BarcodeParseError
-          ? error.message
-          : 'That code is not readable yet — keep typing or submit to let the pharmacy check it.'
+          ? { key: error.errorKey }
+          : { key: 'pharmacy.error.unreadableYet' }
       );
     }
   }
@@ -261,21 +442,21 @@ export class PrescriptionsPage implements OnDestroy {
   async startCamera(): Promise<void> {
     const Ctor = detectorConstructor();
     if (!Ctor) {
-      this.cameraError.set('Camera scanning is not supported in this browser — use manual entry.');
+      this.cameraError.set({ key: 'pharmacy.error.noDetector' });
       return;
     }
     if (!navigator.mediaDevices?.getUserMedia) {
-      this.cameraError.set('No camera is available — use manual entry below.');
+      this.cameraError.set({ key: 'pharmacy.error.noCameraDevice' });
       return;
     }
-    this.cameraError.set('');
+    this.cameraError.set(null);
     try {
       this.stream = await navigator.mediaDevices.getUserMedia({
         video: { facingMode: 'environment' },
         audio: false,
       });
     } catch {
-      this.cameraError.set('Camera access was denied. You can still enter the code manually.');
+      this.cameraError.set({ key: 'pharmacy.error.cameraDenied' });
       return;
     }
     const video = this.videoRef?.nativeElement;
@@ -294,7 +475,7 @@ export class PrescriptionsPage implements OnDestroy {
           if (raw) {
             this.stopCamera();
             this.onCodeInput(raw);
-            this.cameraError.set('');
+            this.cameraError.set(null);
           }
         },
         () => {

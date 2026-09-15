@@ -2,6 +2,8 @@ import { Component, computed, inject, OnInit, signal } from '@angular/core';
 import { ApiClient } from '../../core/api/api.client';
 import { SessionStore } from '../../core/auth/session';
 import { AuditService } from '../../core/services/audit/audit.service';
+import { I18n } from '../../core/i18n/i18n.service';
+import { LocalizedMessage } from '../../core/i18n/localized-message';
 import {
   ConsentPurpose,
   CONSENT_PURPOSES,
@@ -28,92 +30,108 @@ interface AdminConsentsResponse {
   imports: [],
   template: `
     <section class="consents-admin">
-      <h1>Consent oversight</h1>
+      <header class="page-header">
+        <div>
+          <h1 class="page-title">{{ i18n.t('consentsAdmin.title') }}</h1>
+          <p class="page-subtitle">
+            {{ i18n.t('consentsAdmin.viewing', { count: filtered().length }) }}
+          </p>
+        </div>
+        <div class="page-actions">
+          <span class="badge outline" [attr.aria-label]="i18n.t('admin.chainLabel')">
+            🧾 {{ i18n.t('admin.chain', { hash: chainHash().slice(0, 16) }) }}
+          </span>
+          <button type="button" class="btn secondary" (click)="refresh()">
+            {{ i18n.t('admin.refresh') }}
+          </button>
+        </div>
+      </header>
 
-      <p class="meta">
-        Viewing {{ totalRows() }} consent records across all users.
-        <span class="chain" aria-label="Chain hash">
-          Chain: {{ chainHash().slice(0, 16) }}…
-        </span>
-      </p>
-
-      <div class="filters" role="group" aria-label="Consent filters">
-        <label>
-          Purpose
+      <div class="filter-bar" role="group" [attr.aria-label]="i18n.t('consentsAdmin.filtersLabel')">
+        <label class="field">
+          <span class="field-label">{{ i18n.t('consentsAdmin.purpose') }}</span>
           <select [value]="purposeFilter()" (change)="purposeFilter.set($any($event.target).value)">
-            <option value="">All purposes</option>
+            <option value="">{{ i18n.t('consentsAdmin.allPurposes') }}</option>
             @for (p of purposes; track p) {
               <option [value]="p">{{ label(p) }}</option>
             }
           </select>
         </label>
-        <label>
-          Only granted
+        <label class="check">
           <input type="checkbox" [checked]="grantedOnly()" (change)="grantedOnly.set(!grantedOnly())" />
+          {{ i18n.t('consentsAdmin.onlyGranted') }}
         </label>
       </div>
 
-      @if (loading()) {
-        <p>Loading…</p>
-      } @else if (rows().length === 0) {
-        <p>No consent records found.</p>
-      } @else {
-        <table class="consents" role="table">
-          <thead>
-            <tr>
-              <th scope="col">User</th>
-              <th scope="col">Purpose</th>
-              <th scope="col">Status</th>
-              <th scope="col">Effective date</th>
-              <th scope="col">Updated by</th>
-              <th scope="col">Document</th>
-            </tr>
-          </thead>
-          <tbody>
-            @for (row of rows(); track row.userId + row.purpose) {
-              <tr>
-                <td>{{ row.userId }}</td>
-                <td>{{ label(row.purpose) }}</td>
-                <td>
-                  <span class="chip" [class.ok]="row.granted" [class.bad]="!row.granted">
-                    {{ row.granted ? 'granted' : 'withdrawn' }}
-                  </span>
-                </td>
-                <td>{{ formatDate(row.updatedAtMs) }}</td>
-                <td>{{ row.updatedBy || '—' }}</td>
-                <td>{{ row.documentVersion }}</td>
-              </tr>
-            }
-          </tbody>
-        </table>
+      @if (error.value()) {
+        <p class="error" role="alert">{{ i18n.message(error.source(), error.value()) }}</p>
       }
 
-      <div class="actions">
-        <button type="button" (click)="refresh()">Refresh</button>
-      </div>
+      @if (loading()) {
+        <div class="skeleton block" aria-hidden="true"></div>
+      } @else if (filtered().length === 0) {
+        <div class="empty-state">
+          <span class="empty-icon" aria-hidden="true">🔏</span>
+          <p>{{ i18n.t('consentsAdmin.empty') }}</p>
+        </div>
+      } @else {
+        <div class="table-wrap">
+          <table class="table consents" role="table">
+            <thead>
+              <tr>
+                <th scope="col">{{ i18n.t('consentsAdmin.col.user') }}</th>
+                <th scope="col">{{ i18n.t('consentsAdmin.purpose') }}</th>
+                <th scope="col">{{ i18n.t('consentsAdmin.col.status') }}</th>
+                <th scope="col">{{ i18n.t('consentsAdmin.col.effective') }}</th>
+                <th scope="col">{{ i18n.t('consentsAdmin.col.updatedBy') }}</th>
+                <th scope="col">{{ i18n.t('consentsAdmin.col.document') }}</th>
+              </tr>
+            </thead>
+            <tbody>
+              @for (row of filtered(); track row.userId + row.purpose) {
+                <tr>
+                  <td class="mono">{{ row.userId }}</td>
+                  <td>{{ label(row.purpose) }}</td>
+                  <td>
+                    <span [class]="'badge ' + (row.granted ? 'success' : 'danger')">
+                      <span class="dot"></span>
+                      {{
+                        row.granted ? i18n.t('consentsAdmin.granted') : i18n.t('consentsAdmin.withdrawn')
+                      }}
+                    </span>
+                  </td>
+                  <td>{{ formatDate(row.updatedAtMs) }}</td>
+                  <td>{{ row.updatedBy || '—' }}</td>
+                  <td class="mono">{{ row.documentVersion }}</td>
+                </tr>
+              }
+            </tbody>
+          </table>
+        </div>
+      }
     </section>
   `,
   styles: `
-    .consents-admin { max-width: 64rem; }
-    .meta { color: var(--text-muted); font-size: 0.85rem; }
-    .chain { font-family: monospace; float: right; }
-    .filters { display: flex; gap: 1rem; align-items: center; margin: 1rem 0; }
-    .filters label { display: flex; flex-direction: column; gap: 0.2rem; font-size: 0.85rem; }
-    table.consents { width: 100%; border-collapse: collapse; }
-    th, td { text-align: left; padding: 0.4rem 0.5rem; border-bottom: 1px solid var(--border, #d9dee7); font-size: 0.85rem; }
-    th { font-weight: 600; }
-    .chip.ok { background: var(--success, #1d7a3d); color: #fff; border-radius: 999px; padding: 0.05rem 0.5rem; font-size: 0.75rem; }
-    .chip.bad { background: var(--danger, #c62828); color: #fff; border-radius: 999px; padding: 0.05rem 0.5rem; font-size: 0.75rem; }
-    .actions { margin-top: 1rem; }
+    .consents-admin {
+      max-width: 72rem;
+    }
+    .mono {
+      font-family: var(--font-mono);
+      font-size: var(--text-xs);
+      word-break: break-all;
+    }
   `,
 })
 export class ConsentsAdminComponent implements OnInit {
+  protected readonly i18n = inject(I18n);
+
   private readonly api = inject(ApiClient);
   private readonly session = inject(SessionStore);
   private readonly audit = inject(AuditService);
 
   readonly loading = signal(false);
-  readonly error = signal('');
+  /** Bilingual failure slot (app key, or the server's own text). */
+  readonly error = new LocalizedMessage();
   readonly purposeFilter = signal('');
   readonly grantedOnly = signal(false);
 
@@ -125,6 +143,7 @@ export class ConsentsAdminComponent implements OnInit {
 
   readonly totalRows = computed(() => this.rows().length);
 
+  /** The filtered view the table renders (filters are applied here only). */
   readonly filtered = computed(() => {
     const purpose = this.purposeFilter();
     const onlyGranted = this.grantedOnly();
@@ -143,7 +162,7 @@ export class ConsentsAdminComponent implements OnInit {
 
   load(): void {
     this.loading.set(true);
-    this.error.set('');
+    this.error.clear();
     this.api.get<AdminConsentsResponse>('/admin/consents').subscribe({
       next: (result) => {
         const rows: AdminConsentRow[] = [];
@@ -164,7 +183,7 @@ export class ConsentsAdminComponent implements OnInit {
       },
       error: () => {
         this.loading.set(false);
-        this.error.set('Could not load consent oversight data. Please try again.');
+        this.error.setFromServer(undefined, { key: 'consentsAdmin.loadFailed' });
       },
     });
   }
@@ -175,8 +194,9 @@ export class ConsentsAdminComponent implements OnInit {
     this.load();
   }
 
+  /** Purpose label, in the language the admin is actually reading. */
   label(purpose: ConsentPurpose): string {
-    return CONSENT_PURPOSE_LABELS[purpose].en;
+    return CONSENT_PURPOSE_LABELS[purpose][this.i18n.language()];
   }
 
   formatDate(ms: number): string {

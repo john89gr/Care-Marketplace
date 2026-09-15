@@ -135,18 +135,27 @@ export const DISPUTE_REASON_LABELS: Record<DisputeReason, string> = {
 export interface PartialRefundQuote {
   ok: boolean;
   reason: string;
+  /** Dictionary key for `reason`, so a caller renders it per locale. */
+  reasonKey: string;
   refundCents: number;
   providerCents: number;
 }
 
 export function quotePartialRefund(refundCents: number, amountCents: number): PartialRefundQuote {
   if (!Number.isInteger(refundCents) || refundCents < 0) {
-    return { ok: false, reason: 'Refund amount must be a non-negative integer (cents).', refundCents: 0, providerCents: 0 };
+    return {
+      ok: false,
+      reason: 'Refund amount must be a non-negative integer (cents).',
+      reasonKey: 'store.escrow.refundNotPositive',
+      refundCents: 0,
+      providerCents: 0,
+    };
   }
   if (refundCents > amountCents) {
     return {
       ok: false,
       reason: 'Refund amount cannot exceed the held amount.',
+      reasonKey: 'store.escrow.refundExceedsHeld',
       refundCents: amountCents,
       providerCents: 0,
     };
@@ -154,6 +163,7 @@ export function quotePartialRefund(refundCents: number, amountCents: number): Pa
   return {
     ok: true,
     reason: '',
+    reasonKey: '',
     refundCents,
     providerCents: amountCents - refundCents,
   };

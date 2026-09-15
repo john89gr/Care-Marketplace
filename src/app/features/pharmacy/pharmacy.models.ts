@@ -5,6 +5,9 @@
  * in `barcode.ts`; pharmacy choice in `routing.ts` — all pure and unit-testable.
  */
 
+import { translateStatic } from '../../core/i18n/i18n.service';
+import { Language } from '../../core/i18n/translations';
+
 /** One prescribed line item (normalised by the barcode parser). */
 export interface ParsedMed {
   name: string;
@@ -78,19 +81,34 @@ export interface PrescriptionScanResult {
   order: PharmacyOrder;
 }
 
-const STATUS_LABELS: Record<PharmacyOrderStatus, string> = {
-  uploaded: 'Uploaded',
-  routed: 'Routed to pharmacy',
-  accepted: 'Accepted',
-  preparing: 'Preparing',
-  out_for_delivery: 'Out for delivery',
-  delivered: 'Delivered',
-  failed: 'Failed',
+/**
+ * Dictionary keys for the pipeline labels. A status label is display copy
+ * rather than a contractual token, so it translates (the raw `status` value on
+ * the wire is untouched — the API and the state machine keep using it).
+ */
+const STATUS_LABEL_KEYS: Record<PharmacyOrderStatus, string> = {
+  uploaded: 'pharmacy.status.uploaded',
+  routed: 'pharmacy.status.routed',
+  accepted: 'pharmacy.status.accepted',
+  preparing: 'pharmacy.status.preparing',
+  out_for_delivery: 'pharmacy.status.outForDelivery',
+  delivered: 'pharmacy.status.delivered',
+  failed: 'pharmacy.status.failed',
 };
 
-/** Human-readable label for a pipeline status (orders timeline UI). */
-export function statusLabel(status: PharmacyOrderStatus): string {
-  return STATUS_LABELS[status] ?? status;
+/** Dictionary key for a pipeline status label. */
+export function statusLabelKey(status: PharmacyOrderStatus): string {
+  return STATUS_LABEL_KEYS[status] ?? status;
+}
+
+/**
+ * Human-readable label for a pipeline status (orders timeline UI).
+ *
+ * Pages pass `i18n.language()` so the label follows the locale; the default
+ * keeps English for callers without an injection context.
+ */
+export function statusLabel(status: PharmacyOrderStatus, language: Language = 'en'): string {
+  return translateStatic(statusLabelKey(status), undefined, language);
 }
 
 /**

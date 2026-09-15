@@ -10,6 +10,15 @@ import {
 } from './disputes.store';
 import { I18n } from '../../core/i18n/i18n.service';
 
+/** Badge tone per dispute state (the label carries the meaning, not the colour). */
+const STATE_TONES: Record<string, string> = {
+  open: 'warning',
+  under_review: 'info',
+  resolved_client: 'success',
+  resolved_provider: 'success',
+  rejected: 'danger',
+};
+
 /**
  * Admin dispute queue (FEATURE_PLAN.md §17 subtasks 7, 9, 11, 19): the full
  * open queue with SLA flags and the resolution actions — take under review,
@@ -22,107 +31,134 @@ import { I18n } from '../../core/i18n/i18n.service';
   standalone: true,
   imports: [],
   template: `
-    <section class="admin-queue" aria-label="Admin dispute queue">
-      <h2>Admin queue</h2>
-      <p class="meta">
-        {{ store.queue().length }} dispute(s) ·
-        {{ store.slaBreaches().length }} past the 48h SLA
-      </p>
+    <section class="admin-queue section" [attr.aria-label]="i18n.t('admin.queueLabel')">
+      <div class="section-header">
+        <div>
+          <h2 class="section-title">{{ i18n.t('admin.queueTitle') }}</h2>
+          <p class="section-hint">
+            {{
+              i18n.t('admin.queueSummary', {
+                open: store.queue().length,
+                late: store.slaBreaches().length,
+              })
+            }}
+          </p>
+        </div>
+      </div>
 
       @if (store.loading()) {
-        <p>Loading queue…</p>
+        <div class="grid grid-2" aria-hidden="true">
+          <div class="skeleton block"></div>
+          <div class="skeleton block"></div>
+        </div>
       } @else if (store.queue().length === 0) {
-        <p>No open disputes.</p>
+        <div class="empty-state">
+          <span class="empty-icon" aria-hidden="true">✅</span>
+          <p>{{ i18n.t('admin.queueEmpty') }}</p>
+        </div>
       } @else {
         <ul class="queue">
           @for (d of store.queue(); track d.id) {
             <li class="card" [class.sla]="pastSla(d)">
-              <div class="head">
-                <h3>Dispute {{ d.id }}</h3>
-                <span class="chip" [class.warn]="d.state === 'open'"
-                  [class.info]="d.state === 'under_review'"
-                  [class.ok]="d.state.startsWith('resolved')"
-                  [class.bad]="d.state === 'rejected'">
-                  {{ d.state }}
+              <div class="card-head">
+                <h3 class="card-title">{{ i18n.t('disputes.itemTitle', { id: d.id }) }}</h3>
+                <span class="chips">
+                  <span [class]="'badge ' + stateTone(d.state)">
+                    <span class="dot"></span>{{ d.state }}
+                  </span>
+                  @if (pastSla(d)) {
+                    <span class="badge danger" [attr.title]="i18n.t('disputes.slaBreachTitle')">
+                      ⏱ {{ i18n.t('disputes.slaBreach') }}
+                    </span>
+                  }
                 </span>
-                @if (pastSla(d)) {
-                  <span class="chip warn" title="Open longer than 48 hours">SLA breach</span>
-                }
               </div>
+
               <p class="meta">
-                Booking {{ d.bookingId }} · {{ DISPUTE_REASON_LABELS[d.reason] }} ·
-                opened by {{ d.openedByName }} · {{ formatDate(d.createdAtMs) }}
+                {{ i18n.t('payments.bookingRef', { id: d.bookingId }) }} ·
+                {{ DISPUTE_REASON_LABELS[d.reason] }} ·
+                {{ i18n.t('disputes.openedBy', { name: d.openedByName }) }} ·
+                {{ formatDate(d.createdAtMs) }}
               </p>
+
               @if (d.description) {
                 <p class="description">{{ d.description }}</p>
               }
 
-              <div class="actions">
+              <div class="card-actions">
                 @if (d.state === 'open') {
                   <button
                     type="button"
-                    class="primary"
+                    class="btn"
                     [disabled]="store.actingId() === d.id"
                     (click)="take(d)"
                   >
-                    Take under review
+                    {{ i18n.t('admin.take') }}
                   </button>
                 }
                 @if (d.state === 'under_review') {
                   <button
                     type="button"
+                    class="btn"
                     [disabled]="store.actingId() === d.id"
                     (click)="resolveRelease(d)"
                   >
-                    Release to provider
+                    {{ i18n.t('admin.releaseToProvider') }}
                   </button>
                   <button
                     type="button"
+                    class="btn secondary"
                     [disabled]="store.actingId() === d.id"
                     (click)="togglePartial(d)"
                   >
-                    {{ partialFor() === d.id ? 'Cancel partial refund' : 'Partial refund' }}
+                    {{
+                      partialFor() === d.id ? i18n.t('admin.cancelPartial') : i18n.t('admin.partialRefund')
+                    }}
                   </button>
                   <button
                     type="button"
+                    class="btn secondary"
                     [disabled]="store.actingId() === d.id"
                     (click)="resolveFullRefund(d)"
                   >
-                    Full refund
+                    {{ i18n.t('admin.fullRefund') }}
                   </button>
                   <button
                     type="button"
-                    class="danger"
+                    class="btn danger"
                     [disabled]="store.actingId() === d.id"
                     (click)="reject(d)"
                   >
-                    Reject
+                    {{ i18n.t('admin.reject') }}
                   </button>
                 }
               </div>
 
               @if (partialFor() === d.id && d.state === 'under_review') {
                 <form class="refund-form" (submit)="submitPartial($event, d)">
-                  <label for="refund-cents">Refund amount (€)</label>
-                  <input
-                    id="refund-cents"
-                    type="number"
-                    min="0"
-                    step="0.01"
-                    inputmode="decimal"
-                    aria-describedby="refund-help"
-                    [value]="partialAmount() || ''"
-                    (input)="onRefundInput($any($event.target).value)"
-                    name="refundAmount"
-                  />
-                  <button type="submit" [disabled]="store.actingId() === d.id">Confirm refund</button>
-                  @if (partialError()) {
-                    <p class="error" role="alert">{{ partialError() }}</p>
-                  }
+                  <label class="field" for="refund-cents">
+                    <span class="field-label">{{ i18n.t('admin.refundAmount') }}</span>
+                    <input
+                      id="refund-cents"
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      inputmode="decimal"
+                      aria-describedby="refund-help"
+                      [value]="partialAmount() || ''"
+                      (input)="onRefundInput($any($event.target).value)"
+                      name="refundAmount"
+                    />
+                  </label>
+                  <button type="submit" class="btn" [disabled]="store.actingId() === d.id">
+                    {{ i18n.t('admin.confirmRefund') }}
+                  </button>
                 </form>
-                <p class="help" id="refund-help">
-                  Cents-safe: the quote is validated before it is sent to the backend.
-                </p>
+                <p class="section-hint" id="refund-help">{{ i18n.t('admin.refundHelp') }}</p>
+              }
+
+              @if (partialError()) {
+                <p class="error" role="alert">{{ i18n.t(partialError()) }}</p>
               }
             </li>
           }
@@ -135,28 +171,45 @@ import { I18n } from '../../core/i18n/i18n.service';
     </section>
   `,
   styles: `
-    .admin-queue { margin-top: 1rem; }
-    .meta { color: var(--text-muted); font-size: 0.85rem; }
-    .queue { list-style: none; margin: 0.5rem 0 0; padding: 0; display: grid; gap: 0.75rem; }
-    .card { border: 1px solid var(--border, #d9dee7); border-radius: 0.6rem; padding: 0.75rem 1rem; }
-    .card.sla { border-color: var(--warning, #f57f17); }
-    .head { display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap; }
-    .head h3 { margin: 0; font-size: 1rem; }
-    .chip { border-radius: 999px; padding: 0.15rem 0.7rem; font-size: 0.8rem; background: var(--surface-2, #eef1f6); }
-    .chip.ok { background: var(--success, #1d7a3d); color: #fff; }
-    .chip.bad { background: var(--danger, #c62828); color: #fff; }
-    .chip.warn { background: var(--warning, #f57f17); color: #fff; }
-    .chip.info { background: var(--info, #0d6efd); color: #fff; }
-    .description { margin: 0.4rem 0; border-left: 3px solid var(--border, #d9dee7); padding-left: 0.75rem; }
-    .actions { display: flex; gap: 0.5rem; flex-wrap: wrap; margin-top: 0.5rem; }
-    button { min-height: 44px; padding: 0.4rem 1rem; cursor: pointer; }
-    button.primary { background: var(--accent, #4f7cff); color: #fff; border-color: transparent; font-weight: 600; }
-    button.danger { background: var(--danger, #c62828); color: #fff; border-color: transparent; }
-    .refund-form { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; margin-top: 0.6rem; }
-    .refund-form label { font-size: 0.85rem; }
-    .refund-form input { min-height: 44px; width: 8rem; padding: 0 0.5rem; }
-    .help { color: var(--text-muted); font-size: 0.8rem; margin: 0.25rem 0 0; }
-    .error { color: var(--danger, #c62828); font-weight: 600; margin: 0.25rem 0 0; }
+    .admin-queue {
+      margin-bottom: var(--space-6);
+    }
+    .queue {
+      list-style: none;
+      margin: 0;
+      padding: 0;
+      display: grid;
+      gap: var(--space-3);
+    }
+    .card.sla {
+      border-color: var(--warning);
+      box-shadow: var(--shadow-md);
+    }
+    .chips {
+      display: inline-flex;
+      align-items: center;
+      gap: var(--space-2);
+      flex-wrap: wrap;
+    }
+    .description {
+      margin: var(--space-2) 0;
+      border-left: 3px solid var(--accent);
+      padding-left: var(--space-3);
+      color: var(--text-muted);
+    }
+    .refund-form {
+      display: flex;
+      align-items: flex-end;
+      gap: var(--space-3);
+      flex-wrap: wrap;
+      margin-top: var(--space-3);
+      padding-top: var(--space-3);
+      border-top: 1px solid var(--border);
+      max-width: none;
+    }
+    .refund-form input {
+      width: 9rem;
+    }
   `,
 })
 export class AdminQueueComponent implements OnInit {
@@ -172,10 +225,15 @@ export class AdminQueueComponent implements OnInit {
     this.store.loadQueue();
   }
   protected readonly partialAmount = signal(0);
+  /** Dictionary key of the last validation failure (rendered per locale). */
   protected readonly partialError = signal('');
 
   pastSla(d: Dispute): boolean {
     return isPastSla(d);
+  }
+
+  stateTone(state: string): string {
+    return STATE_TONES[state] ?? '';
   }
 
   take(d: Dispute): void {
@@ -210,11 +268,7 @@ export class AdminQueueComponent implements OnInit {
     const refundCents = Math.round(this.partialAmount() * 100);
     const quote = quotePartialRefund(refundCents, Number.MAX_SAFE_INTEGER);
     if (!quote.ok || refundCents <= 0) {
-      this.partialError.set(
-        refundCents <= 0
-          ? 'Enter a refund amount greater than zero.'
-          : quote.reason
-      );
+      this.partialError.set(quote.ok ? 'store.escrow.refundNotPositive' : quote.reasonKey);
       return;
     }
     this.partialError.set('');

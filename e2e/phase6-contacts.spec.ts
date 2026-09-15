@@ -70,8 +70,8 @@ test('a new primary ICE contact demotes the old one and reaches the export', asy
   // The directory feeds the health-summary export (SPA nav keeps demo state):
   // 2 seeded ICE contacts + the one just added.
   await page.getByRole('link', { name: 'Φάκελος υγείας' }).click();
-  await page.getByRole('link', { name: 'Health summary export' }).click();
-  await expect(page.getByRole('heading', { name: 'Health summary export' })).toBeVisible();
+  await page.getByRole('link', { name: 'Εξαγωγή σύνοψης υγείας' }).click();
+  await expect(page.getByRole('heading', { name: 'Εξαγωγή σύνοψης υγείας' })).toBeVisible();
   await expect(page.getByRole('status').first()).toContainText('3 emergency contacts');
 });
 

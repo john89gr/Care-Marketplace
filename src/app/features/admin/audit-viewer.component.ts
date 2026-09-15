@@ -3,6 +3,8 @@ import { JsonPipe } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { AuditService, AuditEvent } from '../../core/services/audit/audit.service';
 import { SessionStore } from '../../core/auth/session';
+import { I18n } from '../../core/i18n/i18n.service';
+import { LocalizedMessage } from '../../core/i18n/localized-message';
 
 /**
  * Admin audit viewer (FEATURE_PLAN.md §16 subtask 11–13).
@@ -16,121 +18,169 @@ import { SessionStore } from '../../core/auth/session';
   imports: [FormsModule, JsonPipe],
   template: `
     <section class="audit-viewer">
-      <h1>Audit trail</h1>
+      <header class="page-header">
+        <div>
+          <h1 class="page-title">{{ i18n.t('audit.title') }}</h1>
+          <p class="page-subtitle">
+            {{ i18n.t('audit.showing', { shown: total(), total: allEvents().length }) }}
+          </p>
+        </div>
+        <div class="page-actions">
+          <span class="badge outline" [attr.aria-label]="i18n.t('admin.chainLabel')">
+            🧾 {{ i18n.t('admin.chain', { hash: chainHash().slice(0, 16) }) }}
+          </span>
+          @if (total() > 0) {
+            <button type="button" class="btn" (click)="exportCsv()">
+              {{ i18n.t('audit.exportCsv') }}
+            </button>
+          }
+          <button type="button" class="btn secondary" (click)="refresh()">
+            {{ i18n.t('admin.refresh') }}
+          </button>
+        </div>
+      </header>
 
-      <p class="meta">
-        Showing {{ total() }} of {{ allEvents().length }} events.
-        <span class="chain" aria-label="Chain hash">
-          Chain: {{ chainHash().slice(0, 16) }}…
-        </span>
-      </p>
+      @if (error.value()) {
+        <p class="error" role="alert">{{ i18n.message(error.source(), error.value()) }}</p>
+      }
 
-      <div class="filters" role="group" aria-label="Audit filters">
-        <label>
-          Actor
-          <input type="text" placeholder="actor id"
+      <div class="filter-bar" role="group" [attr.aria-label]="i18n.t('audit.filtersLabel')">
+        <label class="field">
+          <span class="field-label">{{ i18n.t('audit.actor') }}</span>
+          <input type="text" [attr.placeholder]="i18n.t('audit.placeholder.actor')"
                  [value]="actorFilter()"
                  (input)="actorFilter.set($any($event.target).value)"
-                 aria-label="Filter by actor id" />
+                 [attr.aria-label]="i18n.t('audit.filter.actor')" />
         </label>
-        <label>
-          Action
-          <input type="text" placeholder="e.g. vitals.view"
+        <label class="field">
+          <span class="field-label">{{ i18n.t('audit.action') }}</span>
+          <input type="text" [attr.placeholder]="i18n.t('audit.placeholder.action')"
                  [value]="actionFilter()"
                  (input)="actionFilter.set($any($event.target).value)"
-                 aria-label="Filter by action" />
+                 [attr.aria-label]="i18n.t('audit.filter.action')" />
         </label>
-        <label>
-          Resource
-          <input type="text" placeholder="e.g. vital-reading"
+        <label class="field">
+          <span class="field-label">{{ i18n.t('audit.resource') }}</span>
+          <input type="text" [attr.placeholder]="i18n.t('audit.placeholder.resource')"
                  [value]="resourceFilter()"
                  (input)="resourceFilter.set($any($event.target).value)"
-                 aria-label="Filter by resource type" />
+                 [attr.aria-label]="i18n.t('audit.filter.resource')" />
         </label>
-        <label>
-          From
+        <label class="field">
+          <span class="field-label">{{ i18n.t('audit.from') }}</span>
           <input type="date"
                  [value]="dateFrom()"
                  (change)="dateFrom.set($any($event.target).value)"
-                 aria-label="Filter by date from" />
+                 [attr.aria-label]="i18n.t('audit.filter.from')" />
         </label>
-        <label>
-          To
+        <label class="field">
+          <span class="field-label">{{ i18n.t('audit.to') }}</span>
           <input type="date"
                  [value]="dateTo()"
                  (change)="dateTo.set($any($event.target).value)"
-                 aria-label="Filter by date to" />
+                 [attr.aria-label]="i18n.t('audit.filter.to')" />
         </label>
-        <button type="button" (click)="resetFilters()" aria-label="Reset filters">Reset</button>
+        <button type="button" class="btn secondary" (click)="resetFilters()"
+          [attr.aria-label]="i18n.t('audit.resetLabel')">
+          {{ i18n.t('audit.reset') }}
+        </button>
       </div>
 
-      @if (filtered().length === 0) {
-        <p class="meta">No audit events match the current filters.</p>
+      @if (loading()) {
+        <div class="skeleton block" aria-hidden="true"></div>
+      } @else if (filtered().length === 0) {
+        <div class="empty-state">
+          <span class="empty-icon" aria-hidden="true">🧾</span>
+          <p>{{ i18n.t('audit.empty') }}</p>
+        </div>
       } @else {
-        <table class="events" role="table">
-          <thead>
-            <tr>
-              <th scope="col">When</th>
-              <th scope="col">Actor</th>
-              <th scope="col">Action</th>
-              <th scope="col">Resource</th>
-              <th scope="col">Resource ID</th>
-              <th scope="col">Meta</th>
-            </tr>
-          </thead>
-          <tbody>
-            @for (event of page(); track event.id) {
+        <div class="table-wrap">
+          <table class="table events" role="table">
+            <thead>
               <tr>
-                <td>{{ formatDate(event.atMs) }}</td>
-                <td>{{ event.actorId }}</td>
-                <td>{{ event.action }}</td>
-                <td>{{ event.resourceType }}</td>
-                <td>{{ event.resourceId }}</td>
-                <td><pre>{{ event.meta ? (event.meta | json) : '' }}</pre></td>
+                <th scope="col">{{ i18n.t('audit.col.when') }}</th>
+                <th scope="col">{{ i18n.t('audit.actor') }}</th>
+                <th scope="col">{{ i18n.t('audit.action') }}</th>
+                <th scope="col">{{ i18n.t('audit.resource') }}</th>
+                <th scope="col">{{ i18n.t('audit.col.resourceId') }}</th>
+                <th scope="col">{{ i18n.t('audit.col.meta') }}</th>
               </tr>
-            }
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              @for (event of page(); track event.id) {
+                <tr>
+                  <td class="nowrap">{{ formatDate(event.atMs) }}</td>
+                  <td class="mono">{{ event.actorId }}</td>
+                  <td><span class="badge accent">{{ event.action }}</span></td>
+                  <td>{{ event.resourceType }}</td>
+                  <td class="mono">{{ event.resourceId }}</td>
+                  <td><pre>{{ event.meta ? (event.meta | json) : '' }}</pre></td>
+                </tr>
+              }
+            </tbody>
+          </table>
+        </div>
 
-        <nav class="pager" role="navigation" aria-label="Audit pages">
-          <button type="button" [disabled]="pageIndex() === 0" (click)="prevPage()">Previous</button>
-          <span class="meta">Page {{ pageIndex() + 1 }} of {{ totalPages() }}</span>
-          <button type="button" [disabled]="pageIndex() >= totalPages() - 1" (click)="nextPage()">Next</button>
+        <nav class="pager" role="navigation" [attr.aria-label]="i18n.t('audit.pagesLabel')">
+          <button type="button" class="btn secondary sm" [disabled]="pageIndex() === 0" (click)="prevPage()">
+            {{ i18n.t('audit.previous') }}
+          </button>
+          <span class="meta">
+            {{ i18n.t('audit.pageOf', { page: pageIndex() + 1, total: totalPages() }) }}
+          </span>
+          <button
+            type="button"
+            class="btn secondary sm"
+            [disabled]="pageIndex() >= totalPages() - 1"
+            (click)="nextPage()"
+          >
+            {{ i18n.t('common.next') }}
+          </button>
         </nav>
       }
-
-      <div class="actions">
-        @if (total() > 0) {
-          <button type="button" class="primary" (click)="exportCsv()">Export CSV</button>
-        }
-        <button type="button" (click)="refresh()">Refresh</button>
-      </div>
     </section>
   `,
   styles: `
-    .audit-viewer { max-width: 72rem; }
-    .meta { color: var(--text-muted); font-size: 0.85rem; }
-    .chain { font-family: monospace; float: right; }
-    .filters { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.5rem; margin: 1rem 0; }
-    .filters label { display: grid; gap: 0.2rem; font-size: 0.85rem; }
-    .filters input { min-height: 44px; font-size: 0.9rem; }
-    .filters button { min-height: 44px; }
-    table.events { width: 100%; border-collapse: collapse; margin: 1rem 0; font-size: 0.85rem; }
-    th, td { text-align: left; padding: 0.35rem 0.5rem; border-bottom: 1px solid var(--border, #d9dee7); }
-    th { font-weight: 600; }
-    td pre { margin: 0; white-space: pre-wrap; max-width: 12rem; font-size: 0.75rem; }
-    .pager { display: flex; align-items: center; gap: 0.5rem; margin: 0.75rem 0; }
-    .pager button { min-height: 44px; }
-    .actions { display: flex; gap: 0.5rem; margin-top: 1rem; }
-    button.primary { background: var(--accent, #4f7cff); color: #fff; border-color: transparent; font-weight: 600; }
+    .audit-viewer {
+      max-width: 80rem;
+    }
+    .events {
+      font-size: var(--text-xs);
+    }
+    .events pre {
+      margin: 0;
+      white-space: pre-wrap;
+      max-width: 14rem;
+      font-size: var(--text-xs);
+      color: var(--text-muted);
+    }
+    .mono {
+      font-family: var(--font-mono);
+      word-break: break-all;
+    }
+    .nowrap {
+      white-space: nowrap;
+    }
+    .pager {
+      display: flex;
+      align-items: center;
+      gap: var(--space-3);
+      margin-top: var(--space-4);
+    }
+    .pager .meta {
+      font-variant-numeric: tabular-nums;
+    }
   `,
 })
 export class AuditViewerComponent implements OnInit {
+  protected readonly i18n = inject(I18n);
+
   private readonly audit = inject(AuditService);
   private readonly session = inject(SessionStore);
 
   readonly loading = signal(false);
-  readonly error = signal('');
+  /** Bilingual failure slot (app key, or the server's own text). */
+  readonly error = new LocalizedMessage();
 
   readonly actorFilter = signal('');
   readonly actionFilter = signal('');
@@ -176,7 +226,7 @@ export class AuditViewerComponent implements OnInit {
 
   load(): void {
     this.loading.set(true);
-    this.error.set('');
+    this.error.clear();
     this.audit.loadAll().subscribe({
       next: (result) => {
         this._allEvents.set(result.items ?? []);
@@ -186,7 +236,7 @@ export class AuditViewerComponent implements OnInit {
         // Fallback: merge local + server-side events via the in-memory signal.
         this._allEvents.set(this.audit.events());
         this.loading.set(false);
-        this.error.set('Showing local audit log only — the server list could not be loaded.');
+        this.error.setFromServer(undefined, { key: 'audit.localOnly' });
       },
     });
   }

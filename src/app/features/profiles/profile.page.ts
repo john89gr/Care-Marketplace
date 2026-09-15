@@ -17,145 +17,186 @@ import { I18n } from '../../core/i18n/i18n.service';
   imports: [ReactiveFormsModule, RouterLink],
   template: `
     <section class="profile">
-      <h1>My profile</h1>
+      <header class="page-header">
+        <div>
+          <h1 class="page-title">{{ i18n.t('profile.title') }}</h1>
+          <p class="page-subtitle">{{ i18n.t('profile.subtitle') }}</p>
+        </div>
+        <div class="page-actions">
+          <span class="avatar lg" aria-hidden="true">{{ initials() }}</span>
+        </div>
+      </header>
 
       @if (store.loading()) {
-        <p>Loading…</p>
+        <div class="card skeleton block" aria-hidden="true"></div>
       } @else {
-        <form [formGroup]="form" (ngSubmit)="submit()">
-          <label>Full name
-            <input type="text" formControlName="displayName" autocomplete="name" />
-          </label>
-          <label>Phone
-            <input type="tel" formControlName="phone" autocomplete="tel" />
-            <span class="hint">
-              Ο προσωπικός σας αριθμός. Οι επαφές έκτακτης ανάγκης (ICE) και τα
-              τηλέφωνα της ομάδας φροντίδας διαχειρίζονται στις
-              <a routerLink="/contacts">Επαφές &amp; Τηλέφωνα</a>.
-            </span>
-          </label>
+        <div class="grid profile-grid">
+          <form class="card profile-form" [formGroup]="form" (ngSubmit)="submit()">
+            <h2 class="section-title">{{ i18n.t('profile.detailsTitle') }}</h2>
 
-          @if (isClient()) {
-            <fieldset>
-              <legend>Greek identifiers (used for vetting)</legend>
-              <label>AMKA
-                <input type="text" inputmode="numeric" formControlName="amka"
-                  placeholder="11 digits" aria-describedby="amka-hint" />
-                @if (form.controls.amka.dirty && form.controls.amka.errors) {
-                  <span class="error" id="amka-hint">AMKA must be 11 digits with a valid date.</span>
-                }
-              </label>
-              <label>AFM (tax number)
-                <input type="text" inputmode="numeric" formControlName="afm"
-                  placeholder="9 digits" aria-describedby="afm-hint" />
-                @if (form.controls.afm.dirty && form.controls.afm.errors) {
-                  <span class="error" id="afm-hint">AFM must be 9 digits with a valid checksum.</span>
-                }
-              </label>
-              <label>Date of birth (used for preventive-care reminders)
-                <input type="date" formControlName="dateOfBirth" />
-              </label>
-              <label>Recorded sex (used for preventive-care reminders)
-                <select formControlName="sex">
-                  <option value="">Prefer not to say</option>
-                  <option value="female">Female</option>
-                  <option value="male">Male</option>
-                  <option value="other">Other</option>
-                </select>
-              </label>
-            </fieldset>
-          }
+            <label class="field">
+              <span class="field-label">{{ i18n.t('auth.fullName') }}</span>
+              <input type="text" formControlName="displayName" autocomplete="name" />
+            </label>
+            <label class="field">
+              <span class="field-label">{{ i18n.t('profile.phone') }}</span>
+              <input type="tel" formControlName="phone" autocomplete="tel" />
+              <span class="hint">
+                {{ i18n.t('profile.phoneHint') }}
+                <a routerLink="/contacts">{{ i18n.t('phr.contactsLabel') }}</a>.
+              </span>
+            </label>
 
-          @if (isProvider()) {
-            <fieldset>
-              <legend>Professional details</legend>
-              <label>Licence number
-                <input type="text" formControlName="licenceNumber"
-                  placeholder="e.g. ΝΟΣ-2024-Α123" aria-describedby="licence-hint" />
-                @if (form.controls.licenceNumber.dirty && form.controls.licenceNumber.errors) {
-                  <span class="error" id="licence-hint">Licence: 5–20 letters, digits or hyphens.</span>
-                }
-              </label>
-              <label>Hourly rate (€)
-                <input type="number" min="0" step="1" formControlName="hourlyRate" />
-              </label>
-            </fieldset>
-          }
+            @if (isClient()) {
+              <fieldset>
+                <legend>{{ i18n.t('profile.identifiersLegend') }}</legend>
+                <label class="field">
+                  <span class="field-label">{{ i18n.t('profile.amka') }}</span>
+                  <input type="text" inputmode="numeric" formControlName="amka"
+                    [attr.placeholder]="i18n.t('profile.amkaPlaceholder')"
+                    aria-describedby="amka-hint" />
+                  @if (form.controls.amka.dirty && form.controls.amka.errors) {
+                    <span class="field-error" id="amka-hint">{{ i18n.t('profile.amkaError') }}</span>
+                  }
+                </label>
+                <label class="field">
+                  <span class="field-label">{{ i18n.t('profile.afm') }}</span>
+                  <input type="text" inputmode="numeric" formControlName="afm"
+                    [attr.placeholder]="i18n.t('profile.afmPlaceholder')"
+                    aria-describedby="afm-hint" />
+                  @if (form.controls.afm.dirty && form.controls.afm.errors) {
+                    <span class="field-error" id="afm-hint">{{ i18n.t('profile.afmError') }}</span>
+                  }
+                </label>
+                <label class="field">
+                  <span class="field-label">{{ i18n.t('profile.dateOfBirth') }}</span>
+                  <input type="date" formControlName="dateOfBirth" />
+                </label>
+                <label class="field">
+                  <span class="field-label">{{ i18n.t('profile.sex') }}</span>
+                  <select formControlName="sex">
+                    <option value="">{{ i18n.t('profile.sexPreferNotToSay') }}</option>
+                    <option value="female">{{ i18n.t('profile.sexFemale') }}</option>
+                    <option value="male">{{ i18n.t('profile.sexMale') }}</option>
+                    <option value="other">{{ i18n.t('profile.sexOther') }}</option>
+                  </select>
+                </label>
+              </fieldset>
+            }
 
-          <button type="submit" [disabled]="store.saving() || form.invalid">
-            {{ store.saving() ? 'Saving…' : 'Save profile' }}
-          </button>
+            @if (isProvider()) {
+              <fieldset>
+                <legend>{{ i18n.t('profile.professionalLegend') }}</legend>
+                <label class="field">
+                  <span class="field-label">{{ i18n.t('profile.licenceNumber') }}</span>
+                  <!-- Placeholder is a licence-format example: it is not prose. -->
+                  <input type="text" formControlName="licenceNumber"
+                    placeholder="e.g. ΝΟΣ-2024-Α123" aria-describedby="licence-hint" />
+                  @if (form.controls.licenceNumber.dirty && form.controls.licenceNumber.errors) {
+                    <span class="field-error" id="licence-hint">{{ i18n.t('profile.licenceError') }}</span>
+                  }
+                </label>
+                <label class="field">
+                  <span class="field-label">{{ i18n.t('profile.hourlyRate') }}</span>
+                  <input type="number" min="0" step="1" formControlName="hourlyRate" />
+                </label>
+              </fieldset>
+            }
 
-          @if (store.saved()) {
-            <p class="saved" role="status">Profile saved.</p>
-          }
-          @if (store.saveError()) {
-            <p class="error" role="alert">{{ i18n.message(store.saveErrorSource(), store.saveError()) }}</p>
-          }
-        </form>
+            <div class="card-actions">
+              <button type="submit" class="btn" [disabled]="store.saving() || form.invalid">
+                {{ store.saving() ? i18n.t('common.saving') : i18n.t('profile.save') }}
+              </button>
+              @if (store.saved()) {
+                <span class="badge success" role="status">
+                  <span class="dot"></span>{{ i18n.t('profile.saved') }}
+                </span>
+              }
+            </div>
+
+            @if (store.saveError()) {
+              <p class="error" role="alert">{{ i18n.message(store.saveErrorSource(), store.saveError()) }}</p>
+            }
+          </form>
+
+          <section class="card notif-prefs" aria-labelledby="notif-prefs-h">
+            <h2 class="section-title" id="notif-prefs-h">{{ i18n.t('profile.notifTitle') }}</h2>
+            <p class="section-hint">{{ i18n.t('profile.notifHint') }}</p>
+            <div class="pref-list">
+              @for (kind of allKinds; track kind) {
+                <label class="pref-row">
+                  <input
+                    type="checkbox"
+                    [checked]="notifications.isMuted(kind)"
+                    (change)="notifications.toggleMute(kind)"
+                  />
+                  <span>{{ i18n.t('profile.muteKind', { kind }) }}</span>
+                </label>
+              }
+              <label class="pref-row">
+                <input type="checkbox" [checked]="pushGranted" (change)="requestPush()" />
+                <span>{{ i18n.t('notifications.browserPush') }}</span>
+              </label>
+            </div>
+          </section>
+        </div>
       }
-
-      <section class="notif-prefs" aria-labelledby="notif-prefs-h">
-        <h2 id="notif-prefs-h">Notification preferences</h2>
-        <p class="hint">Muted kinds stay in history but won't badge, toast or push.</p>
-        @for (kind of allKinds; track kind) {
-          <label class="mute-row">
-            <input
-              type="checkbox"
-              [checked]="notifications.isMuted(kind)"
-              (change)="notifications.toggleMute(kind)"
-            />
-            Mute {{ kind }}
-          </label>
-        }
-        <label class="mute-row">
-          <input
-            type="checkbox"
-            [checked]="pushGranted"
-            (change)="requestPush()"
-          />
-          Browser push notifications
-        </label>
-      </section>
     </section>
   `,
   styles: `
-    fieldset {
-      border: 1px solid var(--border);
-      border-radius: 0.75rem;
-      padding: 0.75rem 1rem;
+    .profile-grid {
+      grid-template-columns: repeat(auto-fit, minmax(21rem, 1fr));
+      align-items: start;
+    }
+    .profile-form {
       display: flex;
       flex-direction: column;
-      gap: 0.9rem;
+      gap: var(--space-4);
+      max-width: none;
     }
-    legend {
-      color: var(--text-muted);
-      font-size: 0.85rem;
-      padding-inline: 0.25rem;
-    }
-    .saved {
-      color: var(--success);
+    .profile-form .section-title {
       margin: 0;
+      padding-bottom: var(--space-3);
+      border-bottom: 1px solid var(--border);
     }
-    .hint {
-      color: var(--text-muted);
-      font-size: 0.8rem;
+    fieldset {
+      gap: var(--space-3);
+      display: flex;
+      flex-direction: column;
+    }
+    .card-actions {
+      margin-top: 0;
+      align-items: center;
+      padding-top: var(--space-3);
+      border-top: 1px solid var(--border);
     }
     .notif-prefs {
-      margin-top: 2rem;
       display: grid;
-      gap: 0.4rem;
+      gap: var(--space-2);
+      position: sticky;
+      top: calc(var(--topbar-height) + var(--space-4));
     }
-    .notif-prefs .hint {
-      color: var(--text-muted);
-      font-size: 0.85rem;
-      margin: 0 0 0.4rem;
+    .notif-prefs .section-title {
+      margin: 0;
     }
-    .mute-row {
-      display: flex;
-      gap: 0.5rem;
+    .pref-list {
+      display: grid;
+      gap: var(--space-1);
+      margin-top: var(--space-2);
+    }
+    .pref-row {
+      flex-direction: row;
       align-items: center;
-      font-size: 0.9rem;
+      gap: var(--space-2);
+      padding: var(--space-2);
+      border-radius: var(--radius-sm);
+      color: var(--text);
+      font-size: var(--text-sm);
+      cursor: pointer;
+      transition: background-color var(--dur-fast) ease;
+    }
+    .pref-row:hover {
+      background: var(--surface-raised);
     }
   `,
 })
@@ -167,6 +208,18 @@ export class ProfilePage implements OnInit {
   private readonly fb = inject(FormBuilder);
   readonly notifications = inject(NotificationsService);
   pushGranted = false;
+
+  readonly initials = computed(() => {
+    const name = this.session.displayName().trim();
+    if (!name) {
+      return '?';
+    }
+    return name
+      .split(/\s+/)
+      .slice(0, 2)
+      .map((part) => part.charAt(0).toUpperCase())
+      .join('');
+  });
 
   readonly allKinds: NotificationKind[] = [
     'booking.accepted',

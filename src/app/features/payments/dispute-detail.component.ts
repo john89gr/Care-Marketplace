@@ -1,5 +1,15 @@
-import { Component, input, output } from '@angular/core';
+import { Component, inject, input, output } from '@angular/core';
 import { Dispute, DISPUTE_REASON_LABELS, isPastSla } from './disputes.store';
+import { I18n } from '../../core/i18n/i18n.service';
+
+/** Badge tone per dispute state (the label carries the meaning, not the colour). */
+const STATE_TONES: Record<string, string> = {
+  open: 'warning',
+  under_review: 'info',
+  resolved_client: 'success',
+  resolved_provider: 'success',
+  rejected: 'danger',
+};
 
 /**
  * Dispute detail viewer (FEATURE_PLAN.md §17 subtasks 8, 11, 14): the full
@@ -11,36 +21,39 @@ import { Dispute, DISPUTE_REASON_LABELS, isPastSla } from './disputes.store';
   standalone: true,
   template: `
     @if (dispute(); as d) {
-      <section class="detail" aria-label="Dispute details">
-        <div class="head">
-          <h3>Dispute {{ d.id }}</h3>
-          <span class="chip" [class.warn]="d.state === 'open'"
-            [class.info]="d.state === 'under_review'"
-            [class.ok]="d.state.startsWith('resolved')"
-            [class.bad]="d.state === 'rejected'">
-            {{ d.state }}
+      <section class="card detail" [attr.aria-label]="i18n.t('disputes.detailLabel')">
+        <div class="card-head">
+          <h3 class="card-title">{{ i18n.t('disputes.itemTitle', { id: d.id }) }}</h3>
+          <span class="chips">
+            <span [class]="'badge ' + stateTone(d.state)">
+              <span class="dot"></span>{{ d.state }}
+            </span>
+            @if (pastSla(d)) {
+              <span class="badge danger" [attr.title]="i18n.t('disputes.slaBreachTitle')">
+                ⏱ {{ i18n.t('disputes.slaBreach') }}
+              </span>
+            }
           </span>
-          @if (pastSla(d)) {
-            <span class="chip warn" title="Open longer than 48 hours">SLA breach</span>
-          }
         </div>
 
         <dl class="facts">
-          <dt>Booking</dt>
+          <dt>{{ i18n.t('disputes.field.booking') }}</dt>
           <dd>{{ d.bookingId }}</dd>
-          <dt>Reason</dt>
+          <dt>{{ i18n.t('disputes.field.reason') }}</dt>
           <dd>{{ DISPUTE_REASON_LABELS[d.reason] }}</dd>
-          <dt>Opened by</dt>
+          <dt>{{ i18n.t('disputes.field.openedBy') }}</dt>
           <dd>{{ d.openedByName }} ({{ d.openedBy }})</dd>
-          <dt>Parties</dt>
+          <dt>{{ i18n.t('disputes.field.parties') }}</dt>
           <dd>{{ d.clientName }} vs {{ d.providerName }}</dd>
-          <dt>Opened</dt>
+          <dt>{{ i18n.t('disputes.field.opened') }}</dt>
           <dd>{{ formatDate(d.createdAtMs) }}</dd>
           @if (d.resolution) {
-            <dt>Resolution</dt>
+            <dt>{{ i18n.t('disputes.field.resolution') }}</dt>
             <dd>
               {{ d.resolution }}
-              @if (d.refundCents) { · {{ (d.refundCents / 100).toFixed(2) }}€ refunded }
+              @if (d.refundCents) {
+                {{ i18n.t('disputes.refunded', { amount: (d.refundCents / 100).toFixed(2) }) }}
+              }
             </dd>
           }
         </dl>
@@ -50,12 +63,12 @@ import { Dispute, DISPUTE_REASON_LABELS, isPastSla } from './disputes.store';
         }
 
         @if (d.evidence.length > 0) {
-          <h4>Evidence</h4>
+          <h4 class="evidence-title">{{ i18n.t('disputes.evidence') }}</h4>
           <ul class="evidence">
             @for (ev of d.evidence; track ev.id) {
-              <li>
-                <span class="meta">{{ formatDate(ev.createdAtMs) }} · {{ ev.authorName }}</span>
+              <li class="list-item">
                 <span class="kind">{{ ev.kind }}</span>
+                <span class="meta">{{ formatDate(ev.createdAtMs) }} · {{ ev.authorName }}</span>
                 @if (ev.body) {
                   <p>{{ ev.body }}</p>
                 }
@@ -64,35 +77,84 @@ import { Dispute, DISPUTE_REASON_LABELS, isPastSla } from './disputes.store';
           </ul>
         }
 
-        <div class="actions">
-          <button type="button" class="secondary" (click)="close.emit()">Close</button>
+        <div class="card-actions">
+          <button type="button" class="btn secondary" (click)="close.emit()">
+            {{ i18n.t('common.close') }}
+          </button>
         </div>
       </section>
     }
   `,
   styles: `
-    .detail { border: 1px solid var(--border, #d9dee7); border-radius: 0.6rem; padding: 1rem; margin-top: 1rem; }
-    .head { display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap; }
-    .head h3 { margin: 0; }
-    .chip { border-radius: 999px; padding: 0.15rem 0.7rem; font-size: 0.8rem; background: var(--surface-2, #eef1f6); }
-    .chip.ok { background: var(--success, #1d7a3d); color: #fff; }
-    .chip.bad { background: var(--danger, #c62828); color: #fff; }
-    .chip.warn { background: var(--warning, #f57f17); color: #fff; }
-    .chip.info { background: var(--info, #0d6efd); color: #fff; }
-    .facts { display: grid; grid-template-columns: max-content 1fr; gap: 0.3rem 1rem; margin: 0.75rem 0; }
-    .facts dt { font-weight: 600; color: var(--text-muted); }
-    .facts dd { margin: 0; }
-    .description { border-left: 3px solid var(--border, #d9dee7); padding-left: 0.75rem; }
-    .evidence { list-style: none; margin: 0.5rem 0; padding: 0; display: grid; gap: 0.4rem; }
-    .evidence li { border: 1px solid var(--border, #d9dee7); border-radius: 0.4rem; padding: 0.5rem 0.75rem; }
-    .evidence .kind { float: right; font-size: 0.75rem; color: var(--text-muted); }
-    .evidence p { margin: 0.25rem 0 0; }
-    .meta { color: var(--text-muted); font-size: 0.85rem; }
-    .actions { margin-top: 0.75rem; }
-    button { min-height: 44px; padding: 0.4rem 1rem; }
+    .detail {
+      margin-top: var(--space-4);
+      box-shadow: var(--shadow-md);
+      animation: page-enter var(--dur) var(--ease) both;
+    }
+    .chips {
+      display: inline-flex;
+      align-items: center;
+      gap: var(--space-2);
+      flex-wrap: wrap;
+    }
+    .facts {
+      display: grid;
+      grid-template-columns: max-content 1fr;
+      gap: var(--space-2) var(--space-5);
+      margin: var(--space-3) 0;
+      font-size: var(--text-sm);
+    }
+    .facts dt {
+      font-weight: var(--weight-semibold);
+      color: var(--text-muted);
+    }
+    .facts dd {
+      margin: 0;
+    }
+    .description {
+      border-left: 3px solid var(--accent);
+      padding-left: var(--space-3);
+      color: var(--text-muted);
+    }
+    .evidence-title {
+      margin: var(--space-4) 0 var(--space-2);
+    }
+    .evidence {
+      list-style: none;
+      margin: 0;
+      padding: 0;
+      display: grid;
+      gap: var(--space-2);
+    }
+    .evidence .kind {
+      float: right;
+      font-size: var(--text-xs);
+      font-weight: var(--weight-semibold);
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: var(--text-subtle);
+    }
+    .evidence p {
+      margin: var(--space-1) 0 0;
+    }
+    .card-actions {
+      padding-top: var(--space-3);
+      border-top: 1px solid var(--border);
+    }
+    @media (max-width: 34rem) {
+      .facts {
+        grid-template-columns: 1fr;
+        gap: var(--space-1);
+      }
+      .facts dd {
+        margin-bottom: var(--space-2);
+      }
+    }
   `,
 })
 export class DisputeDetailComponent {
+  protected readonly i18n = inject(I18n);
+
   readonly dispute = input<Dispute | null>(null);
   readonly close = output<void>();
 
@@ -100,6 +162,10 @@ export class DisputeDetailComponent {
 
   pastSla(d: Dispute): boolean {
     return isPastSla(d);
+  }
+
+  stateTone(state: string): string {
+    return STATE_TONES[state] ?? '';
   }
 
   formatDate(ms: number): string {

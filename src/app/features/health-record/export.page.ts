@@ -9,7 +9,7 @@ import { HealthSummaryExportService } from './export.service';
 import { HistoryStore } from './history.store';
 import { ContactsStore } from './contacts.store';
 import { drawSparkline } from './export.sparkline';
-import { I18n } from '../../core/i18n/i18n.service';
+import { I18n, translateStatic } from '../../core/i18n/i18n.service';
 import {
   EXPORT_LOCALES,
   EXPORT_RANGES,
@@ -35,150 +35,272 @@ import {
   imports: [FormsModule],
   template: `
     <section class="export" [attr.aria-busy]="exporting.loading()">
-      <h1>{{ locale() === 'el' ? 'Εξαγωγή σύνοψης υγείας' : 'Health summary export' }}</h1>
-      <p class="meta">
-        {{
-          locale() === 'el'
-            ? 'Σύνοψη για τον θεράποντα ιατρό — προφίλ, μετρήσεις, φάρμακα, προληπτικός έλεγχος, πλάνο φροντίδας.'
-            : 'Summary for the treating physician — profile, vitals, medications, screenings, care plan.'
-        }}
-      </p>
+      <header class="page-header">
+        <div>
+          <h1 class="page-title">{{ i18n.t('export.title') }}</h1>
+          <p class="page-subtitle">{{ i18n.t('export.intro') }}</p>
+        </div>
+      </header>
 
-      <div class="row" role="group" aria-label="Language / Γλώσσα">
-        @for (loc of locales; track loc) {
-          <button
-            type="button"
-            [attr.aria-pressed]="locale() === loc"
-            [class.active]="locale() === loc"
-            (click)="locale.set(loc)"
-          >
-            {{ loc === 'el' ? 'Ελληνικά' : 'English' }}
-          </button>
-        }
-      </div>
+      <div class="export-grid">
+        <div class="card export-options">
+          <div class="option-block">
+            <span class="field-label" id="export-lang-label">{{ i18n.t('export.language') }}</span>
+            <div class="segmented" role="group" aria-labelledby="export-lang-label">
+              @for (loc of locales; track loc) {
+                <button
+                  type="button"
+                  [attr.aria-pressed]="locale() === loc"
+                  [class.active]="locale() === loc"
+                  (click)="locale.set(loc)"
+                >
+                  {{ languageLabel(loc) }}
+                </button>
+              }
+            </div>
+          </div>
 
-      <fieldset class="row">
-        <legend>{{ locale() === 'el' ? 'Εύρος' : 'Range' }}</legend>
-        @for (r of ranges; track r) {
-          <label class="range">
+          <fieldset class="option-block">
+            <legend>{{ i18n.t('export.rangeLegend') }}</legend>
+            <div class="range-row">
+              @for (r of ranges; track r) {
+                <label class="range">
+                  <input
+                    type="radio"
+                    name="export-range"
+                    [value]="r"
+                    [checked]="range() === r"
+                    (change)="range.set(r)"
+                  />
+                  {{ rangeLabel(r, locale()) }}
+                </label>
+              }
+            </div>
+          </fieldset>
+
+          <p class="summary" role="status">{{ previewText() }}</p>
+
+          <label class="consent">
             <input
-              type="radio"
-              name="export-range"
-              [value]="r"
-              [checked]="range() === r"
-              (change)="range.set(r)"
+              type="checkbox"
+              [checked]="consent()"
+              (change)="onConsent($event)"
             />
-            {{ rangeLabel(r, locale()) }}
+            <span>{{ i18n.t('export.consent') }}</span>
           </label>
-        }
-      </fieldset>
 
-      <p class="summary" role="status">
-        {{
-          locale() === 'el'
-            ? previewTextEl()
-            : previewTextEn()
-        }}
-      </p>
+          <div class="actions">
+            <button
+              type="button"
+              class="btn"
+              [disabled]="exporting.loading()"
+              (click)="runExport()"
+            >
+              {{ exporting.loading() ? i18n.t('export.generating') : i18n.t('export.exportPdf') }}
+            </button>
+            <button
+              type="button"
+              class="btn secondary"
+              [disabled]="exporting.loading()"
+              (click)="runFhirExport()"
+            >
+              {{ i18n.t('export.fhir') }}
+            </button>
+            <button type="button" class="btn secondary" (click)="printFallback()">
+              {{ i18n.t('export.print') }}
+            </button>
+            <button
+              type="button"
+              class="btn secondary"
+              [disabled]="!exporting.lastFilename()"
+              (click)="share()"
+            >
+              {{ i18n.t('export.share') }}
+            </button>
+          </div>
 
-      <label class="consent">
-        <input
-          type="checkbox"
-          [checked]="consent()"
-          (change)="onConsent($event)"
-        />
-        {{
-          locale() === 'el'
-            ? 'Συναινώ στην εξαγωγή της σύνοψης υγείας μου (καταγράφεται).'
-            : 'I consent to exporting my health summary (this is logged).'
-        }}
-      </label>
+          @if (consentError()) {
+            <p class="alert danger" role="alert">
+              <span class="alert-icon" aria-hidden="true">⚠️</span>
+              <span>{{ i18n.t(consentError()) }}</span>
+            </p>
+          }
+          @if (exporting.loading()) {
+            <p class="export-progress" role="status">
+              <span class="spinner" aria-hidden="true"></span>
+              {{ i18n.t('export.generatingPdf') }}
+            </p>
+          }
+          @if (exporting.error()) {
+            <p class="alert danger" role="alert">
+              <span class="alert-icon" aria-hidden="true">⚠️</span>
+              <span>
+                {{ i18n.message(exporting.errorSource(), exporting.error()) }}
+                <button type="button" class="link" (click)="exporting.retry()">
+                  {{ i18n.t('common.retry') }}
+                </button>
+              </span>
+            </p>
+          }
+          @if (exporting.lastFilename()) {
+            <p class="meta export-note" role="status">
+              <span aria-hidden="true">📄</span>
+              {{ i18n.t('export.lastExport') }}: {{ exporting.lastFilename() }}
+            </p>
+          }
+          @if (exporting.shareLink()) {
+            <p class="meta export-note" role="status">
+              <span aria-hidden="true">🔗</span>
+              {{ i18n.t('export.shareLink') }} {{ exporting.shareLink() }}
+            </p>
+          }
+        </div>
 
-      <div class="actions">
-        <button
-          type="button"
-          class="primary"
-          [disabled]="exporting.loading()"
-          (click)="runExport()"
-        >
-          {{ exporting.loading() ? (locale() === 'el' ? 'Δημιουργία…' : 'Generating…') : (locale() === 'el' ? 'Εξαγωγή PDF' : 'Export PDF') }}
-        </button>
-        <button
-          type="button"
-          [disabled]="exporting.loading()"
-          (click)="runFhirExport()"
-        >
-          {{ locale() === 'el' ? 'Λήψη FHIR R4 (JSON)' : 'Download FHIR R4 (JSON)' }}
-        </button>
-        <button type="button" (click)="printFallback()">
-          {{ locale() === 'el' ? 'Εκτύπωση' : 'Print' }}
-        </button>
-        <button
-          type="button"
-          [disabled]="!exporting.lastFilename()"
-          (click)="share()"
-        >
-          {{ locale() === 'el' ? 'Κοινοποίηση σε ιατρό' : 'Share with physician' }}
-        </button>
+        <div class="card export-preview">
+          <div class="section-header">
+            <h2 class="section-title">{{ i18n.t('export.chartLabel') }}</h2>
+            <button type="button" class="btn ghost sm" (click)="showPreview.set(!showPreview())">
+              {{ showPreview() ? i18n.t('export.hideChart') : i18n.t('export.showChart') }}
+            </button>
+          </div>
+          @if (showPreview()) {
+            @defer (on viewport) {
+              <canvas
+                #chart
+                width="480"
+                height="96"
+                role="img"
+                [attr.aria-label]="i18n.t('export.chartLabel')"
+              ></canvas>
+            } @placeholder {
+              <div class="skeleton block" aria-hidden="true"></div>
+            }
+          } @else {
+            <div class="preview-placeholder" aria-hidden="true">📈</div>
+          }
+        </div>
       </div>
-
-      @if (consentError()) {
-        <p class="error" role="alert">{{ consentError() }}</p>
-      }
-      @if (exporting.loading()) {
-        <p role="status">{{ locale() === 'el' ? 'Δημιουργία PDF…' : 'Generating PDF…' }}</p>
-      }
-      @if (exporting.error()) {
-        <p class="error" role="alert">
-          {{ i18n.message(exporting.errorSource(), exporting.error()) }}
-          <button type="button" (click)="exporting.retry()">
-            {{ locale() === 'el' ? 'Επανάληψη' : 'Retry' }}
-          </button>
-        </p>
-      }
-      @if (exporting.lastFilename()) {
-        <p class="meta" role="status">
-          {{ locale() === 'el' ? 'Τελευταία εξαγωγή' : 'Last export' }}: {{ exporting.lastFilename() }}
-        </p>
-      }
-      @if (exporting.shareLink()) {
-        <p class="meta" role="status">Share link: {{ exporting.shareLink() }}</p>
-      }
-
-      <div class="preview-toggle">
-        <button type="button" (click)="showPreview.set(!showPreview())">
-          {{ showPreview() ? (locale() === 'el' ? 'Απόκρυψη γραφήματος' : 'Hide chart') : (locale() === 'el' ? 'Προεπισκόπηση γραφήματος' : 'Preview chart') }}
-        </button>
-      </div>
-      @if (showPreview()) {
-        @defer (on viewport) {
-          <canvas
-            #chart
-            width="480"
-            height="96"
-            role="img"
-            [attr.aria-label]="locale() === 'el' ? 'Γράφημα τάσης ζωτικών μετρήσεων' : 'Vitals trend sparkline'"
-          ></canvas>
-        } @placeholder {
-          <p class="meta">{{ locale() === 'el' ? 'Το γράφημα φορτώνει…' : 'Chart preview loads…' }}</p>
-        }
-      }
     </section>
   `,
   styles: `
-    .export { max-width: 44rem; display: grid; gap: 0.75rem; }
-    .meta { color: var(--text-muted); }
-    .row { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; border: 0; padding: 0; margin: 0; }
-    button { min-height: 44px; padding: 0.5rem 1rem; border-radius: 0.5rem; border: 1px solid var(--border, #ccc); background: var(--surface, #fff); cursor: pointer; }
-    button.primary { background: var(--accent, #4f7cff); color: #fff; border-color: transparent; font-weight: 600; }
-    button:disabled { opacity: 0.55; cursor: not-allowed; }
-    button.active { outline: 2px solid var(--accent, #4f7cff); }
-    .range { display: inline-flex; gap: 0.35rem; align-items: center; min-height: 44px; }
-    .consent { display: flex; gap: 0.5rem; align-items: flex-start; }
-    .consent input { width: 1.4rem; height: 1.4rem; margin-top: 0.1rem; }
-    .actions { display: flex; flex-wrap: wrap; gap: 0.5rem; }
-    .error { color: var(--danger, #c62828); }
-    canvas { max-width: 100%; border: 1px solid var(--border, #ccc); border-radius: 0.5rem; }
+    .export-grid {
+      display: grid;
+      grid-template-columns: minmax(0, 2fr) minmax(16rem, 1fr);
+      gap: var(--space-4);
+      align-items: start;
+    }
+    @media (max-width: 52rem) {
+      .export-grid {
+        grid-template-columns: minmax(0, 1fr);
+      }
+    }
+    .export-options {
+      display: grid;
+      gap: var(--space-4);
+    }
+    .option-block {
+      display: grid;
+      gap: var(--space-2);
+    }
+    fieldset.option-block {
+      border: none;
+      padding: 0;
+      margin: 0;
+    }
+    .range-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: var(--space-2) var(--space-4);
+    }
+    .range {
+      flex-direction: row;
+      align-items: center;
+      gap: var(--space-2);
+      min-height: 2.5rem;
+      color: var(--text);
+    }
+    .summary {
+      margin: 0;
+      padding: var(--space-3) var(--space-4);
+      border-radius: var(--radius-md);
+      background: var(--surface-raised);
+      color: var(--text-muted);
+      font-size: var(--text-sm);
+    }
+    .consent {
+      flex-direction: row;
+      align-items: flex-start;
+      gap: var(--space-2);
+      color: var(--text);
+      line-height: 1.45;
+    }
+    .consent input {
+      width: 1.25rem;
+      height: 1.25rem;
+      margin-top: 0.1rem;
+    }
+    .actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: var(--space-2);
+      padding-top: var(--space-3);
+      border-top: 1px solid var(--border);
+    }
+    .export-progress {
+      display: inline-flex;
+      align-items: center;
+      gap: var(--space-2);
+      color: var(--text-muted);
+      margin: 0;
+    }
+    .spinner {
+      width: 0.9rem;
+      height: 0.9rem;
+      border-radius: var(--radius-full);
+      border: 2px solid var(--border-strong);
+      border-top-color: var(--accent);
+      animation: export-spin 800ms linear infinite;
+    }
+    @keyframes export-spin {
+      to {
+        transform: rotate(360deg);
+      }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .spinner {
+        animation: none;
+      }
+    }
+    .export-note {
+      display: flex;
+      align-items: baseline;
+      gap: var(--space-2);
+      margin: 0;
+      padding: var(--space-2) var(--space-3);
+      border-radius: var(--radius-sm);
+      background: var(--surface-raised);
+      word-break: break-all;
+    }
+    .export-preview {
+      position: sticky;
+      top: calc(var(--topbar-height) + var(--space-4));
+    }
+    .export-preview canvas {
+      width: 100%;
+      height: auto;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-md);
+      background: var(--surface);
+    }
+    .preview-placeholder {
+      display: grid;
+      place-items: center;
+      min-height: 6rem;
+      border: 1px dashed var(--border-strong);
+      border-radius: var(--radius-md);
+      font-size: 1.6rem;
+      color: var(--text-subtle);
+    }
   `,
 })
 export class HealthSummaryExportPage {
@@ -199,7 +321,11 @@ export class HealthSummaryExportPage {
   readonly locale = signal<ExportLocale>('en');
   readonly showPreview = signal(false);
   readonly consent = signal(this.exporting.consentGiven());
-  /** Consent-gate message shown when Export is clicked before consenting. */
+  /**
+   * Consent-gate message shown when Export is clicked before consenting.
+   * Holds a dictionary *key*, rendered through `i18n.t` in the template so it
+   * follows the UI language rather than the document's export locale.
+   */
   readonly consentError = signal('');
 
   private readonly chartCanvas = viewChild<ElementRef<HTMLCanvasElement>>('chart');
@@ -225,24 +351,24 @@ export class HealthSummaryExportPage {
     return best.slice(-60);
   });
 
-  readonly previewTextEn = computed(
-    () =>
-      `Includes ${this.vitals.readings().length} vitals readings, ` +
-      `${this.meds.meds().filter((m) => !m.archived).length} medications, ` +
-      `${this.screening.statuses().length} screenings, ` +
-      `${this.historyCounts()} medical-history entries, ` +
-      `${this.contacts.list('emergency').length} emergency contacts ` +
-      `over ${rangeLabel(this.range(), 'en').toLowerCase()}.`
-  );
-
-  readonly previewTextEl = computed(
-    () =>
-      `Περιλαμβάνει ${this.vitals.readings().length} μετρήσεις, ` +
-      `${this.meds.meds().filter((m) => !m.archived).length} φάρμακα, ` +
-      `${this.screening.statuses().length} ελέγχους, ` +
-      `${this.historyCounts()} εγγραφές ιατρικού ιστορικού, ` +
-      `${this.contacts.list('emergency').length} επαφές έκτακτης ανάγκης — ` +
-      `${rangeLabel(this.range(), 'el')}.`
+  /**
+   * What the export will contain, written in the language the *document* is
+   * generated in (`translateStatic` resolves a non-active locale), so it
+   * describes the PDF rather than the page around it.
+   */
+  readonly previewText = computed(() =>
+    translateStatic(
+      'export.preview',
+      {
+        vitals: this.vitals.readings().length,
+        medications: this.meds.meds().filter((m) => !m.archived).length,
+        screenings: this.screening.statuses().length,
+        history: this.historyCounts(),
+        contacts: this.contacts.list('emergency').length,
+        range: rangeLabel(this.range(), this.locale()).toLowerCase(),
+      },
+      this.locale()
+    )
   );
 
   /** Non-archived history entries across all six register categories. */
@@ -284,6 +410,11 @@ export class HealthSummaryExportPage {
     return rangeLabel(range, locale);
   }
 
+  /** Self-labelled language names: each reads in its own language. */
+  languageLabel(locale: ExportLocale): string {
+    return locale === 'el' ? 'Ελληνικά' : 'English';
+  }
+
   onConsent(event: Event): void {
     const checked = (event.target as HTMLInputElement).checked;
     this.consent.set(checked);
@@ -293,11 +424,7 @@ export class HealthSummaryExportPage {
 
   async runExport(): Promise<void> {
     if (!this.consent()) {
-      this.consentError.set(
-        this.locale() === 'el'
-          ? 'Πρέπει να συναινέσετε στην εξαγωγή για να δημιουργηθεί το PDF.'
-          : 'Consent is required before you can export your health summary.'
-      );
+      this.consentError.set('export.consentRequiredPdf');
       return;
     }
     this.consentError.set('');
@@ -324,11 +451,7 @@ export class HealthSummaryExportPage {
   /** FHIR R4 bundle export (§11/§21): same consent gate as the PDF export. */
   async runFhirExport(): Promise<void> {
     if (!this.consent()) {
-      this.consentError.set(
-        this.locale() === 'el'
-          ? 'Πρέπει να συναινέσετε στην εξαγωγή για να δημιουργηθεί το αρχείο.'
-          : 'Consent is required before you can export the FHIR bundle.'
-      );
+      this.consentError.set('export.consentRequiredFhir');
       return;
     }
     this.consentError.set('');

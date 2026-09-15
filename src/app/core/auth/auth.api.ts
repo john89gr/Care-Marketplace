@@ -4,6 +4,7 @@ import { Router } from '@angular/router';
 import { Observable, tap, map, catchError, of } from 'rxjs';
 import { SessionStore, IdVerificationMethod } from '../auth/session';
 import { Role, rolesFrom } from '../auth/roles';
+import { LocalizedMessage } from '../i18n/localized-message';
 
 interface SessionPayload {
   userId: string;
@@ -32,10 +33,16 @@ export class AuthApi {
   private readonly sessionStore = inject(SessionStore);
   private readonly router = inject(Router);
   private readonly _loginPending = signal(false);
-  private readonly _loginError = signal('');
+  private readonly _error = new LocalizedMessage();
 
   readonly loginPending = this._loginPending.asReadonly();
-  readonly loginError = this._loginError.asReadonly();
+  /**
+   * The message *source*, so a page renders it in the active language;
+   * `loginError` is its English/verbatim rendering for callers that only need
+   * a string.
+   */
+  readonly errorSource = this._error.source;
+  readonly loginError = this._error.value;
   readonly isAuthenticated = computed(() => this.sessionStore.isLoggedIn());
 
   login(email: string, password: string): Observable<unknown> {
@@ -100,7 +107,7 @@ export class AuthApi {
 
   private _begin(): void {
     this._loginPending.set(true);
-    this._loginError.set('');
+    this._error.clear();
   }
 
   private _applySession(payload: SessionPayload): void {
@@ -116,10 +123,9 @@ export class AuthApi {
 
   private _fail(error: unknown): Observable<boolean> {
     this._loginPending.set(false);
-    this._loginError.set(
-      (error as { error?: { message?: string } })?.error?.message ??
-        'Échec de connexion. Vérifiez vos identifiants.'
-    );
+    this._error.setFromServer((error as { error?: { message?: string } })?.error?.message, {
+      key: 'auth.error.loginFailed',
+    });
     return of(false);
   }
 }
