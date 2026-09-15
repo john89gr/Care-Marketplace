@@ -263,7 +263,7 @@ const PUSH_PROMPT_KEY = 'cm.push.prompted.v1';
       gap: var(--space-3);
     }
     .push-prompt {
-      border: 1px solid var(--accent);
+      border: 1px solid var(--accent-soft-strong);
       border-radius: var(--radius-lg);
       padding: var(--space-4);
       background: var(--accent-soft);

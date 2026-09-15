@@ -29,8 +29,27 @@ CREATE TABLE IF NOT EXISTS caregivers (
   rating        DOUBLE PRECISION NOT NULL,
   distance_km   DOUBLE PRECISION NOT NULL,
   hourly_rate   DOUBLE PRECISION NOT NULL,
-  available_now BOOLEAN NOT NULL
+  available_now BOOLEAN NOT NULL,
+  specialties   TEXT[] NOT NULL DEFAULT '{}',
+  lat           DOUBLE PRECISION,
+  lng           DOUBLE PRECISION,
+  completed_visits INTEGER NOT NULL DEFAULT 0,
+  recent_cancellations INTEGER NOT NULL DEFAULT 0,
+  expires_at_ms BIGINT,
+  bio           TEXT NOT NULL DEFAULT '',
+  languages     TEXT[] NOT NULL DEFAULT '{"Greek"}',
+  gender        TEXT NOT NULL DEFAULT ''
 );
+
+ALTER TABLE caregivers ADD COLUMN IF NOT EXISTS specialties TEXT[] NOT NULL DEFAULT '{}';
+ALTER TABLE caregivers ADD COLUMN IF NOT EXISTS lat DOUBLE PRECISION;
+ALTER TABLE caregivers ADD COLUMN IF NOT EXISTS lng DOUBLE PRECISION;
+ALTER TABLE caregivers ADD COLUMN IF NOT EXISTS completed_visits INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE caregivers ADD COLUMN IF NOT EXISTS recent_cancellations INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE caregivers ADD COLUMN IF NOT EXISTS expires_at_ms BIGINT;
+ALTER TABLE caregivers ADD COLUMN IF NOT EXISTS bio TEXT NOT NULL DEFAULT '';
+ALTER TABLE caregivers ADD COLUMN IF NOT EXISTS languages TEXT[] NOT NULL DEFAULT '{"Greek"}';
+ALTER TABLE caregivers ADD COLUMN IF NOT EXISTS gender TEXT NOT NULL DEFAULT '';
 
 -- Role-aware profile (AMKA/AFM for clients, licence/hourly rate for providers).
 CREATE TABLE IF NOT EXISTS profiles (
@@ -39,8 +58,10 @@ CREATE TABLE IF NOT EXISTS profiles (
   amka           TEXT NOT NULL DEFAULT '',
   afm            TEXT NOT NULL DEFAULT '',
   licence_number TEXT NOT NULL DEFAULT '',
-  hourly_rate    DOUBLE PRECISION
+  hourly_rate    DOUBLE PRECISION,
+  address        TEXT NOT NULL DEFAULT ''
 );
+ALTER TABLE profiles ADD COLUMN IF NOT EXISTS address TEXT NOT NULL DEFAULT '';
 
 -- Licence vetting (Phase 2): provider submits, admin approves/rejects.
 CREATE TABLE IF NOT EXISTS vetting_submissions (
@@ -91,6 +112,21 @@ CREATE TABLE IF NOT EXISTS bookings (
 -- Booking lifecycle status for existing databases (idempotent).
 ALTER TABLE bookings ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'requested';
 
+-- Dual-confirmation reschedule proposal (JSON) for existing databases.
+ALTER TABLE bookings ADD COLUMN IF NOT EXISTS pending_reschedule JSONB;
+
+-- Booking event timeline (§3): every transition appends one row.
+CREATE TABLE IF NOT EXISTS booking_events (
+  id            TEXT PRIMARY KEY,
+  booking_id    TEXT NOT NULL,
+  kind          TEXT NOT NULL, -- created | accepted | started | completed | cancelled | rescheduled | disputed
+  at_ms         BIGINT NOT NULL,
+  by_user_id    TEXT NOT NULL,
+  by_name       TEXT NOT NULL DEFAULT '',
+  detail        TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_booking_events_booking ON booking_events(booking_id);
+
 -- Visits with GPS stamps (Phase 2 — check-in/out).
 CREATE TABLE IF NOT EXISTS visits (
   id             TEXT PRIMARY KEY,
@@ -114,10 +150,104 @@ CREATE TABLE IF NOT EXISTS escrow (
   provider_id   TEXT NOT NULL,
   client_id     TEXT NOT NULL,
   amount_cents  INTEGER NOT NULL,
-  status        TEXT NOT NULL DEFAULT 'held', -- held | released | refunded
+  status        TEXT NOT NULL DEFAULT 'held', -- held | released | refunded | frozen
   created_at_ms BIGINT NOT NULL,
   settled_at_ms BIGINT
 );
+-- Partial-refund accounting for existing databases (idempotent).
+ALTER TABLE escrow ADD COLUMN IF NOT EXISTS refunded_cents INTEGER NOT NULL DEFAULT 0;
+
+-- Payment methods (§13): token + display metadata only — the PAN is
+-- never sent here (the tokenize route rejects cardNumber outright).
+CREATE TABLE IF NOT EXISTS payment_methods (
+  id            TEXT PRIMARY KEY,
+  user_id       TEXT NOT NULL,
+  token         TEXT NOT NULL,
+  brand         TEXT NOT NULL,
+  last4         TEXT NOT NULL,
+  expiry_month  INTEGER NOT NULL,
+  expiry_year   INTEGER NOT NULL,
+  is_default    BOOLEAN NOT NULL DEFAULT FALSE,
+  created_at_ms BIGINT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_payment_methods_user ON payment_methods(user_id);
+
+-- Provider payout accounts (§13): one row per provider (PUT upsert).
+CREATE TABLE IF NOT EXISTS payout_accounts (
+  user_id         TEXT PRIMARY KEY,
+  status          TEXT NOT NULL DEFAULT 'not_started', -- not_started | pending | active
+  account_id      TEXT,
+  account_last4   TEXT,
+  currency        TEXT NOT NULL DEFAULT 'EUR',
+  balance_cents   INTEGER NOT NULL DEFAULT 0,
+  country         TEXT,
+  payout_schedule TEXT NOT NULL DEFAULT 'weekly', -- weekly | manual
+  onboarding_url  TEXT,
+  updated_at_ms   BIGINT NOT NULL
+);
+
+-- e-Prescriptions & pharmacy orders (§9).
+CREATE TABLE IF NOT EXISTS prescriptions_scanned (
+  id              TEXT PRIMARY KEY,
+  user_id         TEXT NOT NULL,
+  barcode_payload TEXT NOT NULL DEFAULT '',
+  meds            JSONB NOT NULL,
+  prescriber      TEXT NOT NULL DEFAULT '',
+  state           TEXT NOT NULL DEFAULT 'parsed', -- parsed | confirmed | failed
+  created_at_ms   BIGINT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_prescriptions_scanned_user ON prescriptions_scanned(user_id);
+
+CREATE TABLE IF NOT EXISTS pharmacy_orders (
+  id               TEXT PRIMARY KEY,
+  prescription_id  TEXT NOT NULL,
+  client_id        TEXT NOT NULL,
+  pharmacy_id      TEXT,
+  pharmacy_name    TEXT,
+  meds             JSONB NOT NULL,
+  prescriber       TEXT NOT NULL DEFAULT '',
+  status           TEXT NOT NULL DEFAULT 'uploaded', -- uploaded | routed | accepted | preparing | out_for_delivery | delivered | failed
+  delivery_address TEXT NOT NULL DEFAULT '',
+  timeline         JSONB NOT NULL,
+  created_at_ms    BIGINT NOT NULL,
+  updated_at_ms    BIGINT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_pharmacy_orders_client ON pharmacy_orders(client_id);
+ALTER TABLE pharmacy_orders ADD COLUMN IF NOT EXISTS origin JSONB;
+
+-- Partner pharmacies for scan auto-routing (nearest in-stock wins).
+CREATE TABLE IF NOT EXISTS partner_pharmacies (
+  id      TEXT PRIMARY KEY,
+  name    TEXT NOT NULL,
+  address TEXT NOT NULL DEFAULT '',
+  lat     DOUBLE PRECISION NOT NULL,
+  lng     DOUBLE PRECISION NOT NULL,
+  in_stock BOOLEAN NOT NULL DEFAULT TRUE,
+  phone   TEXT NOT NULL DEFAULT '',
+  working_hours TEXT NOT NULL DEFAULT '',
+  stock_items JSONB NOT NULL DEFAULT '[]',
+  user_id TEXT
+);
+ALTER TABLE partner_pharmacies ADD COLUMN IF NOT EXISTS phone TEXT NOT NULL DEFAULT '';
+ALTER TABLE partner_pharmacies ADD COLUMN IF NOT EXISTS working_hours TEXT NOT NULL DEFAULT '';
+ALTER TABLE partner_pharmacies ADD COLUMN IF NOT EXISTS stock_items JSONB NOT NULL DEFAULT '[]';
+ALTER TABLE partner_pharmacies ADD COLUMN IF NOT EXISTS user_id TEXT;
+
+-- Gov.gr health wallet documents (§15): per-user verified records.
+CREATE TABLE IF NOT EXISTS wallet_documents (
+  id            TEXT PRIMARY KEY,
+  user_id       TEXT NOT NULL,
+  category      TEXT NOT NULL, -- vaccinations | prescriptions | exams | kepa_certificates
+  title         TEXT NOT NULL,
+  issuer        TEXT NOT NULL DEFAULT '',
+  issued_at_ms  BIGINT NOT NULL,
+  expires_at_ms BIGINT,
+  doc_type      TEXT NOT NULL DEFAULT 'pdf', -- pdf | image
+  data_url      TEXT NOT NULL DEFAULT '',
+  verified      BOOLEAN NOT NULL DEFAULT FALSE
+);
+ALTER TABLE wallet_documents ADD COLUMN IF NOT EXISTS signature_metadata JSONB;
+CREATE INDEX IF NOT EXISTS idx_wallet_documents_user ON wallet_documents(user_id);
 
 -- Chat messages (Phase 1 + real-time). conversationId = peer user id pair key.
 CREATE TABLE IF NOT EXISTS chat_messages (
@@ -125,8 +255,19 @@ CREATE TABLE IF NOT EXISTS chat_messages (
   conversation_id TEXT NOT NULL,
   author_id       TEXT NOT NULL,
   text            TEXT NOT NULL,
-  sent_at_ms      BIGINT NOT NULL
+  sent_at_ms      BIGINT NOT NULL,
+  attachment      JSONB,
+  delivered_at_ms BIGINT,
+  read_at_ms      BIGINT,
+  reactions       JSONB NOT NULL DEFAULT '{}',
+  booking_id      TEXT
 );
+ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS attachment JSONB;
+ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS delivered_at_ms BIGINT;
+ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS read_at_ms BIGINT;
+ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS reactions JSONB NOT NULL DEFAULT '{}';
+ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS booking_id TEXT;
+CREATE INDEX IF NOT EXISTS idx_chat_messages_conv ON chat_messages(conversation_id);
 
 -- Clinical log with digital signature (Phase 2).
 CREATE TABLE IF NOT EXISTS clinical_log (
@@ -402,9 +543,15 @@ CREATE TABLE IF NOT EXISTS disputes (
   description   TEXT NOT NULL DEFAULT '',
   state         TEXT NOT NULL DEFAULT 'open', -- open | under_review | resolved_client | resolved_provider | rejected
   resolution    TEXT,
+  refund_cents  INTEGER,
+  escrow_transaction_id TEXT,
+  evidence      JSONB NOT NULL DEFAULT '[]',
   created_at_ms BIGINT NOT NULL,
   updated_at_ms BIGINT NOT NULL
 );
+ALTER TABLE disputes ADD COLUMN IF NOT EXISTS refund_cents INTEGER;
+ALTER TABLE disputes ADD COLUMN IF NOT EXISTS escrow_transaction_id TEXT;
+ALTER TABLE disputes ADD COLUMN IF NOT EXISTS evidence JSONB NOT NULL DEFAULT '[]';
 CREATE INDEX IF NOT EXISTS idx_disputes_client ON disputes(client_id);
 CREATE INDEX IF NOT EXISTS idx_disputes_provider ON disputes(provider_id);
 
@@ -423,3 +570,69 @@ CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
 CREATE INDEX IF NOT EXISTS idx_vitals_user ON vitals(user_id);
 CREATE INDEX IF NOT EXISTS idx_visits_provider ON visits(provider_id);
 CREATE INDEX IF NOT EXISTS idx_escrow_client ON escrow(client_id);
+
+-- Marketplace saved searches + favorites (FEATURE_PLAN.md §2). Filters are
+-- an opaque JSON snapshot of the frontend SearchFilters at save time.
+CREATE TABLE IF NOT EXISTS saved_searches (
+  id            TEXT PRIMARY KEY,
+  user_id       TEXT NOT NULL,
+  name          TEXT NOT NULL,
+  filters       JSONB NOT NULL,
+  created_at_ms BIGINT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_saved_searches_user ON saved_searches(user_id);
+
+CREATE TABLE IF NOT EXISTS favorites (
+  user_id       TEXT NOT NULL,
+  caregiver_id  TEXT NOT NULL,
+  saved_at_ms   BIGINT NOT NULL,
+  PRIMARY KEY (user_id, caregiver_id)
+);
+
+-- Reviews & ratings (FEATURE_PLAN.md §1): one review per completed booking
+-- (booking_id UNIQUE; duplicates surface as 409). Status: published |
+-- flagged | removed. Removed reviews stay for audit but never list publicly.
+CREATE TABLE IF NOT EXISTS reviews (
+  id            TEXT PRIMARY KEY,
+  caregiver_id  TEXT NOT NULL,
+  booking_id    TEXT NOT NULL UNIQUE,
+  author_id     TEXT NOT NULL,
+  author_name   TEXT NOT NULL DEFAULT '',
+  rating        INTEGER NOT NULL,
+  comment       TEXT NOT NULL DEFAULT '',
+  status        TEXT NOT NULL DEFAULT 'published',
+  created_at_ms BIGINT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_reviews_caregiver ON reviews(caregiver_id);
+
+-- Bell-panel notifications (§4): every notifyUser() call persists a row so
+-- the panel works with or without a push subscription. Reads are per-user.
+CREATE TABLE IF NOT EXISTS notifications (
+  id            TEXT PRIMARY KEY,
+  user_id       TEXT NOT NULL,
+  kind          TEXT NOT NULL,
+  title         TEXT NOT NULL,
+  body          TEXT NOT NULL DEFAULT '',
+  link          TEXT,
+  created_at_ms BIGINT NOT NULL,
+  read_at_ms    BIGINT
+);
+CREATE INDEX IF NOT EXISTS idx_notifications_user ON notifications(user_id);
+
+-- Reminder preferences (§8): one opaque JSON blob per user (PUT upsert).
+CREATE TABLE IF NOT EXISTS reminder_preferences (
+  user_id TEXT PRIMARY KEY,
+  prefs   JSONB NOT NULL
+);
+
+-- Server-side audit trail (§16): append-only, batched upload from clients.
+CREATE TABLE IF NOT EXISTS audit_events (
+  id            TEXT PRIMARY KEY,
+  actor_id      TEXT NOT NULL,
+  action        TEXT NOT NULL,
+  resource_type TEXT NOT NULL DEFAULT '',
+  resource_id   TEXT NOT NULL DEFAULT '',
+  at_ms         BIGINT NOT NULL,
+  meta          JSONB
+);
+CREATE INDEX IF NOT EXISTS idx_audit_events_actor ON audit_events(actor_id);

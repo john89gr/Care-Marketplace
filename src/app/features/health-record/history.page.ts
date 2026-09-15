@@ -807,19 +807,6 @@ const emptyForms = (): {
       font-size: var(--text-lg);
       margin: var(--space-5) 0 var(--space-2);
     }
-    .link {
-      background: none;
-      border: none;
-      color: var(--accent);
-      cursor: pointer;
-      padding: 0;
-      font: inherit;
-      text-decoration: underline;
-    }
-    .link:hover:not(:disabled) {
-      background: none;
-      color: var(--accent-hover);
-    }
   `,
 })
 export class HistoryPage {

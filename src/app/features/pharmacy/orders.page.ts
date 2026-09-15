@@ -150,7 +150,7 @@ const STATUS_TONES: Record<PharmacyOrderStatus, string> = {
       display: none;
     }
     .card.failed {
-      border-color: var(--danger);
+      border-color: color-mix(in srgb, var(--danger) 55%, transparent);
       box-shadow: 0 0 0 1px color-mix(in srgb, var(--danger) 30%, transparent);
     }
     .meds {

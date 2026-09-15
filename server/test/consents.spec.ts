@@ -52,6 +52,41 @@ describe('historyAccessFor (§21 subtask 16 gate)', () => {
     expect(
       historyAccessFor('u-nurse', 'u-client', [consent({ purpose: 'data_export' })])
     ).toBe('denied');
+    expect(
+      historyAccessFor('u-nurse', 'u-client', [consent({ purpose: 'sms_reminders' })])
+    ).toBe('denied');
+    expect(
+      historyAccessFor('u-nurse', 'u-client', [consent({ purpose: 'bluetooth' })])
+    ).toBe('denied');
+  });
+
+  it('correctly handles all 4 purposes for access decisions', () => {
+    // Owner always has access regardless of purpose
+    expect(historyAccessFor('u-client', 'u-client', [], 'family_sharing')).toBe('owner');
+    expect(historyAccessFor('u-client', 'u-client', [], 'sms_reminders')).toBe('owner');
+    expect(historyAccessFor('u-client', 'u-client', [], 'bluetooth')).toBe('owner');
+    expect(historyAccessFor('u-client', 'u-client', [], 'data_export')).toBe('owner');
+
+    // Non-owner with data_export purpose requires both family_sharing and data_export
+    const both = [
+      consent({ purpose: 'family_sharing', granted: true }),
+      consent({ purpose: 'data_export', granted: true }),
+    ];
+    expect(historyAccessFor('u-nurse', 'u-client', both, 'data_export')).toBe('family');
+    expect(
+      historyAccessFor('u-nurse', 'u-client', [consent({ purpose: 'data_export', granted: true })], 'data_export')
+    ).toBe('denied');
+    expect(
+      historyAccessFor('u-nurse', 'u-client', [consent({ purpose: 'family_sharing', granted: true })], 'data_export')
+    ).toBe('denied');
+
+    // Non-owner is denied for sms_reminders and bluetooth even if granted
+    expect(
+      historyAccessFor('u-nurse', 'u-client', [consent({ purpose: 'sms_reminders', granted: true })], 'sms_reminders')
+    ).toBe('denied');
+    expect(
+      historyAccessFor('u-nurse', 'u-client', [consent({ purpose: 'bluetooth', granted: true })], 'bluetooth')
+    ).toBe('denied');
   });
 });
 

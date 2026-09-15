@@ -24,13 +24,23 @@ import { I18n } from '../../core/i18n/i18n.service';
       padding: var(--space-6) 0;
     }
     .forbidden-card {
+      position: relative;
+      overflow: hidden;
       display: grid;
       justify-items: center;
       text-align: center;
       gap: var(--space-2);
       max-width: 28rem;
       padding: var(--space-7) var(--space-5);
+      border-radius: var(--radius-xl);
       box-shadow: var(--shadow-lg);
+    }
+    .forbidden-card::before {
+      content: '';
+      position: absolute;
+      inset: 0 0 auto 0;
+      height: 4px;
+      background: var(--accent-grad);
     }
     .forbidden-mark {
       width: 3.5rem;

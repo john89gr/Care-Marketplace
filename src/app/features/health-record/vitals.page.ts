@@ -122,7 +122,7 @@ import {
   `,
   styles: `
     .card.alerts {
-      border-color: var(--danger);
+      border-color: color-mix(in srgb, var(--danger) 45%, transparent);
       background: var(--danger-soft);
       color: var(--danger);
       margin-bottom: var(--space-4);

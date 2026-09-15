@@ -39,7 +39,11 @@
   flex-direction: column;
   height: 100dvh;
   background:
-    linear-gradient(180deg, var(--surface), color-mix(in srgb, var(--surface) 92%, var(--accent)));
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--accent-soft) 60%, var(--surface)),
+      var(--surface) 14rem
+    );
   border-right: 1px solid var(--border);
   z-index: 40;
 }
@@ -72,14 +76,17 @@
   display: grid;
   place-items: center;
   flex: none;
-  width: 2.4rem;
-  height: 2.4rem;
-  border-radius: var(--radius-md);
+  width: 2.5rem;
+  height: 2.5rem;
+  border-radius: var(--radius-lg);
   background: var(--accent-grad);
   color: var(--accent-contrast);
-  font-size: 1.1rem;
+  font-size: 1.15rem;
   font-weight: var(--weight-bold);
-  box-shadow: var(--shadow-md), var(--shadow-accent);
+  box-shadow:
+    var(--shadow-md),
+    var(--shadow-accent),
+    inset 0 1px 0 rgb(255 255 255 / 0.25);
 }
 
 .brand-text {
@@ -138,25 +145,30 @@
   display: flex;
   align-items: center;
   gap: var(--space-3);
-  padding: 0.5rem var(--space-3);
-  border-radius: var(--radius-sm);
+  padding: 0.55rem var(--space-3);
+  border-radius: var(--radius-md);
   color: var(--text-muted);
   text-decoration: none;
   font-size: var(--text-base);
+  font-weight: var(--weight-medium);
+  border: 1px solid transparent;
   transition:
     background-color var(--dur-fast) ease,
     color var(--dur-fast) ease,
+    border-color var(--dur-fast) ease,
     transform var(--dur-fast) var(--ease);
 }
 
 .sidebar-nav a:hover {
   background: var(--surface-raised);
   color: var(--text);
+  border-color: var(--border);
   transform: translateX(2px);
 }
 
 .sidebar-nav a.active {
   background: var(--accent-soft);
+  border-color: color-mix(in srgb, var(--accent) 28%, transparent);
   color: var(--accent);
   font-weight: var(--weight-semibold);
 }
@@ -252,6 +264,23 @@
   background: color-mix(in srgb, var(--surface) 82%, transparent);
   backdrop-filter: blur(14px) saturate(140%);
   -webkit-backdrop-filter: blur(14px) saturate(140%);
+}
+
+/* Signature gradient hairline under the topbar. */
+.topbar::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -1px;
+  height: 2px;
+  background: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--accent) 55%, transparent),
+    color-mix(in srgb, var(--accent-2) 35%, transparent) 30%,
+    transparent 65%
+  );
+  pointer-events: none;
 }
 
 .crumbs {

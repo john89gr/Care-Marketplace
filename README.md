@@ -174,10 +174,15 @@ Gov.gr, consents, admin, audit and consents admin.
 
 ## Real API server + Postgres
 
-`server/` is an Express API backed by Postgres: auth/session, marketplace,
-bookings + escrow, vitals, medications + adherence logging, the medical-history
-register and prescriptions, contacts, reminder preferences, consents, audit
-events and push subscriptions. Compose provides the database:
+`server/` is an Express API backed by Postgres: auth/session (+ Gov.gr
+sandbox), marketplace search, the booking lifecycle (accept/start/complete/
+cancel/dispute/reschedule + event timeline) + escrow (hold/release/refund/
+freeze/partial), saved searches + favorites, reviews + moderation, vitals,
+medications + adherence logging (+ archive/interaction check), the
+medical-history register and prescriptions, pharmacy scan + orders, contacts,
+reminder preferences, bell notifications, the Gov.gr wallet, payment methods +
+payout accounts, consents, audit events and push subscriptions. Compose
+provides the database:
 
 ```bash
 npm run db:up      # docker compose up -d db
@@ -435,9 +440,9 @@ story above.
 
 ## Test suites
 
-- **Frontend unit** — 712 Vitest tests across 55 files (`npm run unit`).
-- **Server** — Vitest specs against Postgres (`npm --prefix server test`);
-  start the database with `npm run db:up` first.
+- **Frontend unit** — 781 Vitest tests across 57 files (`npm run unit`).
+- **Server** — 180 Vitest specs across 14 files against Postgres
+  (`npm --prefix server test`); start the database with `npm run db:up` first.
 - **E2E** — 51 Playwright tests across 21 specs (`npm run e2e`), driving the
   real UI; most run fully against the in-memory demo backend, the rest mock
   `/api/**` at the network layer.

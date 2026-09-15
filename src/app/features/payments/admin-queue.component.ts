@@ -182,7 +182,7 @@ const STATE_TONES: Record<string, string> = {
       gap: var(--space-3);
     }
     .card.sla {
-      border-color: var(--warning);
+      border-color: color-mix(in srgb, var(--warning) 55%, transparent);
       box-shadow: var(--shadow-md);
     }
     .chips {

@@ -79,6 +79,18 @@ export type NotifyResult = 'sent' | 'no-subscription' | 'expired' | 'failed';
  * we never send again.
  */
 export async function notifyUser(userId: string, n: PushNotification): Promise<NotifyResult> {
+  // Persist for the bell panel first: the panel works with or without a
+  // push subscription, and persistence must never fail the caller.
+  try {
+    const { randomBytes } = await import('crypto');
+    await query(
+      `INSERT INTO notifications (id, user_id, kind, title, body, link, created_at_ms, read_at_ms)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, NULL)`,
+      [`nt-${randomBytes(6).toString('hex')}`, userId, n.kind, n.title, n.body, n.link, Date.now()]
+    );
+  } catch {
+    // Persistence is best-effort; delivery below still attempted.
+  }
   const sub = await getSubscription(userId);
   if (!sub) {
     return 'no-subscription';

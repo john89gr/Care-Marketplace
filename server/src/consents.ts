@@ -56,12 +56,21 @@ export type HistoryAccess = 'owner' | 'family' | 'denied';
 export function historyAccessFor(
   requesterUserId: string,
   targetUserId: string,
-  consents: readonly ConsentRecord[]
+  consents: readonly ConsentRecord[],
+  purpose: ConsentPurpose = 'family_sharing'
 ): HistoryAccess {
   if (requesterUserId === targetUserId) {
     return 'owner';
   }
-  return consentGranted(consents, 'family_sharing') ? 'family' : 'denied';
+  if (purpose === 'family_sharing') {
+    return consentGranted(consents, 'family_sharing') ? 'family' : 'denied';
+  }
+  if (purpose === 'data_export') {
+    return consentGranted(consents, 'family_sharing') && consentGranted(consents, 'data_export')
+      ? 'family'
+      : 'denied';
+  }
+  return 'denied';
 }
 
 type PutResult =
@@ -127,10 +136,27 @@ export function consentStateFromRow(row: Row | null, userId: string): ConsentSta
   };
 }
 
-/** Load a user's consent state (used by history.ts family-read enforcement). */
+/** Load a user's consent state (used by history.ts family-read enforcement). Ensures all 4 purposes are handled. */
 export async function loadConsents(userId: string): Promise<ConsentState> {
   const row = await queryOne<Row>(`SELECT * FROM user_consents WHERE user_id = $1`, [userId]);
-  return consentStateFromRow(row, userId);
+  const state = consentStateFromRow(row, userId);
+  const existing = state.consents;
+  const completeConsents: ConsentRecord[] = CONSENT_PURPOSES.map((purpose) => {
+    const found = existing.find((c) => c.purpose === purpose);
+    return (
+      found ?? {
+        purpose,
+        granted: false,
+        documentVersion: state.currentDocumentVersion,
+        updatedAtMs: 0,
+        updatedBy: '',
+      }
+    );
+  });
+  return {
+    ...state,
+    consents: completeConsents,
+  };
 }
 
 // ---- Router ----

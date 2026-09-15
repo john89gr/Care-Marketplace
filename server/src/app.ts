@@ -7,9 +7,11 @@ import {
   clearAuthCookies,
   createUser,
   findUserByEmail,
+  findUserById,
   requireAuth,
   requireRole,
   setAuthCookies,
+  userFromRequest,
   verifyPassword,
 } from './auth';
 import { query, queryOne, Row } from './db';
@@ -19,13 +21,24 @@ import {
   removeSubscription,
   notifyUser,
 } from './push';
-import { vitalsAlert } from './vitals';
+import { vitalsAlert, computeVitalStats } from './vitals';
 import { detectMissedDoses, dateKey, minutesSinceMidnight, validateInstructions } from './medications';
 import { checkScreeningDue, ScreeningType } from './screenings';
 import { checkCertificationExpiry } from './certifications';
 import { historyRouter } from './history';
 import { contactsRouter } from './contacts';
-import { consentsRouter } from './consents';
+import { consentsRouter, consentGranted, loadConsents } from './consents';
+import { marketplaceRouter } from './marketplace';
+import { notificationsRouter } from './notifications';
+import { auditRouter } from './audit';
+import { paymentsRouter } from './payments';
+import { pharmacyRouter } from './pharmacy';
+import { walletRouter } from './wallet';
+import { uploadsRouter } from './uploads';
+import { chatRouter } from './chat';
+import { clinicalRouter } from './clinical';
+import { disputesRouter } from './disputes';
+import { fhirRouter } from './fhir';
 
 const hour = 60 * 60 * 1000;
 const now = () => Date.now();
@@ -35,7 +48,7 @@ export function createApp() {
   const app = express();
   app.disable('x-powered-by');
   app.use(cookieParser());
-  app.use(express.json({ limit: '2mb' }));
+  app.use(express.json({ limit: '2mb', strict: false }));
 
   // ---- Auth ----
   app.post('/api/auth/register', async (req: Request, res: Response, next: NextFunction) => {
@@ -118,30 +131,71 @@ export function createApp() {
     }
   });
 
-  app.get('/api/auth/me', requireAuth, (req: Request, res: Response) => {
-    res.json(auth.sessionPayloadFor(req.user as AuthedUser));
-  });
+  // ---- Gov.gr / Taxisnet OIDC (simulated sandbox, §15) ----
+  // Demo parity with the in-memory backend: authorize mints a state-bound
+  // single-use code; the callback validates the pair and opens a session
+  // (current user, else the demo client) with idVerifiedVia: 'gov_gr'.
+  const govGrPending = new Map<string, { code: string; expiresAtMs: number }>();
 
-  // ---- Marketplace ----
-  app.get('/api/caregivers/search', async (_req: Request, res: Response, next: NextFunction) => {
+  app.get('/api/auth/gov-gr/authorize', async (_req: Request, res: Response, next: NextFunction) => {
     try {
-      const rows = await query<Row>(
-        `SELECT id, display_name, roles, rating, distance_km, hourly_rate, available_now
-         FROM caregivers ORDER BY rating DESC`
-      );
-      res.json(rows.map((r) => ({
-        id: r.id,
-        displayName: r.display_name,
-        roles: r.roles ?? [],
-        rating: r.rating,
-        distanceKm: r.distance_km,
-        hourlyRate: r.hourly_rate,
-        availableNow: r.available_now,
-      })));
+      const state = randomBytes(16).toString('hex');
+      const code = `demo-code-${randomBytes(4).toString('hex')}`;
+      govGrPending.set(state, { code, expiresAtMs: now() + 10 * 60 * 1000 });
+      if (govGrPending.size > 1000) {
+        const oldest = govGrPending.keys().next().value;
+        if (oldest) {
+          govGrPending.delete(oldest);
+        }
+      }
+      res.json({
+        authorizeUrl: 'https://sandbox.gov.gr/authorize',
+        state,
+        code,
+        demo: true,
+      });
     } catch (error) {
       next(error);
     }
   });
+
+  app.post('/api/auth/gov-gr/callback', async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const { code, state } = req.body as { code?: unknown; state?: unknown };
+      const pending = typeof state === 'string' ? govGrPending.get(state) : undefined;
+      if (
+        typeof code !== 'string' ||
+        !code.startsWith('demo-code-') ||
+        !pending ||
+        pending.code !== code ||
+        pending.expiresAtMs < now()
+      ) {
+        res.status(400).json({ message: 'Invalid or expired authorization code.' });
+        return;
+      }
+      govGrPending.delete(state as string);
+      const sessionUser = userFromRequest(req);
+      const row = sessionUser
+        ? await findUserById(sessionUser.userId)
+        : await findUserByEmail('maria@example.com');
+      if (!row) {
+        res.status(401).json({ message: 'No account for this identity.' });
+        return;
+      }
+      const user = auth.toUser(row);
+      const refreshToken = await auth.createRefreshSession(user.userId);
+      const accessToken = await auth.tokenFor(user);
+      setAuthCookies(res, accessToken, refreshToken);
+      res.json({ ...auth.sessionPayloadFor(user), idVerifiedVia: 'gov_gr' });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.get('/api/auth/me', requireAuth, (req: Request, res: Response) => {
+    res.json(auth.sessionPayloadFor(req.user as AuthedUser));
+  });
+
 
   // ---- Profiles ----
   app.get('/api/profiles/me', requireAuth, async (req: Request, res: Response, next: NextFunction) => {
@@ -370,6 +424,7 @@ export function createApp() {
         res.status(404).json({ message: 'Booking not found or not awaiting acceptance.' });
         return;
       }
+      await appendBookingEvent(result[0].id as string, 'accepted', me.userId, me.displayName);
       // Push the client a real notification when they have a subscription.
       // Awaited (and failure-swallowed) so the response reflects completion;
       // a push problem never fails the accept itself.
@@ -384,6 +439,246 @@ export function createApp() {
         // Ignore push failures.
       }
       res.json(bookingFromRow(result[0]));
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  /**
+   * Guarded lifecycle transitions (§3: start / complete / cancel / dispute).
+   * Mirrors the frontend BOOKING_TRANSITIONS matrix: an illegal move is a
+   * 409 (concurrent modification or stale UI) so the page reloads the truth.
+   */
+  async function transitionBooking(
+    req: Request,
+    res: Response,
+    to: string,
+    eventKind: string,
+    notify: (booking: Row, me: AuthedUser) => Promise<void>
+  ): Promise<void> {
+    const me = req.user as AuthedUser;
+    const booking = await queryOne<Row>(`SELECT * FROM bookings WHERE id = $1`, [req.params.id]);
+    if (!booking) {
+      res.status(404).json({ message: 'Booking not found.' });
+      return;
+    }
+    const isClient = booking.client_id === me.userId;
+    const isProvider = booking.caregiver_id === me.userId;
+    if (!isClient && !isProvider) {
+      res.status(403).json({ message: 'Only the booking parties can change it.' });
+      return;
+    }
+    // Providers drive start/complete; cancellation is either party.
+    if ((to === 'in_progress' || to === 'completed') && !isProvider) {
+      res.status(403).json({ message: 'Only the provider can move the visit forward.' });
+      return;
+    }
+    const from = String(booking.status ?? 'requested');
+    if (!BOOKING_TRANSITIONS[from]?.includes(to)) {
+      res.status(409).json({ message: `Cannot move a ${from} booking to ${to}.` });
+      return;
+    }
+    const updated = await queryOne<Row>(
+      `UPDATE bookings SET status = $1 WHERE id = $2 AND status = $3 RETURNING *`,
+      [to, req.params.id, from]
+    );
+    if (!updated) {
+      res.status(409).json({ message: 'The booking changed under you. Please reload.' });
+      return;
+    }
+    await appendBookingEvent(updated.id as string, eventKind, me.userId, me.displayName);
+    try {
+      await notify(updated, me);
+    } catch {
+      // Ignore push failures.
+    }
+    res.json(bookingFromRow((await bookingWithNames(updated.id as string)) ?? updated));
+  }
+
+  app.post('/api/bookings/:id/start', requireAuth, requireRole('nurse', 'caregiver', 'physio'), async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      await transitionBooking(req, res, 'in_progress', 'started', async (booking, me) => {
+        await notifyUser(String(booking.client_id), {
+          kind: 'booking.started',
+          title: 'Visit started',
+          body: `${me.displayName} started your visit.`,
+          link: '/bookings',
+        });
+      });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.post('/api/bookings/:id/complete', requireAuth, requireRole('nurse', 'caregiver', 'physio'), async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      await transitionBooking(req, res, 'completed', 'completed', async (booking, me) => {
+        await notifyUser(String(booking.client_id), {
+          kind: 'booking.completed',
+          title: 'Visit completed',
+          body: `${me.displayName} completed your visit. Please rate it.`,
+          link: `/review?booking=${booking.id}`,
+        });
+      });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.post('/api/bookings/:id/cancel', requireAuth, async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      await transitionBooking(req, res, 'cancelled', 'cancelled', async (booking, me) => {
+        const otherId = me.userId === booking.client_id ? booking.caregiver_id : booking.client_id;
+        await notifyUser(String(otherId), {
+          kind: 'booking.cancelled',
+          title: 'Booking cancelled',
+          body: `${me.displayName} cancelled booking ${booking.id}.`,
+          link: '/bookings',
+        });
+      });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.post('/api/bookings/:id/dispute', requireAuth, async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      await transitionBooking(req, res, 'disputed', 'disputed', async (booking, me) => {
+        const otherId = me.userId === booking.client_id ? booking.caregiver_id : booking.client_id;
+        await notifyUser(String(otherId), {
+          kind: 'dispute.opened',
+          title: 'Booking disputed',
+          body: `${me.displayName} opened a dispute on booking ${booking.id}.`,
+          link: '/disputes',
+        });
+      });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  /** Per-booking event timeline (newest last; the store re-sorts newest-first). */
+  app.get('/api/bookings/:id/events', requireAuth, async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const me = req.user as AuthedUser;
+      const booking = await queryOne<Row>(`SELECT * FROM bookings WHERE id = $1`, [req.params.id]);
+      if (!booking) {
+        res.status(404).json({ message: 'Booking not found.' });
+        return;
+      }
+      if (booking.client_id !== me.userId && booking.caregiver_id !== me.userId) {
+        res.status(403).json({ message: 'Only the booking parties can see its timeline.' });
+        return;
+      }
+      const rows = await query<Row>(
+        `SELECT * FROM booking_events WHERE booking_id = $1 ORDER BY at_ms ASC`,
+        [req.params.id]
+      );
+      res.json(rows.map(bookingEventFromRow));
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  /**
+   * Reschedule proposal (§3 subtask 6): takes effect as the new timeslot
+   * immediately; the proposer counts as confirmed and the other party
+   * confirms via /reschedule/confirm. Terminal bookings cannot move (409).
+   */
+  app.post('/api/bookings/:id/reschedule', requireAuth, async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const me = req.user as AuthedUser;
+      const body = req.body as { scheduledAtMs?: unknown; note?: unknown };
+      const booking = await queryOne<Row>(`SELECT * FROM bookings WHERE id = $1`, [req.params.id]);
+      if (!booking) {
+        res.status(404).json({ message: 'Booking not found.' });
+        return;
+      }
+      const isClient = booking.client_id === me.userId;
+      const isProvider = booking.caregiver_id === me.userId;
+      if (!isClient && !isProvider) {
+        res.status(403).json({ message: 'Only the booking parties can reschedule it.' });
+        return;
+      }
+      const status = String(booking.status ?? 'requested');
+      if (status === 'completed' || status === 'cancelled' || status === 'disputed') {
+        res.status(409).json({ message: `A ${status} booking cannot be rescheduled.` });
+        return;
+      }
+      if (typeof body.scheduledAtMs !== 'number' || !Number.isFinite(body.scheduledAtMs) || body.scheduledAtMs <= 0) {
+        res.status(422).json({ message: 'A new date and time are required.' });
+        return;
+      }
+      const proposal = {
+        scheduledAtMs: body.scheduledAtMs,
+        note: typeof body.note === 'string' ? body.note.slice(0, 500) : undefined,
+        proposedBy: isClient ? 'client' : 'provider',
+        clientConfirmed: isClient,
+        providerConfirmed: isProvider,
+      };
+      const updated = await queryOne<Row>(
+        `UPDATE bookings SET scheduled_at_ms = $1, pending_reschedule = $2 WHERE id = $3 RETURNING *`,
+        [body.scheduledAtMs, JSON.stringify(proposal), req.params.id]
+      );
+      if (!updated) {
+        res.status(404).json({ message: 'Booking not found.' });
+        return;
+      }
+      await appendBookingEvent(updated.id as string, 'rescheduled', me.userId, me.displayName);
+      const otherId = isClient ? booking.caregiver_id : booking.client_id;
+      try {
+        await notifyUser(String(otherId), {
+          kind: 'booking.rescheduled',
+          title: 'Booking rescheduled',
+          body: `${me.displayName} proposed a new time.`,
+          link: '/bookings',
+        });
+      } catch {
+        // Ignore push failures.
+      }
+      res.json(bookingFromRow((await bookingWithNames(updated.id as string)) ?? updated));
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  /** The other party confirms the pending reschedule proposal. */
+  app.post('/api/bookings/:id/reschedule/confirm', requireAuth, async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const me = req.user as AuthedUser;
+      const booking = await queryOne<Row>(`SELECT * FROM bookings WHERE id = $1`, [req.params.id]);
+      if (!booking) {
+        res.status(404).json({ message: 'Booking not found.' });
+        return;
+      }
+      const isClient = booking.client_id === me.userId;
+      const isProvider = booking.caregiver_id === me.userId;
+      if (!isClient && !isProvider) {
+        res.status(403).json({ message: 'Only the booking parties can confirm it.' });
+        return;
+      }
+      const raw = booking.pending_reschedule as unknown;
+      if (!raw || typeof raw !== 'object') {
+        res.status(422).json({ message: 'There is no reschedule proposal to confirm.' });
+        return;
+      }
+      const proposal = raw as Record<string, unknown>;
+      if (isClient) {
+        proposal.clientConfirmed = true;
+      }
+      if (isProvider) {
+        proposal.providerConfirmed = true;
+      }
+      const updated = await queryOne<Row>(
+        `UPDATE bookings SET pending_reschedule = $1 WHERE id = $2 RETURNING *`,
+        [JSON.stringify(proposal), req.params.id]
+      );
+      if (!updated) {
+        res.status(404).json({ message: 'Booking not found.' });
+        return;
+      }
+      await appendBookingEvent(updated.id as string, 'rescheduled', me.userId, me.displayName, 'Proposal confirmed.');
+      res.json(bookingFromRow((await bookingWithNames(updated.id as string)) ?? updated));
     } catch (error) {
       next(error);
     }
@@ -412,6 +707,7 @@ export function createApp() {
          VALUES ($1, $2, $3, $4, $5, $6, $7)`,
         [bookingId, body.caregiverId, me.userId, body.scheduledAtMs, body.note ?? '', amountCents, now()]
       );
+      await appendBookingEvent(bookingId, 'created', me.userId, me.displayName);
       res.status(201).json({ id: bookingId, caregiverId: body.caregiverId, clientId: me.userId, amountCents });
     } catch (error) {
       next(error);
@@ -488,151 +784,6 @@ export function createApp() {
     }
   });
 
-  // ---- Clinical log ----
-  app.get('/api/clinical-log', requireAuth, async (_req: Request, res: Response, next: NextFunction) => {
-    try {
-      const rows = await query<Row>(`SELECT * FROM clinical_log ORDER BY signed_at_ms DESC NULLS LAST`);
-      res.json(rows.map(clinicalFromRow));
-    } catch (error) {
-      next(error);
-    }
-  });
-
-  app.post('/api/clinical-log', requireAuth, async (req: Request, res: Response, next: NextFunction) => {
-    try {
-      const me = req.user as AuthedUser;
-      const body = req.body as {
-        visitId?: string;
-        observations?: string;
-        specialties?: unknown;
-        vitals?: unknown;
-        rehab?: unknown;
-        signatureDataUrl?: string | null;
-      };
-      const row = {
-        id: id('cl'),
-        visit_id: body.visitId ?? '',
-        author_id: me.userId,
-        author_name: me.displayName,
-        specialty: body.specialties ? JSON.stringify(body.specialties) : 'nurse',
-        observations: body.observations ?? '',
-        vitals: body.vitals ? JSON.stringify(body.vitals) : null,
-        rehab: body.rehab ? JSON.stringify(body.rehab) : null,
-        signature_data_url: typeof body.signatureDataUrl === 'string' ? body.signatureDataUrl : null,
-        signed_at_ms: typeof body.signatureDataUrl === 'string' ? now() : null,
-      };
-      await query(
-        `INSERT INTO clinical_log
-         (id, visit_id, author_id, author_name, specialty, observations, vitals, rehab, signature_data_url, signed_at_ms)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
-        [row.id, row.visit_id, row.author_id, row.author_name, row.specialty, row.observations, row.vitals, row.rehab, row.signature_data_url, row.signed_at_ms]
-      );
-      res.status(201).json(clinicalFromRow(row));
-    } catch (error) {
-      next(error);
-    }
-  });
-
-  // ---- Care plans ----
-  async function carePlanWithChildren(plan: Row) {
-    const goals = await query<Row>(`SELECT * FROM care_plan_goals WHERE plan_id = $1`, [plan.id as string]);
-    const notes = await query<Row>(`SELECT * FROM care_plan_notes WHERE plan_id = $1 ORDER BY at_ms DESC`, [plan.id as string]);
-    return {
-      id: plan.id,
-      clientId: plan.client_id,
-      clientName: plan.client_name,
-      goals: goals.map((g) => ({ id: g.id, text: g.text, status: g.status })),
-      notes: notes.map((n) => ({
-        id: n.id,
-        authorId: n.author_id,
-        authorName: n.author_name,
-        authorRole: n.author_role,
-        text: n.text,
-        atMs: n.at_ms,
-      })),
-      updatedAtMs: plan.updated_at_ms,
-      updatedBy: plan.updated_by,
-    };
-  }
-
-  app.get('/api/care-plans', requireAuth, async (req: Request, res: Response, next: NextFunction) => {
-    try {
-      const me = req.user as AuthedUser;
-      const rows = await query<Row>(
-        me.roles.includes('client')
-          ? `SELECT * FROM care_plans WHERE client_id = $1`
-          : `SELECT * FROM care_plans`,
-        [me.userId]
-      );
-      res.json(await Promise.all(rows.map(carePlanWithChildren)));
-    } catch (error) {
-      next(error);
-    }
-  });
-
-  app.post('/api/care-plans/:id/goals', requireAuth, async (req: Request, res: Response, next: NextFunction) => {
-    try {
-      const plan = await touchPlan(req.params.id, req);
-      await query(
-        `INSERT INTO care_plan_goals (id, plan_id, text, status) VALUES ($1, $2, $3, 'open')`,
-        [id('g'), plan.id, String(req.body?.text ?? '')]
-      );
-      res.json(await carePlanWithChildren(plan));
-    } catch (error) {
-      next(error);
-    }
-  });
-
-  app.patch('/api/care-plans/:id/goals/:goalId', requireAuth, async (req: Request, res: Response, next: NextFunction) => {
-    try {
-      const plan = await touchPlan(req.params.id, req);
-      const status = req.body?.status;
-      if (!['open', 'in-progress', 'done'].includes(status)) {
-        res.status(400).json({ message: 'Invalid goal status.' });
-        return;
-      }
-      await query(`UPDATE care_plan_goals SET status = $1 WHERE plan_id = $2 AND id = $3`, [
-        status,
-        plan.id,
-        req.params.goalId,
-      ]);
-      res.json(await carePlanWithChildren(plan));
-    } catch (error) {
-      next(error);
-    }
-  });
-
-  app.post('/api/care-plans/:id/notes', requireAuth, async (req: Request, res: Response, next: NextFunction) => {
-    try {
-      const plan = await touchPlan(req.params.id, req);
-      const me = req.user as AuthedUser;
-      const body = req.body as { text?: string };
-      await query(
-        `INSERT INTO care_plan_notes (id, plan_id, author_id, author_name, author_role, text, at_ms)
-         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-        [id('n'), plan.id, me.userId, me.displayName, me.roles[0] ?? '', body.text ?? '', now()]
-      );
-      res.json(await carePlanWithChildren(plan));
-    } catch (error) {
-      next(error);
-    }
-  });
-
-  async function touchPlan(planId: string, req: Request): Promise<Row> {
-    const plan = await queryOne<Row>(`SELECT * FROM care_plans WHERE id = $1`, [planId]);
-    if (!plan) {
-      const err = new Error('Care plan not found.') as Error & { status?: number };
-      err.status = 404;
-      throw err;
-    }
-    await query(`UPDATE care_plans SET updated_at_ms = $1, updated_by = $2 WHERE id = $3`, [
-      now(),
-      (req.user as AuthedUser).displayName,
-      planId,
-    ]);
-    return plan;
-  }
-
   // ---- Payments / escrow ----
   app.get('/api/payments/escrow', requireAuth, async (req: Request, res: Response, next: NextFunction) => {
     try {
@@ -675,11 +826,12 @@ export function createApp() {
   app.post('/api/payments/escrow/:id/release', requireAuth, async (req: Request, res: Response, next: NextFunction) => {
     try {
       const result = await query<Row>(
-        `UPDATE escrow SET status = 'released', settled_at_ms = $1 WHERE id = $2 AND status = 'held' RETURNING *`,
+        `UPDATE escrow SET status = 'released', settled_at_ms = $1
+          WHERE id = $2 AND status IN ('held', 'frozen') RETURNING *`,
         [now(), req.params.id]
       );
       if (result.length === 0) {
-        res.status(404).json({ message: 'Held transaction not found.' });
+        res.status(404).json({ message: 'Open transaction not found.' });
         return;
       }
       res.json(escrowFromRow(result[0]));
@@ -691,8 +843,26 @@ export function createApp() {
   app.post('/api/payments/escrow/:id/refund', requireAuth, async (req: Request, res: Response, next: NextFunction) => {
     try {
       const result = await query<Row>(
-        `UPDATE escrow SET status = 'refunded', settled_at_ms = $1 WHERE id = $2 AND status = 'held' RETURNING *`,
+        `UPDATE escrow SET status = 'refunded', settled_at_ms = $1
+          WHERE id = $2 AND status IN ('held', 'frozen') RETURNING *`,
         [now(), req.params.id]
+      );
+      if (result.length === 0) {
+        res.status(404).json({ message: 'Open transaction not found.' });
+        return;
+      }
+      res.json(escrowFromRow(result[0]));
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  /** Freeze a held transaction when a dispute opens (§17). */
+  app.post('/api/payments/escrow/:id/freeze', requireAuth, async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const result = await query<Row>(
+        `UPDATE escrow SET status = 'frozen' WHERE id = $1 AND status = 'held' RETURNING *`,
+        [req.params.id]
       );
       if (result.length === 0) {
         res.status(404).json({ message: 'Held transaction not found.' });
@@ -704,27 +874,122 @@ export function createApp() {
     }
   });
 
+  /**
+   * Partial refund of a held/frozen transaction: `amountCents` returns to the
+   * client, the remainder releases to the provider. Cents-safe: the backend
+   * enforces 0 < amountCents ≤ amount.
+   */
+  app.post('/api/payments/escrow/:id/partial-refund', requireAuth, async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const amountCents = (req.body as { amountCents?: unknown })?.amountCents;
+      const tx = await queryOne<Row>(`SELECT * FROM escrow WHERE id = $1`, [req.params.id]);
+      if (!tx || (tx.status !== 'held' && tx.status !== 'frozen')) {
+        res.status(404).json({ message: 'Open transaction not found.' });
+        return;
+      }
+      const total = Number(tx.amount_cents);
+      if (!Number.isInteger(amountCents) || (amountCents as number) <= 0 || (amountCents as number) > total) {
+        res.status(422).json({ message: 'Refund must be between 1 cent and the held amount.' });
+        return;
+      }
+      const result = await query<Row>(
+        `UPDATE escrow SET status = 'released', refunded_cents = $1, settled_at_ms = $2
+          WHERE id = $3 AND status IN ('held', 'frozen') RETURNING *`,
+        [amountCents, now(), req.params.id]
+      );
+      if (result.length === 0) {
+        res.status(409).json({ message: 'The transaction changed under you. Please reload.' });
+        return;
+      }
+      res.json(escrowFromRow(result[0]));
+    } catch (error) {
+      next(error);
+    }
+  });
+
   // ---- Screenings (preventive care, FEATURE_PLAN.md §6/§20) ----
+  // Served under both /screenings/me* (legacy) and /me/screenings* (the
+  // contract the screening store documents) — same handlers, same shapes.
+  async function readScreenings(req: Request, res: Response): Promise<void> {
+    const me = req.user as AuthedUser;
+    // screening.due pushes fire on this read (once per user/type/due-at).
+    try {
+      await checkScreeningDue(me.userId);
+    } catch {
+      // A push/notice problem never fails the read.
+    }
+    const [profile, rows] = await Promise.all([
+      queryOne<Row>(`SELECT date_of_birth, sex FROM profiles WHERE user_id = $1`, [me.userId]),
+      query<Row>(`SELECT * FROM screenings WHERE user_id = $1 ORDER BY at_ms DESC`, [me.userId]),
+    ]);
+    res.json({
+      profile: {
+        dateOfBirth: profile?.date_of_birth ?? '',
+        sex: profile?.sex ?? '',
+      },
+      records: rows.map(screeningFromRow),
+    });
+  }
+
+  async function writeScreening(req: Request, res: Response): Promise<void> {
+    const me = req.user as AuthedUser;
+    const type = req.params.type as ScreeningType;
+    const action = req.params.action;
+    const body = req.body as {
+      reason?: string;
+      snoozeUntilMs?: number;
+      snoozeCount?: number;
+      scheduledAtMs?: number;
+    };
+    const nowMs = now();
+    const existing = await queryOne<Row>(
+      `SELECT * FROM screenings WHERE user_id = $1 AND type = $2`,
+      [me.userId, type]
+    );
+    if (action === 'waive' && !body.reason?.trim()) {
+      res.status(422).json({ message: 'A reason is required to waive a screening.' });
+      return;
+    }
+    if (action === 'schedule' && typeof body.scheduledAtMs !== 'number') {
+      res.status(422).json({ message: 'Choose a valid date to schedule this screening.' });
+      return;
+    }
+    const record = {
+      id: existing?.id ?? id('scr'),
+      type,
+      status: action === 'waive' ? 'waived' : 'done',
+      atMs: action === 'done' ? nowMs : Number(existing?.at_ms ?? nowMs),
+      reason: action === 'waive' ? body.reason ?? '' : existing?.reason ?? '',
+      snooze_until_ms:
+        action === 'snooze' ? (body.snoozeUntilMs ?? nowMs + 30 * 24 * hour) : (existing?.snooze_until_ms ?? null),
+      scheduled_at_ms:
+        action === 'schedule' ? body.scheduledAtMs : (existing?.scheduled_at_ms ?? null),
+      snooze_count: action === 'snooze' ? (body.snoozeCount ?? Number(existing?.snooze_count ?? 0)) : Number(existing?.snooze_count ?? 0),
+    };
+    await query(
+      `INSERT INTO screenings
+       (id, user_id, type, status, at_ms, reason, snooze_until_ms, scheduled_at_ms, snooze_count, created_at_ms)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+       ON CONFLICT (user_id, type) DO UPDATE SET
+         status = EXCLUDED.status, at_ms = EXCLUDED.at_ms, reason = EXCLUDED.reason,
+         snooze_until_ms = EXCLUDED.snooze_until_ms, scheduled_at_ms = EXCLUDED.scheduled_at_ms,
+         snooze_count = EXCLUDED.snooze_count`,
+      [record.id, me.userId, record.type, record.status, record.atMs, record.reason, record.snooze_until_ms, record.scheduled_at_ms, record.snooze_count, nowMs]
+    );
+    res.status(201).json(screeningFromRow(record));
+  }
+
   app.get('/api/screenings/me', requireAuth, async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const me = req.user as AuthedUser;
-      // screening.due pushes fire on this read (once per user/type/due-at).
-      try {
-        await checkScreeningDue(me.userId);
-      } catch {
-        // A push/notice problem never fails the read.
-      }
-      const [profile, rows] = await Promise.all([
-        queryOne<Row>(`SELECT date_of_birth, sex FROM profiles WHERE user_id = $1`, [me.userId]),
-        query<Row>(`SELECT * FROM screenings WHERE user_id = $1 ORDER BY at_ms DESC`, [me.userId]),
-      ]);
-      res.json({
-        profile: {
-          dateOfBirth: profile?.date_of_birth ?? '',
-          sex: profile?.sex ?? '',
-        },
-        records: rows.map(screeningFromRow),
-      });
+      await readScreenings(req, res);
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.get('/api/me/screenings', requireAuth, async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      await readScreenings(req, res);
     } catch (error) {
       next(error);
     }
@@ -733,51 +998,16 @@ export function createApp() {
   // POST /api/screenings/me/:type/:action (done | waive | snooze | schedule)
   app.post('/api/screenings/me/:type/:action', requireAuth, async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const me = req.user as AuthedUser;
-      const type = req.params.type as ScreeningType;
-      const action = req.params.action;
-      const body = req.body as {
-        reason?: string;
-        snoozeUntilMs?: number;
-        snoozeCount?: number;
-        scheduledAtMs?: number;
-      };
-      const nowMs = now();
-      const existing = await queryOne<Row>(
-        `SELECT * FROM screenings WHERE user_id = $1 AND type = $2`,
-        [me.userId, type]
-      );
-      if (action === 'waive' && !body.reason?.trim()) {
-        res.status(422).json({ message: 'A reason is required to waive a screening.' });
-        return;
-      }
-      if (action === 'schedule' && typeof body.scheduledAtMs !== 'number') {
-        res.status(422).json({ message: 'Choose a valid date to schedule this screening.' });
-        return;
-      }
-      const record = {
-        id: existing?.id ?? id('scr'),
-        type,
-        status: action === 'waive' ? 'waived' : 'done',
-        atMs: action === 'done' ? nowMs : Number(existing?.at_ms ?? nowMs),
-        reason: action === 'waive' ? body.reason ?? '' : existing?.reason ?? '',
-        snooze_until_ms:
-          action === 'snooze' ? (body.snoozeUntilMs ?? nowMs + 30 * 24 * hour) : (existing?.snooze_until_ms ?? null),
-        scheduled_at_ms:
-          action === 'schedule' ? body.scheduledAtMs : (existing?.scheduled_at_ms ?? null),
-        snooze_count: action === 'snooze' ? (body.snoozeCount ?? Number(existing?.snooze_count ?? 0)) : Number(existing?.snooze_count ?? 0),
-      };
-      await query(
-        `INSERT INTO screenings
-         (id, user_id, type, status, at_ms, reason, snooze_until_ms, scheduled_at_ms, snooze_count, created_at_ms)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-         ON CONFLICT (user_id, type) DO UPDATE SET
-           status = EXCLUDED.status, at_ms = EXCLUDED.at_ms, reason = EXCLUDED.reason,
-           snooze_until_ms = EXCLUDED.snooze_until_ms, scheduled_at_ms = EXCLUDED.scheduled_at_ms,
-           snooze_count = EXCLUDED.snooze_count`,
-        [record.id, me.userId, record.type, record.status, record.atMs, record.reason, record.snooze_until_ms, record.scheduled_at_ms, record.snooze_count, nowMs]
-      );
-      res.status(201).json(screeningFromRow(record));
+      await writeScreening(req, res);
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  // POST /api/me/screenings/:type/:action (done | waive | snooze | schedule)
+  app.post('/api/me/screenings/:type/:action', requireAuth, async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      await writeScreening(req, res);
     } catch (error) {
       next(error);
     }
@@ -902,6 +1132,84 @@ export function createApp() {
     }
   });
 
+  /** Soft-archive a medication (history preserved for audit, §16). */
+  app.post('/api/medications/:id/archive', requireAuth, async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const me = req.user as AuthedUser;
+      const rows = await query<Row>(
+        `UPDATE medications SET archived = TRUE WHERE id = $1 AND user_id = $2 RETURNING *`,
+        [req.params.id, me.userId]
+      );
+      if (rows.length === 0) {
+        res.status(404).json({ message: 'Medication not found.' });
+        return;
+      }
+      res.json(medicationFromRow(rows[0]));
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  /**
+   * Rule-based interaction check (subtask 12): severe drug-allergy substance
+   * match → major; polypharmacy (5+ active meds) → minor review prompt;
+   * otherwise none. A transparent heuristic, not a drug database.
+   */
+  app.get('/api/medications/:id/interactions', requireAuth, async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const me = req.user as AuthedUser;
+      const med = await queryOne<Row>(
+        `SELECT * FROM medications WHERE id = $1 AND user_id = $2`,
+        [req.params.id, me.userId]
+      );
+      if (!med) {
+        res.status(404).json({ message: 'Medication not found.' });
+        return;
+      }
+      const name = String(med.name ?? '').toLowerCase();
+      const allergies = await query<Row>(
+        `SELECT substance, severity FROM allergies WHERE user_id = $1 AND kind = 'drug' AND archived = FALSE`,
+        [me.userId]
+      );
+      const hit = allergies.find(
+        (allergy) =>
+          String(allergy.severity) === 'severe' &&
+          String(allergy.substance ?? '')
+            .toLowerCase()
+            .split(/[\s,;]+/)
+            .filter((token) => token.length > 3)
+            .some((token) => name.includes(token))
+      );
+      if (hit) {
+        res.json({
+          medicationId: med.id,
+          severity: 'major',
+          message: `Severe allergy conflict: ${hit.substance}. Do not take ${med.name} without medical advice.`,
+        });
+        return;
+      }
+      const active = await query<Row>(
+        `SELECT COUNT(*) AS count FROM medications WHERE user_id = $1 AND archived = FALSE AND id <> $2`,
+        [me.userId, req.params.id]
+      );
+      if (Number(active[0]?.count ?? 0) >= 4) {
+        res.json({
+          medicationId: med.id,
+          severity: 'minor',
+          message: 'You take several medications — ask your pharmacist to review combinations.',
+        });
+        return;
+      }
+      res.json({
+        medicationId: med.id,
+        severity: 'none',
+        message: 'No known interactions found in your record.',
+      });
+    } catch (error) {
+      next(error);
+    }
+  });
+
   app.post('/api/medications/:id/log', requireAuth, async (req: Request, res: Response, next: NextFunction) => {
     try {
       const me = req.user as AuthedUser;
@@ -937,116 +1245,7 @@ export function createApp() {
   });
 
   // ---- Disputes (FEATURE_PLAN.md §17/§20) ----
-  app.get('/api/me/disputes', requireAuth, async (req: Request, res: Response, next: NextFunction) => {
-    try {
-      const me = req.user as AuthedUser;
-      const rows = await query<Row>(
-        `SELECT * FROM disputes WHERE client_id = $1 OR provider_id = $1 ORDER BY created_at_ms DESC`,
-        [me.userId]
-      );
-      res.json(await Promise.all(rows.map(disputeWithNames)));
-    } catch (error) {
-      next(error);
-    }
-  });
-
-  app.get('/api/disputes', requireAuth, requireRole('admin'), async (_req: Request, res: Response, next: NextFunction) => {
-    try {
-      const rows = await query<Row>(`SELECT * FROM disputes ORDER BY created_at_ms DESC`);
-      res.json(await Promise.all(rows.map(disputeWithNames)));
-    } catch (error) {
-      next(error);
-    }
-  });
-
-  app.post('/api/disputes', requireAuth, async (req: Request, res: Response, next: NextFunction) => {
-    try {
-      const me = req.user as AuthedUser;
-      const body = req.body as { bookingId?: string; reason?: string; description?: string };
-      if (!body.bookingId || !body.reason) {
-        res.status(422).json({ message: 'Booking id and reason are required.' });
-        return;
-      }
-      const booking = await queryOne<Row>(`SELECT * FROM bookings WHERE id = $1`, [body.bookingId]);
-      if (!booking) {
-        res.status(404).json({ message: 'Booking not found.' });
-        return;
-      }
-      if (booking.client_id !== me.userId && booking.caregiver_id !== me.userId) {
-        res.status(403).json({ message: 'Only the client or provider of the booking can open a dispute.' });
-        return;
-      }
-      const row = {
-        id: id('dp'),
-        booking_id: body.bookingId,
-        client_id: booking.client_id as string,
-        provider_id: booking.caregiver_id as string,
-        opened_by: me.userId,
-        reason: body.reason,
-        description: body.description ?? '',
-        state: 'open',
-        created_at_ms: now(),
-        updated_at_ms: now(),
-      };
-      await query(
-        `INSERT INTO disputes (id, booking_id, client_id, provider_id, opened_by, reason, description, state, resolution, created_at_ms, updated_at_ms)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NULL, $9, $9)`,
-        [row.id, row.booking_id, row.client_id, row.provider_id, row.opened_by, row.reason, row.description, row.state, row.created_at_ms]
-      );
-      // Notify the other party of the booking.
-      const otherId = me.userId === booking.client_id ? booking.caregiver_id : booking.client_id;
-      try {
-        await notifyUser(String(otherId), {
-          kind: 'dispute.opened',
-          title: 'Dispute opened',
-          body: `A dispute has been opened for booking ${body.bookingId}.`,
-          link: '/disputes',
-        });
-      } catch {
-        // Ignore push failures.
-      }
-      res.status(201).json(await disputeWithNames(row));
-    } catch (error) {
-      next(error);
-    }
-  });
-
-  app.post('/api/disputes/:id/state', requireAuth, requireRole('admin'), async (req: Request, res: Response, next: NextFunction) => {
-    try {
-      const state = req.body?.state as string | undefined;
-      const resolution = (req.body?.resolution as string | undefined) ?? null;
-      if (!['resolved_client', 'resolved_provider', 'rejected'].includes(state ?? '')) {
-        res.status(422).json({ message: 'Invalid dispute state.' });
-        return;
-      }
-      const result = await query<Row>(
-        `UPDATE disputes SET state = $1, resolution = $2, updated_at_ms = $3 WHERE id = $4 RETURNING *`,
-        [state, resolution, now(), req.params.id]
-      );
-      if (result.length === 0) {
-        res.status(404).json({ message: 'Dispute not found.' });
-        return;
-      }
-      const dispute = result[0];
-      const kind = state === 'rejected' ? 'dispute.rejected' : 'dispute.resolved';
-      const title = state === 'rejected' ? 'Dispute rejected' : 'Dispute resolved';
-      for (const partyId of [dispute.client_id, dispute.provider_id]) {
-        try {
-          await notifyUser(String(partyId), {
-            kind,
-            title,
-            body: 'A decision has been made on your dispute. See the console for details.',
-            link: '/disputes',
-          });
-        } catch {
-          // Ignore push failures.
-        }
-      }
-      res.json(await disputeWithNames(dispute));
-    } catch (error) {
-      next(error);
-    }
-  });
+  app.use('/api', disputesRouter);
 
   // ---- PWA push subscriptions + Web Push (FEATURE_PLAN.md §20) ----
   app.get('/api/me/push-subscription', requireAuth, async (req: Request, res: Response, next: NextFunction) => {
@@ -1123,6 +1322,37 @@ export function createApp() {
   // ---- Consent ledger (FEATURE_PLAN.md §16; §21 subtask 16 enforcement) ----
   app.use('/api', consentsRouter);
 
+  // ---- Marketplace: saved searches, favorites, reviews (FEATURE_PLAN.md §1–§2) ----
+  app.use('/api', marketplaceRouter);
+
+  // ---- Bell notifications + reminder preferences (§4, §8) ----
+  app.use('/api', notificationsRouter);
+
+  // ---- Audit trail + admin consent oversight (§16) ----
+  app.use('/api', auditRouter);
+
+  // ---- Payments: methods, payout, tokenize (§13) ----
+  app.use('/api', paymentsRouter);
+
+  // ---- Pharmacy: scan + orders (§9) ----
+  app.use('/api', pharmacyRouter);
+
+  // ---- Gov.gr health wallet (§15) ----
+  app.use('/api', walletRouter);
+
+  // ---- Chat attachment uploads (§18) + static file serving ----
+  app.use('/api', uploadsRouter);
+  app.use('/api/uploads', express.static(process.env.UPLOAD_DIR ?? '/tmp/uploads'));
+
+  // ---- Realtime Chat v2 ----
+  app.use('/api', chatRouter);
+
+  // ---- Clinical documentation & shared care plans ----
+  app.use('/api', clinicalRouter);
+
+  // ---- FHIR R4 Health Interoperability & Export ----
+  app.use('/api', fhirRouter);
+
   // ---- Vitals ----
   app.get('/api/vitals/me', requireAuth, async (req: Request, res: Response, next: NextFunction) => {
     try {
@@ -1182,6 +1412,72 @@ export function createApp() {
       next(error);
     }
   });
+
+  app.get('/api/vitals/stats', requireAuth, async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const me = req.user as AuthedUser;
+      const targetUserId =
+        typeof req.query.userId === 'string' && req.query.userId ? req.query.userId : me.userId;
+      if (targetUserId !== me.userId) {
+        const { consents } = await loadConsents(targetUserId);
+        if (!consentGranted(consents, 'family_sharing')) {
+          res.status(403).json({ message: 'This person has not granted family-sharing consent.' });
+          return;
+        }
+      }
+      const rows = await query<Row>(
+        `SELECT * FROM vitals WHERE user_id = $1 ORDER BY measured_at_ms DESC`,
+        [targetUserId]
+      );
+      const days =
+        typeof req.query.days === 'string' && Number(req.query.days) > 0
+          ? Number(req.query.days)
+          : 30;
+      const stats = computeVitalStats(rows, days);
+      res.json(stats);
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.delete('/api/vitals/:id', requireAuth, async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const me = req.user as AuthedUser;
+      const rows = await query<Row>(
+        `DELETE FROM vitals WHERE id = $1 AND user_id = $2 RETURNING id`,
+        [req.params.id, me.userId]
+      );
+      if (rows.length === 0) {
+        res.status(404).json({ message: 'Vital measurement not found.' });
+        return;
+      }
+      res.json({ ok: true, id: rows[0].id });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.get('/api/vitals/:userId', requireAuth, async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const me = req.user as AuthedUser;
+      const targetUserId = req.params.userId;
+      if (targetUserId !== me.userId) {
+        const { consents } = await loadConsents(targetUserId);
+        if (!consentGranted(consents, 'family_sharing')) {
+          res.status(403).json({ message: 'This person has not granted family-sharing consent.' });
+          return;
+        }
+      }
+      const rows = await query<Row>(
+        `SELECT * FROM vitals WHERE user_id = $1 AND source IN ('manual', 'bluetooth') ORDER BY measured_at_ms DESC`,
+        [targetUserId]
+      );
+      res.json(rows.map(vitalFromRow));
+    } catch (error) {
+      next(error);
+    }
+  });
+
 
   // Standard error handler — maps thrown 404s, otherwise 500.
   app.use((error: Error & { status?: number }, _req: Request, res: Response, _next: NextFunction) => {
@@ -1246,21 +1542,6 @@ function visitFromRow(row: Row) {
   };
 }
 
-function clinicalFromRow(row: Row) {
-  return {
-    id: row.id,
-    visitId: row.visit_id,
-    authorId: row.author_id,
-    authorName: row.author_name,
-    specialty: row.specialty,
-    observations: row.observations,
-    vitals: row.vitals ?? null,
-    rehab: row.rehab ?? null,
-    signatureDataUrl: row.signature_data_url ?? null,
-    signedAtMs: num(row.signed_at_ms),
-  };
-}
-
 function escrowFromRow(row: Row) {
   return {
     id: row.id,
@@ -1271,6 +1552,7 @@ function escrowFromRow(row: Row) {
     status: row.status,
     createdAtMs: num(row.created_at_ms),
     settledAtMs: num(row.settled_at_ms),
+    refundedCents: num(row.refunded_cents) ?? 0,
   };
 }
 
@@ -1323,34 +1605,20 @@ function adherenceFromRow(row: Row) {
   };
 }
 
-async function disputeWithNames(row: Row) {
-  const [client, provider, openedBy] = await Promise.all([
-    queryOne<Row>(`SELECT display_name FROM user_accounts WHERE id = $1`, [row.client_id]),
-    queryOne<Row>(`SELECT display_name FROM caregivers WHERE id = $1`, [row.provider_id]),
-    queryOne<Row>(`SELECT display_name FROM user_accounts WHERE id = $1`, [row.opened_by]),
-  ]);
-  return {
-    id: row.id,
-    bookingId: row.booking_id,
-    clientId: row.client_id,
-    clientName: client?.display_name ?? '',
-    providerId: row.provider_id,
-    providerName: provider?.display_name ?? '',
-    openedBy: row.opened_by,
-    openedByName: openedBy?.display_name ?? '',
-    reason: row.reason,
-    description: row.description ?? '',
-    state: row.state,
-    resolution: row.resolution ?? null,
-    refundCents: null,
-    escrowTransactionId: null,
-    createdAtMs: num(row.created_at_ms),
-    updatedAtMs: num(row.updated_at_ms),
-    evidence: [],
-  };
-}
 
 function bookingFromRow(row: Row) {
+  let pendingReschedule = null;
+  const raw = row.pending_reschedule as unknown;
+  if (raw && typeof raw === 'object') {
+    const proposal = raw as Record<string, unknown>;
+    pendingReschedule = {
+      scheduledAtMs: Number(proposal.scheduledAtMs),
+      note: typeof proposal.note === 'string' ? proposal.note : undefined,
+      proposedBy: proposal.proposedBy,
+      clientConfirmed: Boolean(proposal.clientConfirmed),
+      providerConfirmed: Boolean(proposal.providerConfirmed),
+    };
+  }
   return {
     id: row.id,
     caregiverId: row.caregiver_id,
@@ -1362,8 +1630,56 @@ function bookingFromRow(row: Row) {
     note: row.note ?? '',
     status: row.status ?? 'requested',
     createdAtMs: num(row.created_at_ms),
-    pendingReschedule: null,
+    pendingReschedule,
   };
+}
+
+/** Legal booking transitions, mirroring the frontend state machine (§3). */
+const BOOKING_TRANSITIONS: Record<string, readonly string[]> = {
+  requested: ['accepted', 'cancelled'],
+  accepted: ['in_progress', 'cancelled'],
+  in_progress: ['completed', 'disputed'],
+  completed: ['disputed'],
+  cancelled: [],
+  disputed: [],
+};
+
+function bookingEventFromRow(row: Row) {
+  return {
+    id: String(row.id),
+    bookingId: String(row.booking_id),
+    kind: String(row.kind),
+    atMs: num(row.at_ms) ?? 0,
+    byUserId: String(row.by_user_id),
+    byName: String(row.by_name ?? ''),
+    detail: String(row.detail ?? ''),
+  };
+}
+
+async function appendBookingEvent(
+  bookingId: string,
+  kind: string,
+  byUserId: string,
+  byName: string,
+  detail = ''
+): Promise<void> {
+  await query(
+    `INSERT INTO booking_events (id, booking_id, kind, at_ms, by_user_id, by_name, detail)
+     VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+    [id('be'), bookingId, kind, now(), byUserId, byName, detail]
+  );
+}
+
+/** Hydrate a booking row with joined display names (the GET /bookings shape). */
+async function bookingWithNames(bookingId: string): Promise<Row | null> {
+  return queryOne<Row>(
+    `SELECT b.*, c.display_name AS caregiver_name, u.display_name AS client_name
+     FROM bookings b
+     JOIN caregivers c ON c.id = b.caregiver_id
+     JOIN user_accounts u ON u.id = b.client_id
+     WHERE b.id = $1`,
+    [bookingId]
+  );
 }
 
 function vitalFromRow(row: Row) {

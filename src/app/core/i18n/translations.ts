@@ -552,6 +552,7 @@ export const TRANSLATIONS: Record<Language, Record<string, string>> = {
 
     // --- Marketplace (care/visits batch) -------------------------------------
     'market.title': 'Marketplace',
+    'market.eyebrow': 'Trusted home care',
     'market.subtitle': 'Find and book trusted care near you',
     'market.searchPlaceholder': 'Search caregivers…',
     'market.searchLabel': 'Search caregivers',
@@ -1839,6 +1840,7 @@ export const TRANSLATIONS: Record<Language, Record<string, string>> = {
 
     // --- Marketplace (care/visits batch) -------------------------------------
     'market.title': 'Αγορά υπηρεσιών',
+    'market.eyebrow': 'Αξιόπιστη φροντίδα στο σπίτι',
     'market.subtitle': 'Βρείτε και κλείστε αξιόπιστη φροντίδα κοντά σας',
     'market.searchPlaceholder': 'Αναζήτηση φροντιστών…',
     'market.searchLabel': 'Αναζήτηση φροντιστών',

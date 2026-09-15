@@ -160,7 +160,7 @@ const STATUS_TONES: Record<string, string> = {
     }
     .live-panel {
       margin-top: var(--space-5);
-      border-color: var(--accent);
+      border-color: var(--accent-soft-strong);
       box-shadow: var(--shadow-md);
       animation: page-enter var(--dur) var(--ease) both;
     }

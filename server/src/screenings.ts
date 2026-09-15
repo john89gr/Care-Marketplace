@@ -19,7 +19,10 @@ export type ScreeningType =
   | 'cervicalSmear'
   | 'colorectalScreening'
   | 'fluVaccine'
-  | 'boneDensity';
+  | 'boneDensity'
+  | 'colonoscopy'
+  | 'papTest'
+  | 'psaCheck';
 
 export interface ScreeningRule {
   type: ScreeningType;
@@ -28,16 +31,47 @@ export interface ScreeningRule {
   maxAge: number;
   sex: ScreeningSex[];
   intervalMonths: number;
+  maleMinAge?: number;
+  aliases?: readonly ScreeningType[];
 }
 
 export const SCREENING_RULES: readonly ScreeningRule[] = [
   { type: 'mammography', label: 'Mammography', minAge: 50, maxAge: 74, sex: ['female'], intervalMonths: 24 },
   { type: 'cardioCheck', label: 'Cardiovascular check', minAge: 40, maxAge: 120, sex: ['female', 'male', 'other'], intervalMonths: 12 },
-  { type: 'cervicalSmear', label: 'Cervical screening', minAge: 25, maxAge: 64, sex: ['female'], intervalMonths: 36 },
-  { type: 'colorectalScreening', label: 'Colorectal screening (FIT test)', minAge: 45, maxAge: 80, sex: ['female', 'male', 'other'], intervalMonths: 24 },
+  { type: 'cervicalSmear', label: 'Cervical screening', minAge: 25, maxAge: 64, sex: ['female'], intervalMonths: 36, aliases: ['papTest'] },
+  { type: 'colorectalScreening', label: 'Colorectal screening (FIT test)', minAge: 45, maxAge: 80, sex: ['female', 'male', 'other'], intervalMonths: 24, aliases: ['colonoscopy'] },
   { type: 'fluVaccine', label: 'Seasonal flu vaccination', minAge: 60, maxAge: 120, sex: ['female', 'male', 'other'], intervalMonths: 12 },
-  { type: 'boneDensity', label: 'Bone density scan', minAge: 65, maxAge: 120, sex: ['female'], intervalMonths: 24 },
+  { type: 'boneDensity', label: 'Bone density scan', minAge: 65, maxAge: 120, sex: ['female', 'male'], intervalMonths: 24, maleMinAge: 70 },
 ];
+
+/**
+ * Clinical guideline screening rules:
+ * - cardioCheck: age >= 40, interval 12 months
+ * - mammography: female, age 40-74, interval 12 months
+ * - colonoscopy: age 50-75, interval 60 months
+ * - papTest: female, age 21-65, interval 36 months
+ * - psaCheck: male, age 50-70, interval 12 months
+ * - boneDensity: female age >= 65 or male >= 70, interval 24 months
+ */
+export const VERIFIED_SCREENING_RULES: readonly ScreeningRule[] = [
+  { type: 'cardioCheck', label: 'Cardiovascular check', minAge: 40, maxAge: 120, sex: ['female', 'male', 'other'], intervalMonths: 12 },
+  { type: 'mammography', label: 'Mammography', minAge: 40, maxAge: 74, sex: ['female'], intervalMonths: 12 },
+  { type: 'colonoscopy', label: 'Colonoscopy', minAge: 50, maxAge: 75, sex: ['female', 'male', 'other'], intervalMonths: 60, aliases: ['colorectalScreening'] },
+  { type: 'papTest', label: 'Pap test', minAge: 21, maxAge: 65, sex: ['female'], intervalMonths: 36, aliases: ['cervicalSmear'] },
+  { type: 'psaCheck', label: 'PSA check', minAge: 50, maxAge: 70, sex: ['male'], intervalMonths: 12 },
+  { type: 'boneDensity', label: 'Bone density scan', minAge: 65, maxAge: 120, sex: ['female', 'male'], intervalMonths: 24, maleMinAge: 70 },
+];
+
+export function getScreeningRule(
+  type: string,
+  rules: readonly ScreeningRule[] = SCREENING_RULES
+): ScreeningRule | undefined {
+  return (
+    rules.find((r) => r.type === type || r.aliases?.includes(type as ScreeningType)) ??
+    VERIFIED_SCREENING_RULES.find((r) => r.type === type || r.aliases?.includes(type as ScreeningType))
+  );
+}
+
 
 export interface ScreeningProfile {
   dateOfBirth: string;
@@ -80,7 +114,8 @@ export function ruleApplies(rule: ScreeningRule, profile: ScreeningProfile, nowM
   if (age === null) {
     return false;
   }
-  if (age < rule.minAge || age > rule.maxAge) {
+  const minAge = profile.sex === 'male' && rule.maleMinAge !== undefined ? rule.maleMinAge : rule.minAge;
+  if (age < minAge || age > rule.maxAge) {
     return false;
   }
   if (profile.sex && !rule.sex.includes(profile.sex)) {
@@ -104,15 +139,18 @@ export interface ScreeningStatus {
 export function evaluateScreenings(
   profile: ScreeningProfile,
   records: readonly ScreeningRecord[],
-  nowMs: number
+  nowMs: number,
+  rules: readonly ScreeningRule[] = SCREENING_RULES
 ): ScreeningStatus[] {
   const byType = new Map(records.map((r) => [r.type, r]));
   const results: ScreeningStatus[] = [];
-  for (const rule of SCREENING_RULES) {
+  for (const rule of rules) {
     if (!ruleApplies(rule, profile, nowMs)) {
       continue;
     }
-    const record = byType.get(rule.type);
+    const record =
+      byType.get(rule.type) ??
+      rule.aliases?.map((a) => byType.get(a)).find(Boolean);
     let state: ScreeningStatus['state'] = 'due';
     let dueAtMs = 0;
     if (record) {

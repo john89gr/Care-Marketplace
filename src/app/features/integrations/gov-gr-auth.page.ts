@@ -58,6 +58,8 @@ import { LocalizedMessage } from '../../core/i18n/localized-message';
       padding: var(--space-7) 0;
     }
     .gov-card {
+      position: relative;
+      overflow: hidden;
       display: grid;
       justify-items: center;
       text-align: center;
@@ -65,7 +67,15 @@ import { LocalizedMessage } from '../../core/i18n/localized-message';
       width: 100%;
       max-width: 26rem;
       padding: var(--space-6);
+      border-radius: var(--radius-xl);
       box-shadow: var(--shadow-lg);
+    }
+    .gov-card::before {
+      content: '';
+      position: absolute;
+      inset: 0 0 auto 0;
+      height: 4px;
+      background: var(--accent-grad);
     }
     .gov-mark {
       width: 3.25rem;

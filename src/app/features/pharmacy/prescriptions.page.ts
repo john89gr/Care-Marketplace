@@ -308,7 +308,7 @@ function detectorConstructor(): (new () => BarcodeDetectorLike) | null {
       white-space: nowrap;
     }
     .result {
-      border-color: var(--success);
+      border-color: color-mix(in srgb, var(--success) 55%, transparent);
       box-shadow: 0 0 0 1px color-mix(in srgb, var(--success) 25%, transparent);
     }
     .result-head {

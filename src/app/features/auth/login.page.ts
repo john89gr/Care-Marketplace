@@ -52,46 +52,13 @@ import { I18n } from '../../core/i18n/i18n.service';
     </section>
   `,
   styles: `
-    .auth {
-      display: flex;
-      justify-content: center;
-      padding: var(--space-5) 0 var(--space-7);
-    }
-    .auth-card {
-      width: 100%;
-      max-width: 26rem;
-      padding: var(--space-6);
-      box-shadow: var(--shadow-lg);
-    }
-    .auth-head {
-      display: grid;
-      justify-items: center;
-      text-align: center;
-      gap: var(--space-2);
-      margin-bottom: var(--space-5);
-    }
-    .auth-mark {
-      width: 3rem;
-      height: 3rem;
-      font-size: 1.4rem;
-      border-radius: var(--radius-lg);
-    }
-    .auth-head .page-title {
-      font-size: var(--text-xl);
-    }
-    .auth-head .page-subtitle {
-      margin: 0;
-    }
-    form {
-      max-width: none;
-      gap: var(--space-4);
-    }
     .auth-sep {
       display: flex;
       align-items: center;
       gap: var(--space-3);
       color: var(--text-subtle);
       font-size: var(--text-xs);
+      font-weight: var(--weight-semibold);
       text-transform: uppercase;
       letter-spacing: 0.08em;
     }
@@ -101,12 +68,6 @@ import { I18n } from '../../core/i18n/i18n.service';
       flex: 1;
       height: 1px;
       background: var(--border);
-    }
-    .auth-alt {
-      margin: var(--space-5) 0 0;
-      text-align: center;
-      color: var(--text-muted);
-      font-size: var(--text-sm);
     }
   `,
 })

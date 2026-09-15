@@ -179,8 +179,12 @@ const SPECIALTY_KEYS: Record<string, string> = {
     }
     .specialty:has(input:checked) {
       background: var(--accent-soft);
-      border-color: var(--accent);
+      border-color: color-mix(in srgb, var(--accent) 45%, transparent);
       font-weight: var(--weight-medium);
+    }
+    .specialty:has(input:focus-visible) {
+      outline: 2px solid var(--accent);
+      outline-offset: 2px;
     }
     .card-actions {
       margin-top: 0;

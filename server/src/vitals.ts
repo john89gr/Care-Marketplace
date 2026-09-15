@@ -50,3 +50,101 @@ export function vitalsAlert(
     body: 'Latest reading is outside the expected range — check the trends view.',
   };
 }
+
+export const VITAL_TYPES = [
+  'bloodPressure',
+  'glucose',
+  'spo2',
+  'weight',
+  'heartRate',
+  'temperature',
+] as const;
+
+export type VitalType = (typeof VITAL_TYPES)[number];
+
+export interface VitalStatItem {
+  type: VitalType;
+  latest: number | null;
+  latestValue: number | null;
+  latestValue2: number | null;
+  min: number | null;
+  max: number | null;
+  average: number | null;
+  avg: number | null;
+  count: number;
+  totalCount: number;
+  outOfRangeAlerts: number;
+  outOfRangeCount: number;
+}
+
+export function isVitalOutOfRange(type: string, value: number, value2: number | null = null): boolean {
+  return vitalsAlert(type, value, value2) !== null;
+}
+
+export interface VitalRowLike {
+  type: string;
+  value: number | string;
+  value2?: number | string | null;
+  measured_at_ms: number | string;
+}
+
+export function computeVitalStats(
+  rows: readonly VitalRowLike[],
+  days = 30,
+  nowMs = Date.now()
+): Record<VitalType, VitalStatItem> {
+  const windowMs = days * 24 * 60 * 60 * 1000;
+  const cutoffMs = nowMs - windowMs;
+
+  const result = {} as Record<VitalType, VitalStatItem>;
+
+  for (const type of VITAL_TYPES) {
+    const ofType = rows
+      .filter((r) => r.type === type)
+      .slice()
+      .sort((a, b) => Number(b.measured_at_ms) - Number(a.measured_at_ms));
+
+    const latestRow = ofType[0] ?? null;
+    const latest = latestRow !== null ? Number(latestRow.value) : null;
+    const latestValue2 =
+      latestRow !== null && latestRow.value2 !== null && latestRow.value2 !== undefined
+        ? Number(latestRow.value2)
+        : null;
+
+    const values = ofType.map((r) => Number(r.value));
+    const min = values.length > 0 ? Math.min(...values) : null;
+    const max = values.length > 0 ? Math.max(...values) : null;
+
+    const recent = ofType.filter((r) => Number(r.measured_at_ms) >= cutoffMs);
+    let average: number | null = null;
+    if (recent.length > 0) {
+      const sum = recent.reduce((acc, r) => acc + Number(r.value), 0);
+      average = Math.round((sum / recent.length) * 100) / 100;
+    }
+
+    let alertCount = 0;
+    for (const r of ofType) {
+      const val2 = r.value2 !== null && r.value2 !== undefined ? Number(r.value2) : null;
+      if (vitalsAlert(r.type, Number(r.value), val2) !== null) {
+        alertCount++;
+      }
+    }
+
+    result[type] = {
+      type,
+      latest,
+      latestValue: latest,
+      latestValue2,
+      min,
+      max,
+      average,
+      avg: average,
+      count: ofType.length,
+      totalCount: ofType.length,
+      outOfRangeAlerts: alertCount,
+      outOfRangeCount: alertCount,
+    };
+  }
+
+  return result;
+}

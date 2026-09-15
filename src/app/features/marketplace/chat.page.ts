@@ -171,7 +171,7 @@ import { I18n } from '../../core/i18n/i18n.service';
     }
     .chat-list .conv.active {
       background: var(--accent-soft);
-      border-color: var(--accent);
+      border-color: color-mix(in srgb, var(--accent) 45%, transparent);
       font-weight: var(--weight-semibold);
     }
     .conv-avatar {

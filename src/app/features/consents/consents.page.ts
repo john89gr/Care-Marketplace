@@ -109,7 +109,7 @@ import { ConsentStore, ConsentPurpose, CONSENT_PURPOSES, CONSENT_PURPOSE_LABELS 
     }
     /* .card for the shared surface, .banner for the warning tone. */
     .card.banner {
-      border-color: var(--warning);
+      border-color: color-mix(in srgb, var(--warning) 55%, transparent);
       background: var(--warning-soft);
       color: var(--warning);
       margin-bottom: var(--space-4);

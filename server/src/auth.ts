@@ -200,6 +200,12 @@ export const requireAuth: RequestHandler = (req: Request, res: Response, next: N
   next();
 };
 
+/** Best-effort session user without rejecting (Gov.gr callback may start logged out). */
+export function userFromRequest(req: Request): AuthedUser | null {
+  const token = req.cookies?.[COOKIE_ACCESS] as string | undefined;
+  return token ? verifyToken(token) : null;
+}
+
 /**
  * Express middleware: requires `roles` to include at least one of the given
  * roles. Must run after requireAuth.

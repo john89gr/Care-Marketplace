@@ -42,7 +42,8 @@ import { ROLES, Role } from '../../core/auth/roles';
   imports: [],
   template: `
     <section class="marketplace">
-      <header class="page-header">
+      <header class="hero market-hero">
+        <p class="page-eyebrow">{{ i18n.t('market.eyebrow') }}</p>
         <h1 class="page-title">{{ i18n.t('market.title') }}</h1>
         <p class="page-subtitle">{{ i18n.t('market.subtitle') }}</p>
       </header>
@@ -239,7 +240,7 @@ import { ROLES, Role } from '../../core/auth/roles';
             <li class="card interactive">
               <div class="card-head">
                 <div class="cg-id">
-                  <span class="avatar soft" aria-hidden="true">{{ initials(card.displayName) }}</span>
+                  <span class="avatar" aria-hidden="true">{{ initials(card.displayName) }}</span>
                   <h3>{{ card.displayName }}</h3>
                 </div>
                 <button
@@ -374,11 +375,24 @@ import { ROLES, Role } from '../../core/auth/roles';
     </section>
   `,
   styles: `
+    .market-hero {
+      margin-bottom: var(--space-5);
+    }
+    .market-hero .page-subtitle {
+      font-size: var(--text-md);
+    }
+    /* Search panel: the query takes a full-width row, filters wrap beneath. */
     .filter-bar {
       align-items: flex-end;
+      box-shadow: var(--shadow-md);
     }
     .filter-bar .search-field {
-      flex: 1 1 18rem;
+      flex: 1 1 100%;
+    }
+    .filter-bar input[type='search'] {
+      border-radius: var(--radius-full);
+      font-size: var(--text-md);
+      padding: 0.7rem 1.2rem;
     }
     .filter-actions {
       display: flex;
@@ -400,32 +414,26 @@ import { ROLES, Role } from '../../core/auth/roles';
     .saved {
       margin: var(--space-3) 0 var(--space-4);
     }
+    /* Saved searches read as removable chips. */
     .saved-list {
       list-style: none;
       display: flex;
       flex-wrap: wrap;
-      gap: var(--space-2) var(--space-4);
+      gap: var(--space-2);
       margin: 0;
       padding: 0;
     }
     .saved-list li {
       display: flex;
-      gap: var(--space-2);
-      align-items: baseline;
+      align-items: center;
+      gap: var(--space-1) var(--space-2);
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-full);
+      padding: 0.3rem 0.9rem;
+      box-shadow: var(--shadow-xs);
     }
-    .link {
-      background: none;
-      border: none;
-      color: var(--accent);
-      cursor: pointer;
-      padding: 0;
-      font: inherit;
-      text-decoration: underline;
-    }
-    .link:hover:not(:disabled) {
-      background: none;
-      color: var(--accent-hover);
-    }
+    /* Base link look comes from the global .link class. */
     .link.strong {
       font-weight: var(--weight-semibold);
     }
@@ -439,6 +447,10 @@ import { ROLES, Role } from '../../core/auth/roles';
     .save-form input {
       max-width: 14rem;
     }
+    /* Caregiver cards: roomier surface, gradient identity, tiled facts. */
+    .results .card {
+      padding: var(--space-5);
+    }
     .card-head {
       display: flex;
       align-items: flex-start;
@@ -451,6 +463,12 @@ import { ROLES, Role } from '../../core/auth/roles';
       gap: var(--space-3);
       min-width: 0;
     }
+    .cg-id .avatar {
+      width: 3rem;
+      height: 3rem;
+      font-size: var(--text-md);
+      box-shadow: var(--shadow-sm), var(--shadow-accent);
+    }
     .cg-id h3 {
       margin: 0;
       font-size: var(--text-md);
@@ -459,7 +477,7 @@ import { ROLES, Role } from '../../core/auth/roles';
       display: flex;
       align-items: center;
       flex-wrap: wrap;
-      gap: var(--space-2) var(--space-3);
+      gap: var(--space-2);
       margin: var(--space-3) 0;
       color: var(--text-muted);
       font-size: var(--text-sm);
@@ -468,6 +486,9 @@ import { ROLES, Role } from '../../core/auth/roles';
       display: inline-flex;
       align-items: center;
       gap: 0.35rem;
+      background: var(--surface-raised);
+      border-radius: var(--radius-sm);
+      padding: 0.3rem 0.65rem;
     }
     .fact-icon {
       font-size: var(--text-sm);
@@ -479,16 +500,38 @@ import { ROLES, Role } from '../../core/auth/roles';
       font-variant-numeric: tabular-nums;
     }
     .heart {
+      display: inline-grid;
+      place-items: center;
+      min-width: 2.5rem;
+      min-height: 2.5rem;
       font-size: 1.35rem;
       line-height: 1;
       background: none;
-      border: none;
+      border: 1px solid transparent;
+      border-radius: var(--radius-full);
       cursor: pointer;
-      padding: 0.25rem 0.5rem;
+      padding: 0.25rem;
       color: var(--accent);
+      box-shadow: none;
+      transition:
+        background-color var(--dur-fast) ease,
+        color var(--dur-fast) ease,
+        border-color var(--dur-fast) ease,
+        transform var(--dur-fast) var(--ease);
+    }
+    .heart:hover:not(:disabled) {
+      background: var(--accent-soft);
+      border-color: color-mix(in srgb, var(--accent) 25%, transparent);
+    }
+    .heart:active:not(:disabled) {
+      transform: scale(1.12);
     }
     .heart.active {
       color: var(--danger);
+    }
+    .heart.active:hover:not(:disabled) {
+      background: var(--danger-soft);
+      border-color: color-mix(in srgb, var(--danger) 25%, transparent);
     }
     .reviews {
       margin-top: var(--space-3);
@@ -496,7 +539,12 @@ import { ROLES, Role } from '../../core/auth/roles';
       padding-top: var(--space-3);
     }
     .reviews .list {
-      gap: var(--space-3);
+      gap: var(--space-2);
+    }
+    .reviews .list > li {
+      background: var(--surface-raised);
+      border-radius: var(--radius-md);
+      padding: var(--space-3) var(--space-4);
     }
     .watch {
       color: var(--success);
@@ -520,6 +568,28 @@ import { ROLES, Role } from '../../core/auth/roles';
     }
     button.link.why {
       font-size: var(--text-xs);
+    }
+    .card-actions .btn {
+      flex: 1 1 auto;
+    }
+    @media (min-width: 60rem) {
+      .results {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+    }
+    @media (max-width: 34rem) {
+      .results .card {
+        padding: var(--space-4);
+      }
+      .rename-form,
+      .save-form {
+        flex-wrap: wrap;
+      }
+      .rename-form input,
+      .save-form input {
+        max-width: none;
+        flex: 1 1 100%;
+      }
     }
   `,
 })

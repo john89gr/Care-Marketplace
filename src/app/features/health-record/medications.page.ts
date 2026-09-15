@@ -238,6 +238,7 @@ import {
     .alert-strip {
       background: var(--danger-soft);
       color: var(--danger);
+      border: 1px solid color-mix(in srgb, var(--danger) 25%, transparent);
       border-radius: var(--radius-md);
       padding: 0.6rem 0.9rem;
       margin-bottom: var(--space-3);
@@ -246,6 +247,7 @@ import {
     .refill-strip {
       background: var(--warning-soft);
       color: var(--warning);
+      border: 1px solid color-mix(in srgb, var(--warning) 25%, transparent);
       border-radius: var(--radius-md);
       padding: 0.6rem 0.9rem;
       margin-bottom: var(--space-3);
@@ -258,7 +260,7 @@ import {
       gap: var(--space-3);
     }
     .med.critical {
-      border: 2px solid var(--danger);
+      border: 2px solid color-mix(in srgb, var(--danger) 65%, transparent);
     }
     .med-head {
       display: flex;

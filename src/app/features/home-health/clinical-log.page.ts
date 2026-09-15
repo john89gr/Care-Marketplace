@@ -200,6 +200,8 @@ import { I18n } from '../../core/i18n/i18n.service';
       margin-top: var(--space-3);
       border: 1px solid var(--border);
       border-radius: var(--radius-sm);
+      /* Paper artifact: signature ink is dark, so the pad stays light paper
+         in both themes (deliberately not var(--surface)). */
       background: #fff;
       max-width: 220px;
     }

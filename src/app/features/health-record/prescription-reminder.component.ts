@@ -267,7 +267,9 @@ const WEEKDAY_KEYS: readonly string[] = [
     }
     .chip.warn {
       background: var(--danger);
-      color: #fff;
+      /* Surface (not pure white) keeps contrast in both themes: the dark
+         theme's danger is light, so white text would fail there. */
+      color: var(--surface);
     }
     .note {
       margin: var(--space-1) 0;
@@ -288,19 +290,6 @@ const WEEKDAY_KEYS: readonly string[] = [
       display: flex;
       gap: var(--space-3);
       margin-top: var(--space-3);
-    }
-    .link {
-      background: none;
-      border: none;
-      color: var(--accent);
-      text-decoration: underline;
-      cursor: pointer;
-      padding: 0;
-      font: inherit;
-    }
-    .link:hover:not(:disabled) {
-      background: none;
-      color: var(--accent-hover);
     }
   `,
 })
