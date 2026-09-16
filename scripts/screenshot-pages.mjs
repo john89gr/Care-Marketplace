@@ -30,6 +30,7 @@ const PUBLIC = [
 
 const CLIENT = [
   ['marketplace', '/marketplace'],
+  ['caregiver-detail', '/caregivers/cg-1'],
   ['bookings', '/bookings'],
   ['review', '/review'],
   ['live-visit', '/live-visit'],

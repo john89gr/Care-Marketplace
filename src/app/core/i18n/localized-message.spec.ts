@@ -81,6 +81,7 @@ describe('app-authored message keys', () => {
     'src/app/features/integrations/gov-gr-auth.page.ts',
     'src/app/features/integrations/wallet.store.ts',
     'src/app/features/marketplace/booking.store.ts',
+    'src/app/features/marketplace/caregiver-profile.store.ts',
     'src/app/features/marketplace/chat.store.ts',
     'src/app/features/marketplace/marketplace.store.ts',
     'src/app/features/marketplace/reviews.store.ts',

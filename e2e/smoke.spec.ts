@@ -15,7 +15,7 @@ const SESSIONS = {
 
 const ROUTES: Record<string, string[]> = {
   client: [
-    '/marketplace', '/bookings', '/live-visit', '/vitals', '/health-record',
+    '/marketplace', '/caregivers/cg-1', '/bookings', '/live-visit', '/vitals', '/health-record',
     '/history', '/screenings', '/medications', '/reminders', '/health-summary',
     '/prescriptions', '/pharmacy-orders', '/consents', '/wallet', '/payments',
     '/disputes', '/chat', '/profile',

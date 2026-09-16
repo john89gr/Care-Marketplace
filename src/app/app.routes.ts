@@ -31,6 +31,13 @@ export const routes: Routes = [
     loadComponent: () => import('./features/marketplace/marketplace.page').then((m) => m.MarketplacePage),
   },
   {
+    // Public provider profile — reachable by anyone who can browse, so a
+    // search result can always be opened without signing in.
+    path: 'caregivers/:id',
+    loadComponent: () =>
+      import('./features/marketplace/caregiver-detail.page').then((m) => m.CaregiverDetailPage),
+  },
+  {
     path: 'bookings',
     canActivate: [roleGuard([ROLES.CLIENT, ROLES.CAREGIVER, ROLES.NURSE, ROLES.PHYSIO])],
     loadComponent: () => import('./features/marketplace/booking.page').then((m) => m.BookingPage),

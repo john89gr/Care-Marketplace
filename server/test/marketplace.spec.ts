@@ -336,7 +336,6 @@ describe('caregiver profile retrieval (GET /api/caregivers/:id)', () => {
       rating: 5,
       availableNow: true,
       hourlyRate: 25,
-      specialties: ['Injections', 'Wound care', 'Insulin'],
       profile: {
         licenceNumber: 'ΝΟΣ-2024-Α123',
         hourlyRate: 25,
@@ -352,6 +351,97 @@ describe('caregiver profile retrieval (GET /api/caregivers/:id)', () => {
     expect(Array.isArray(res.body.reviews)).toBe(true);
     expect(res.body.reviews.length).toBeGreaterThanOrEqual(1);
     expect(res.body.reviews.some((r: { id: string }) => r.id === 'rv-1')).toBe(true);
+  });
+
+  it('serves the seed copy in the requested language, keeping the numbers identical', async () => {
+    const en = await request(baseUrl).get('/api/caregivers/u-nurse?lang=en').expect(200);
+    const el = await request(baseUrl).get('/api/caregivers/u-nurse?lang=el').expect(200);
+
+    // Editorial copy follows `?lang=`…
+    expect(en.body.specialties).toContain('Injections & blood draws');
+    expect(el.body.specialties).toContain('Ενέσεις & Αιμοληψίες');
+    expect(en.body.bio).toContain('Evangelismos');
+    expect(el.body.bio).toContain('Ευαγγελισμός');
+
+    // …including the detail-page fields behind /caregivers/:id.
+    expect(en.body.city).toBe('Athens — Kolonaki');
+    expect(el.body.city).toBe('Αθήνα — Κολωνάκι');
+    expect(en.body.education).toContain('BSc Nursing');
+    expect(el.body.education).toContain('Πτυχίο Νοσηλευτικής');
+    expect(en.body.services.map((s: { name: string }) => s.name)).toContain('Injection at home');
+    expect(el.body.services.map((s: { name: string }) => s.name)).toContain('Ένεση στο σπίτι');
+    expect(en.body.experienceYears).toBe(10);
+    expect(en.body.responseMinutes).toBeGreaterThan(0);
+    expect(en.body.repeatClients).toBeGreaterThan(0);
+    expect(en.body.verified).toBe(true);
+    expect(typeof en.body.memberSinceMs).toBe('number');
+
+    // Language names stay endonyms, so they read the same in both responses.
+    expect(en.body.languages).toEqual(el.body.languages);
+
+    // Only the copy differs — every number, id and flag is language-independent.
+    for (const key of [
+      'id',
+      'displayName',
+      'roles',
+      'rating',
+      'reviewCount',
+      'distanceKm',
+      'hourlyRate',
+      'availableNow',
+      'lat',
+      'lng',
+      'completedVisits',
+      'recentCancellations',
+      'expiresAtMs',
+      'experienceYears',
+      'responseMinutes',
+      'repeatClients',
+      'verified',
+      'memberSinceMs',
+      'languages',
+    ]) {
+      expect(en.body[key], key).toEqual(el.body[key]);
+    }
+  });
+
+  it('serves seeded review comments in the requested language', async () => {
+    const en = await request(baseUrl).get('/api/caregivers/u-nurse/reviews?lang=en').expect(200);
+    const el = await request(baseUrl).get('/api/caregivers/u-nurse/reviews?lang=el').expect(200);
+
+    const enReview = en.body.find((r: { id: string }) => r.id === 'rv-1');
+    const elReview = el.body.find((r: { id: string }) => r.id === 'rv-1');
+    expect(enReview.comment).toBe('Impeccable care, very reliable.');
+    expect(elReview.comment).toBe('Άψογη φροντίδα, πολύ συνεπής.');
+    expect(enReview.rating).toBe(elReview.rating);
+  });
+
+  it('matches free-text search in either language', async () => {
+    const english = await request(baseUrl)
+      .get('/api/caregivers/search?query=Injections')
+      .expect(200);
+    const greek = await request(baseUrl)
+      .get('/api/caregivers/search?query=Ενέσεις')
+      .expect(200);
+    expect(english.body.map((c: { id: string }) => c.id)).toContain('u-nurse');
+    expect(greek.body.map((c: { id: string }) => c.id)).toContain('u-nurse');
+  });
+
+  it('falls back to the other locale when a translation is missing', async () => {
+    // `u-expired` is a fixture with no `profile` bundle, so its legacy
+    // single-language columns have to carry both requests.
+    await query(
+      `INSERT INTO caregivers (id, display_name, roles, rating, distance_km, hourly_rate, available_now, specialties, lat, lng, completed_visits, recent_cancellations, expires_at_ms, bio, languages, gender)
+       VALUES ('u-locale-fallback', 'Fallback Fixture', '{"caregiver"}', 4.0, 4, 19, TRUE, '{Companionship}', 37.98, 23.73, 1, 0, $1, 'Legacy bio only.', '{"Ελληνικά"}', '')
+       ON CONFLICT (id) DO NOTHING`,
+      [Date.now() + 30 * 24 * 60 * 60 * 1000]
+    );
+    const res = await request(baseUrl)
+      .get('/api/caregivers/u-locale-fallback?lang=el')
+      .expect(200);
+    expect(res.body.bio).toBe('Legacy bio only.');
+    expect(res.body.specialties).toEqual(['Companionship']);
+    await query(`DELETE FROM caregivers WHERE id = 'u-locale-fallback'`);
   });
 });
 
@@ -420,6 +510,12 @@ describe('caregiver review creation alias (POST /api/caregivers/:id/reviews)', (
     );
     await query(`DELETE FROM reviews WHERE booking_id = $1`, [bookingId]);
 
+    const before = await request(baseUrl).get('/api/caregivers/u-physio').expect(200);
+    const baseline = {
+      reviewCount: before.body.reviewCount as number,
+      ratingBreakdownFive: before.body.ratingBreakdown[5] as number,
+    };
+
     const created = await client
       .post('/api/caregivers/u-physio/reviews')
       .send({ bookingId, rating: 5, comment: 'Excellent physiotherapy session!' })
@@ -433,11 +529,13 @@ describe('caregiver review creation alias (POST /api/caregivers/:id/reviews)', (
       status: 'published',
     });
 
-    // Profile detail now shows the newly added review and updated breakdown
+    // Profile detail now shows the newly added review and updated breakdown.
+    // Asserted relative to the baseline, so the assertions stay true however
+    // many reviews the seed ships for this caregiver.
     const detail = await request(baseUrl).get('/api/caregivers/u-physio').expect(200);
     expect(detail.body.rating).toBe(5);
-    expect(detail.body.reviewCount).toBe(1);
-    expect(detail.body.ratingBreakdown[5]).toBe(1);
+    expect(detail.body.reviewCount).toBe(baseline.reviewCount + 1);
+    expect(detail.body.ratingBreakdown[5]).toBe(baseline.ratingBreakdownFive + 1);
     expect(detail.body.reviews.some((r: { id: string }) => r.id === created.body.id)).toBe(true);
 
     // Clean up

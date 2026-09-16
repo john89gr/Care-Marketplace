@@ -38,13 +38,29 @@ across navigation. To disable, remove that key from storage (e.g. DevTools →
 Application → Local Storage, or `localStorage.removeItem('cm.demo.v1')` in the
 console).
 
-Demo accounts (any password works):
+Demo accounts (any password works against the demo backend) — ten accounts
+covering every role. The login page lists them as one-click sign-ins from
+`GET /api/demo/accounts`. **Both** runtimes answer it: the demo backend returns
+its in-memory roster, and the Express server returns the accounts actually
+seeded in `user_accounts` — so the picker can never advertise a login that does
+not work. The Express route is a convenience, not a feature: it hands out the
+shared seeded password, so it is disabled in production (`404`, which the login
+page already treats as "no picker here") unless `ALLOW_DEMO_ACCOUNTS=1` is set.
 
-| Email                 | Role      |
-| --------------------- | --------- |
-| `maria@example.com`   | Client    |
-| `elena@example.com`   | Nurse     |
-| `admin@example.com`   | Admin     |
+Against the demo backend:
+
+| Email                   | Role           | Notes                                     |
+| ----------------------- | -------------- | ----------------------------------------- |
+| `maria@example.com`     | Client         | Seeded family account (bookings, health record) |
+| `georgios@example.com`  | Client         | Second family account (family sharing)     |
+| `elena@example.com`     | Nurse          | Provider `cg-1` — licence expiring soon    |
+| `kostas@example.com`    | Nurse          | Provider `cg-4`                            |
+| `nikos@example.com`     | Caregiver      | Provider `cg-2`                            |
+| `sofia@example.com`     | Caregiver      | Provider `cg-5`                            |
+| `anna@example.com`      | Physiotherapist| Provider `cg-3` — lapsed licence (hidden from search) |
+| `dimitris@example.com`  | Physiotherapist| Provider `cg-6`                            |
+| `admin@example.com`     | Admin          | Vetting, audit ledger, consent ledger      |
+| `pharmacy@example.com`  | Pharmacy       | Order queue + fulfilment actions           |
 
 Demo mode also fakes the chat/visits WebSocket: chat messages get an automatic
 peer reply and visit positions are broadcast back to listeners.
@@ -75,6 +91,34 @@ so there is no locale-prefixed routing and no build per language.
 
 `src/app/core/i18n/i18n.service.spec.ts` enforces dictionary parity: adding a
 key to `en` without `el` fails the unit suite.
+
+### Content, not just chrome
+
+The dictionary translates *chrome*. **Content** — provider bios, cities,
+education, specialities, service names, review comments, care-plan goals and
+notes, booking notes, partner pharmacy names — lives in the database, so the
+browser cannot translate it. The client asks the server for the language it is
+displaying:
+
+- `src/app/core/i18n/locale.interceptor.ts` appends `?lang=el` to `/api/**`
+  requests whenever the active locale is not the server default (English).
+  Canonical URLs therefore stay clean, and an explicit `?lang=` on the URL wins.
+- The server resolves it in `server/src/locale.ts` (`?lang=` → `Accept-Language`
+  → English) and renders plain strings — no response shape changes. Bilingual
+  copy is stored as JSONB (`caregivers.profile`, `reviews.comment_i18n`) and
+  resolved with `pick()` / `pickList()`, which accept a legacy plain string too.
+  `searchableText()` makes free-text search span *both* locales, so «Ενέσεις»
+  and "Injections" find the same provider.
+- The demo backend mirrors this: `src/app/core/api/demo-content.ts` holds the
+  Greek side of its dataset and `demo.api.ts` overlays it per request.
+- Because the data is fetched, switching language has to re-fetch it. Pages call
+  `reloadOnLanguageChange()` (`src/app/core/i18n/content-locale.ts`) from their
+  constructor — the round trip is covered by
+  `e2e/phase5-bilingual-content.spec.ts`.
+
+One trap worth knowing: an interceptor that adds params sets `req.params`, which
+never appears in `req.url` — only in `urlWithParams`. The demo backend reads the
+latter.
 
 ### Messages authored by stores
 
@@ -166,11 +210,12 @@ spacing, radius, elevation, motion, type scale) plus reusable component classes
   offline/sync banners) are kept deliberately in a section at the bottom of the
   stylesheet for the few remaining call sites.
 
-Converted: every routed page — auth, marketplace, booking, review, chat,
-profile, onboarding, visits, shifts, care plan, clinical log, the health-record
-dashboards (vitals, screenings, medications, history, contacts, export),
-prescriptions, pharmacy + orders, payments, disputes + admin queue, wallet,
-Gov.gr, consents, admin, audit and consents admin.
+Converted: every routed page — auth, marketplace, the provider profile
+(`/caregivers/:id`), booking, review, chat, profile, onboarding, visits,
+shifts, care plan, clinical log, the health-record dashboards (vitals,
+screenings, medications, history, contacts, export), prescriptions, pharmacy +
+orders, payments, disputes + admin queue, wallet, Gov.gr, consents, admin,
+audit and consents admin.
 
 ## Real API server + Postgres
 
@@ -381,6 +426,16 @@ completed booking, ratings with review counts show on marketplace cards
 (expandable review lists with report/moderation), and admins moderate
 flagged reviews from the admin console.
 
+Provider profiles (**complete**): every provider has a public detail page at
+`/caregivers/:id`, opened from a marketplace card's "View profile". It shows
+the hero (rating, roles, availability, hourly rate, licence state), stats,
+about/education/languages/specialities, priced services, and the full reviews
+system — average, a 5★→1★ distribution, star filtering, free-text search and
+ordering, plus an inline write-a-review panel offered for a completed visit
+with that provider. Aggregation is pure (`review-stats.ts`), scoped by role
+(non-clients get a sign-in prompt rather than a form), and only published
+reviews ever count.
+
 Saved searches & favorites (FEATURE_PLAN.md §2 — **complete**): searches are
 deep-linkable (filters sync to URL params and are restored on reload), the
 current filters can be saved under an auto-generated or custom name and
@@ -495,7 +550,7 @@ src/app/
   shared/        # FHIR R4 mappers + bundle/validator, validators, signature pad, utils
   features/
     auth/        # login, register, forbidden
-    marketplace/ # search, matching, bookings, chat
+    marketplace/ # search, matching, provider profile, bookings, chat, reviews
     profiles/    # role-aware profile forms
     vetting/     # licence submission + admin review queue
     home-health/ # shifts, visits, live tracking, clinical log, care plan

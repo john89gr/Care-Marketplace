@@ -3,6 +3,7 @@ import { Router } from '@angular/router';
 import { Subscription } from 'rxjs';
 import { SessionStore } from '../../core/auth/session';
 import { I18n } from '../../core/i18n/i18n.service';
+import { reloadOnLanguageChange } from '../../core/i18n/content-locale';
 import { WebSocketClient } from '../../core/services/ws/websocket.client';
 import { PushService } from '../../core/services/push/push.service';
 import { BookingStore, BookingRecord } from './booking.store';
@@ -342,6 +343,15 @@ export class BookingPage implements OnInit, OnDestroy {
       completed: this.visibleBookings().filter((b) => b.status === 'completed').length,
     })
   );
+
+  constructor() {
+    // Booking notes and review comments are backend content, so a language
+    // switch re-fetches them rather than leaving the old wording on screen.
+    reloadOnLanguageChange(() => {
+      this.store.load();
+      this.reviews.loadAll();
+    });
+  }
 
   ngOnInit(): void {
     this.store.load();

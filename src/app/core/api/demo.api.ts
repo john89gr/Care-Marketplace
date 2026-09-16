@@ -8,6 +8,16 @@ import {
 } from '@angular/common/http';
 import { Observable, mergeMap, of, throwError } from 'rxjs';
 import { isDemoMode } from './demo.mode';
+import {
+  BOOKING_NOTE_EL,
+  CAREGIVER_COPY_EL,
+  CARE_GOAL_EL,
+  CARE_NOTE_EL,
+  DemoLang,
+  parseDemoLang,
+  PHARMACY_EL,
+  REVIEW_COMMENT_EL,
+} from './demo-content';
 
 /**
  * In-memory demo backend (PLAN.md §6 / §7 Open Question 1: no real backend
@@ -15,6 +25,11 @@ import { isDemoMode } from './demo.mode';
  * Phase 1 + Phase 2 loop works in the browser: register/login → search →
  * book (escrow hold) → vetting → shift availability → visit check-in/out
  * (escrow release).
+ *
+ * Bilingual, like the real server: *content* is rendered in the language the
+ * caller asked for (`?lang=en|el`, attached by the locale interceptor) and the
+ * Greek side lives in `./demo-content`. Responses keep their exact shape, so
+ * switching language changes the words and nothing else.
  */
 
 interface DemoUser {
@@ -514,6 +529,8 @@ const hour = 60 * 60 * 1000;
 const dayMs = 24 * 60 * 60 * 1000;
 /** 10 MB cap for chat uploads (FEATURE_PLAN.md §18 subtask 2). */
 const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
+/** Password suggested by the demo account picker (demo login accepts any). */
+const DEMO_PASSWORD = 'demo1234';
 
 /** Local yyyy-mm-dd key for a timestamp (medication dates + refill estimates). */
 function demoDateKey(ms: number): string {
@@ -523,6 +540,22 @@ function demoDateKey(ms: number): string {
   return `${d.getFullYear()}-${mm}-${dd}`;
 }
 
+/** Minimal 1×1 transparent PNG data URL for seed images. */
+const PNG_PIXEL =
+  'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==';
+
+/** Minimal valid PDF data URL for seed documents. */
+const PDF_BLOB =
+  'data:application/pdf;base64,JVBERi0xLjQKMSAwIG9iago8PAovVHlwZSAvQ2F0YWxvZwovUGFnZXMgMiAwIFIKPj4KZW5kb2JqCjIgMCBvYmoKPDwKL1R5cGUgL1BhZ2VzCi9LaWRzIFszIDAgUl0KL0NvdW50IDEKPj4KZW5kb2JqCjMgMCBvYmoKPDwKL1R5cGUgL1BhZ2UKL1BhcmVudCAyIDAgUgovTWVkaWFCb3ggWzAgMCA2MTIgNzkyXQo+PgplbmRvYmoKeHJlZgowIDQKMDAwMDAwMDAwMCA2NTUzNSBmIAowMDAwMDAwMDQ5IDAwMDAwIG4gCjAwMDAwMDAxMTUgMDAwMDAgbiAKMDAwMDAwMDIwOCAwMDAwMCBuIAp0cmFpbGVyCjw8Ci9TaXplIDQKL1Jvb3QgMSAwIFIKPj4Kc3RhcnR4cmVmCjMwMAolJUVPRgo=';
+
+/**
+ * The mutable demo dataset.
+ *
+ * Note the ordering constraint: `state` calls the seed builders below *at
+ * module evaluation*, and those builders read the data-URL constants above.
+ * Any constant a builder touches therefore has to be declared before `state`,
+ * or it is still in its temporal dead zone when the seed runs.
+ */
 const state: {
   users: DemoUser[];
   submissions: DemoSubmission[];
@@ -556,9 +589,22 @@ const state: {
   pushSubscriptions: Record<string, DemoPushSubscription>;
   session: DemoUser | null;
 } = {
+  // ---- Demo account roster -------------------------------------------------
+  // Ten sign-in accounts covering every role (any password works), so each
+  // capability of the product is one click away. The provider accounts below
+  // (`u-nurse` … `u-physio-2`) map onto marketplace cards `cg-1` … `cg-6`,
+  // which is what makes "a detail page for every provider" demo-able: sign in
+  // as the provider to see their own side, sign in as a family to book them.
   users: [
     { userId: 'u-client', displayName: 'Maria Papadopoulou', email: 'maria@example.com', roles: ['client'] },
+    // Second family account: relatives who share care duties (family sharing).
+    { userId: 'u-client-2', displayName: 'Georgios Papadopoulos', email: 'georgios@example.com', roles: ['client'] },
     { userId: 'u-nurse', displayName: 'Elena Papadaki', email: 'elena@example.com', roles: ['nurse'] },
+    { userId: 'u-nurse-2', displayName: 'Kostas Nikolaou', email: 'kostas@example.com', roles: ['nurse'] },
+    { userId: 'u-caregiver', displayName: 'Nikos Georgiou', email: 'nikos@example.com', roles: ['caregiver'] },
+    { userId: 'u-caregiver-2', displayName: 'Sofia Alexiou', email: 'sofia@example.com', roles: ['caregiver'] },
+    { userId: 'u-physio', displayName: 'Anna Karakosta', email: 'anna@example.com', roles: ['physio'] },
+    { userId: 'u-physio-2', displayName: 'Dimitris Rallis', email: 'dimitris@example.com', roles: ['physio'] },
     { userId: 'u-admin', displayName: 'Admin', email: 'admin@example.com', roles: ['admin'] },
     // §9 pharmacy partner: sees the full order queue (all clients) + fulfilment actions.
     { userId: 'u-pharmacy', displayName: 'Syntagma Central Pharmacy', email: 'pharmacy@example.com', roles: ['pharmacy'] },
@@ -741,6 +787,9 @@ const state: {
       detail: 'Accepted by the provider',
     },
   ],
+  // Seeded review ledger. Reviews a provider's detail page renders are
+  // authored by other families (`u-client-2`, `u-reviewer-*`) and reference
+  // seed bookings, so they never block the demo client's own review targets.
   reviews: [
     {
       id: 'rv-1',
@@ -752,6 +801,149 @@ const state: {
       comment: 'Punctual, gentle and very professional with the dressing.',
       createdAtMs: now() - 8 * 24 * hour,
       status: 'published',
+    },
+    {
+      id: 'rv-2',
+      caregiverId: 'cg-1',
+      bookingId: 'b-seed-cg1-a',
+      authorId: 'u-reviewer-1',
+      authorName: 'Katerina Vlachou',
+      rating: 5,
+      comment: 'She arrived exactly on time, explained every step to my mother and stayed until the glucose reading came back normal. I finally stopped worrying.',
+      createdAtMs: now() - 21 * 24 * hour,
+      status: 'published',
+    },
+    {
+      id: 'rv-3',
+      caregiverId: 'cg-1',
+      bookingId: 'b-seed-cg1-b',
+      authorId: 'u-reviewer-2',
+      authorName: 'Petros Manolis',
+      rating: 4,
+      comment: 'Very good clinical care after my father\u2019s knee operation. Traffic made her 10 minutes late once, but she called ahead.',
+      createdAtMs: now() - 40 * 24 * hour,
+      status: 'published',
+    },
+    {
+      id: 'rv-4',
+      caregiverId: 'cg-1',
+      bookingId: 'b-seed-cg1-c',
+      authorId: 'u-reviewer-3',
+      authorName: 'Ioanna Davaki',
+      rating: 5,
+      comment: 'She noticed a pressure sore the hospital team had missed and flagged it the same day. That is the kind of attention you cannot hire twice.',
+      createdAtMs: now() - 63 * 24 * hour,
+      status: 'published',
+    },
+    {
+      id: 'rv-5',
+      caregiverId: 'cg-2',
+      bookingId: 'b-seed-cg2-a',
+      authorId: 'u-client-2',
+      authorName: 'Georgios Papadopoulos',
+      rating: 5,
+      comment: 'He took my uncle for a walk every morning and the change in mood was visible within two weeks.',
+      createdAtMs: now() - 12 * 24 * hour,
+      status: 'published',
+    },
+    {
+      id: 'rv-6',
+      caregiverId: 'cg-2',
+      bookingId: 'b-seed-cg2-b',
+      authorId: 'u-reviewer-4',
+      authorName: 'Stavros Theodorou',
+      rating: 3,
+      comment: 'Kind and patient, but he had to reschedule twice at short notice. When he did come, the visit was genuinely good.',
+      createdAtMs: now() - 55 * 24 * hour,
+      status: 'published',
+    },
+    {
+      id: 'rv-7',
+      caregiverId: 'cg-3',
+      bookingId: 'b-seed-cg3-a',
+      authorId: 'u-reviewer-2',
+      authorName: 'Petros Manolis',
+      rating: 5,
+      comment: 'The home programme was short enough that my mother actually does it. Six weeks in, she is standing up without help.',
+      createdAtMs: now() - 18 * 24 * hour,
+      status: 'published',
+    },
+    {
+      id: 'rv-8',
+      caregiverId: 'cg-4',
+      bookingId: 'b-seed-cg4-a',
+      authorId: 'u-reviewer-5',
+      authorName: 'Fotini Samara',
+      rating: 5,
+      comment: 'Catheter changes at home instead of a taxi to the hospital every fortnight. Calm, sterile, and he writes everything down.',
+      createdAtMs: now() - 9 * 24 * hour,
+      status: 'published',
+    },
+    {
+      id: 'rv-9',
+      caregiverId: 'cg-4',
+      bookingId: 'b-seed-cg4-b',
+      authorId: 'u-reviewer-6',
+      authorName: 'Alexis Boutos',
+      rating: 4,
+      comment: 'Good with my father after surgery. He explains the wound care to us clearly so we are not guessing between visits.',
+      createdAtMs: now() - 33 * 24 * hour,
+      status: 'published',
+    },
+    {
+      id: 'rv-10',
+      caregiverId: 'cg-4',
+      bookingId: 'b-seed-cg4-c',
+      authorId: 'u-reviewer-7',
+      authorName: 'Chrysa Mela',
+      rating: 5,
+      comment: 'Measured my mother\u2019s blood pressure and pulse, then rang the cardiologist himself when it was out of range. Thorough.',
+      createdAtMs: now() - 74 * 24 * hour,
+      status: 'published',
+    },
+    {
+      id: 'rv-11',
+      caregiverId: 'cg-5',
+      bookingId: 'b-seed-cg5-a',
+      authorId: 'u-client-2',
+      authorName: 'Georgios Papadopoulos',
+      rating: 5,
+      comment: 'She keeps to the same routine every single visit, which is exactly what my grandmother needs. Never rushes her.',
+      createdAtMs: now() - 6 * 24 * hour,
+      status: 'published',
+    },
+    {
+      id: 'rv-12',
+      caregiverId: 'cg-5',
+      bookingId: 'b-seed-cg5-b',
+      authorId: 'u-reviewer-1',
+      authorName: 'Katerina Vlachou',
+      rating: 4,
+      comment: 'Warm and reliable. I would have liked more notice on the days she swapped with a colleague, but the care itself was excellent.',
+      createdAtMs: now() - 48 * 24 * hour,
+      status: 'published',
+    },
+    {
+      id: 'rv-13',
+      caregiverId: 'cg-6',
+      bookingId: 'b-seed-cg6-a',
+      authorId: 'u-reviewer-3',
+      authorName: 'Ioanna Davaki',
+      rating: 4,
+      comment: 'Got my husband training with resistance bands at home after a football injury. Practical, no gimmicks.',
+      createdAtMs: now() - 15 * 24 * hour,
+      status: 'published',
+    },
+    {
+      id: 'rv-14',
+      caregiverId: 'cg-1',
+      bookingId: 'b-seed-cg1-d',
+      authorId: 'u-reviewer-6',
+      authorName: 'Alexis Boutos',
+      rating: 1,
+      comment: 'Reported by the family for a phone left ringing on the doorstep — pending moderator review.',
+      createdAtMs: now() - 4 * 24 * hour,
+      status: 'flagged',
     },
   ],
   savedSearches: [
@@ -1084,14 +1276,6 @@ function hydrateDemoSession(): void {
     // Storage unavailable — leave the in-memory session as-is.
   }
 }
-
-/** Minimal 1×1 transparent PNG data URL for seed images. */
-const PNG_PIXEL =
-  'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==';
-
-/** Minimal valid PDF data URL for seed documents. */
-const PDF_BLOB =
-  'data:application/pdf;base64,JVBERi0xLjQKMSAwIG9iago8PAovVHlwZSAvQ2F0YWxvZwovUGFnZXMgMiAwIFIKPj4KZW5kb2JqCjIgMCBvYmoKPDwKL1R5cGUgL1BhZ2VzCi9LaWRzIFszIDAgUl0KL0NvdW50IDEKPj4KZW5kb2JqCjMgMCBvYmoKPDwKL1R5cGUgL1BhZ2UKL1BhcmVudCAyIDAgUgovTWVkaWFCb3ggWzAgMCA2MTIgNzkyXQo+PgplbmRvYmoKeHJlZgowIDQKMDAwMDAwMDAwMCA2NTUzNSBmIAowMDAwMDAwMDQ5IDAwMDAwIG4gCjAwMDAwMDAxMTUgMDAwMDAgbiAKMDAwMDAwMDIwOCAwMDAwMCBuIAp0cmFpbGVyCjw8Ci9TaXplIDQKL1Jvb3QgMSAwIFIKPj4Kc3RhcnR4cmVmCjMwMAolJUVPRgo=';
 
 function seededWalletDocs(): DemoWalletDocument[] {
   return [
@@ -1766,24 +1950,239 @@ interface DemoCarePlan {
   updatedBy: string;
 }
 
-const caregivers = [
+/** One priced service on a provider's detail page. */
+interface DemoService {
+  name: string;
+  /** Euro per session. */
+  price: number;
+  durationMin: number;
+}
+
+/**
+ * A marketplace provider card. The first fields are what search ranking and
+ * the result cards need; the rest feed the public detail page
+ * (`/caregivers/:id`). Optional so a legacy/short payload still type-checks.
+ */
+interface DemoCaregiver {
+  id: string;
+  displayName: string;
+  roles: string[];
+  rating: number;
+  distanceKm: number;
+  hourlyRate: number;
+  availableNow: boolean;
+  specialties: string[];
+  lat: number;
+  lng: number;
+  completedVisits: number;
+  recentCancellations: number;
+  /** §14: most-urgent licence/certificate expiry; null = lifetime/unknown. */
+  expiresAtMs?: number | null;
+  bio?: string;
+  city?: string;
+  languages?: string[];
+  experienceYears?: number;
+  /** Typical first-response time, in minutes. */
+  responseMinutes?: number;
+  /** Clients who booked more than once. */
+  repeatClients?: number;
+  verified?: boolean;
+  education?: string;
+  memberSinceMs?: number;
+  services?: DemoService[];
+}
+
+/** A provider card plus its published-review count and derived rating. */
+function withProfileExtras(caregiver: DemoCaregiver): DemoCaregiver & { reviewCount: number } {
+  const published = state.reviews.filter(
+    (r) => r.caregiverId === caregiver.id && r.status === 'published'
+  );
+  return { ...caregiver, reviewCount: published.length };
+}
+
+// ---- Content localisation ---------------------------------------------------
+// Every helper below renders an existing record in the requested language,
+// leaving the stored record untouched. Only the *copy* changes: ids, prices,
+// durations, statuses and timestamps are language-independent and stay owned
+// by the dataset, which is what keeps the two languages from drifting apart.
+
+/** Provider bio, city, education, specialities and service names. */
+function localizedCaregiver(caregiver: DemoCaregiver, lang: DemoLang): DemoCaregiver {
+  if (lang === 'en') {
+    return caregiver;
+  }
+  const copy = CAREGIVER_COPY_EL[caregiver.id];
+  if (!copy) {
+    return caregiver;
+  }
+  return {
+    ...caregiver,
+    bio: copy.bio,
+    city: copy.city,
+    education: copy.education,
+    specialties: copy.specialties.length > 0 ? copy.specialties : caregiver.specialties,
+    // Service names align by index; the price and duration stay with the
+    // dataset so a translated name can never change what a visit costs.
+    services: caregiver.services?.map((service, index) => ({
+      ...service,
+      name: copy.services[index] ?? service.name,
+    })),
+  };
+}
+
+/** A review's comment (the author's own words are kept verbatim). */
+function localizedReview(review: DemoReview, lang: DemoLang): DemoReview {
+  const comment = lang === 'el' ? REVIEW_COMMENT_EL[review.id] : undefined;
+  return comment ? { ...review, comment } : review;
+}
+
+/** Care-plan goal and note text. */
+function localizedCarePlan(plan: DemoCarePlan, lang: DemoLang): DemoCarePlan {
+  if (lang === 'en') {
+    return plan;
+  }
+  return {
+    ...plan,
+    goals: plan.goals.map((goal) => ({
+      ...goal,
+      text: CARE_GOAL_EL[goal.id] ?? goal.text,
+    })),
+    notes: plan.notes.map((note) => ({
+      ...note,
+      text: CARE_NOTE_EL[note.id] ?? note.text,
+    })),
+  };
+}
+
+/** Short booking note (e.g. "Morning insulin injection"). */
+function localizedBooking(booking: DemoBooking, lang: DemoLang): DemoBooking {
+  const note = lang === 'el' ? BOOKING_NOTE_EL[booking.id] : undefined;
+  return note ? { ...booking, note } : booking;
+}
+
+/** A pharmacy order's partner name, rendered in the requested language. */
+function localizedPharmacyOrder(
+  order: DemoPharmacyOrder,
+  lang: DemoLang
+): DemoPharmacyOrder {
+  const copy = lang === 'el' && order.pharmacyId ? PHARMACY_EL[order.pharmacyId] : undefined;
+  return copy ? { ...order, pharmacyName: copy.name } : order;
+}
+
+const caregivers: DemoCaregiver[] = [
   {
     id: 'cg-1', displayName: 'Elena Papadaki', roles: ['nurse'], rating: 4.8, distanceKm: 3, hourlyRate: 25, availableNow: true,
     specialties: ['Injections', 'Wound care', 'Insulin'], lat: 37.9838, lng: 23.7275, completedVisits: 34, recentCancellations: 0,
     // §14: licence expiring in 14 days → visible but flagged "expiring soon".
     expiresAtMs: now() + 14 * 24 * hour,
+    bio: 'Registered nurse with 12 years in home care. I specialise in insulin therapy and post-operative wound care, and I keep families in the loop after every visit.',
+    city: 'Athens — Syntagma',
+    languages: ['Ελληνικά', 'English'],
+    experienceYears: 12,
+    responseMinutes: 12,
+    repeatClients: 21,
+    verified: true,
+    education: 'BSc Nursing, National and Kapodistrian University of Athens',
+    memberSinceMs: now() - 3 * 365 * 24 * hour,
+    services: [
+      { name: 'Injection at home', price: 25, durationMin: 30 },
+      { name: 'Wound dressing & care', price: 30, durationMin: 45 },
+      { name: 'Medication review', price: 20, durationMin: 20 },
+    ],
   },
   {
     id: 'cg-2', displayName: 'Nikos Georgiou', roles: ['caregiver'], rating: 4.2, distanceKm: 12, hourlyRate: 15, availableNow: false,
     specialties: ['Companionship', 'Personal care'], lat: 37.9420, lng: 23.6460, completedVisits: 6, recentCancellations: 2,
     // §14: valid licence for over a year.
     expiresAtMs: now() + 365 * 24 * hour,
+    bio: 'I keep older adults company the way a good neighbour would: walks, errands, cooking together and honest conversation. Patient and calm with memory loss.',
+    city: 'Piraeus',
+    languages: ['Ελληνικά'],
+    experienceYears: 4,
+    responseMinutes: 45,
+    repeatClients: 5,
+    verified: true,
+    education: 'Caregiver certification, IEK Piraeus',
+    memberSinceMs: now() - 400 * 24 * hour,
+    services: [
+      { name: 'Companionship visit', price: 15, durationMin: 60 },
+      { name: 'Personal care & hygiene', price: 18, durationMin: 60 },
+      { name: 'Errands & shopping', price: 12, durationMin: 45 },
+    ],
   },
   {
     id: 'cg-3', displayName: 'Anna Karakosta', roles: ['physio'], rating: 4.9, distanceKm: 5, hourlyRate: 30, availableNow: true,
     specialties: ['Post-stroke rehab', 'Mobility'], lat: 37.9755, lng: 23.7348, completedVisits: 21, recentCancellations: 0,
     // §14: lapsed licence (5 days past) → auto-hidden from marketplace search.
     expiresAtMs: now() - 5 * 24 * hour,
+    bio: 'Physiotherapist focused on neurological rehabilitation. I build short, realistic home programmes that a family can actually keep up between sessions.',
+    city: 'Athens — Kolonaki',
+    languages: ['Ελληνικά', 'English', 'Deutsch'],
+    experienceYears: 9,
+    responseMinutes: 25,
+    repeatClients: 14,
+    verified: true,
+    education: 'MSc Neurological Rehabilitation, University of Thessaly',
+    memberSinceMs: now() - 2 * 365 * 24 * hour,
+    services: [
+      { name: 'Post-stroke rehabilitation', price: 30, durationMin: 45 },
+      { name: 'Mobility & balance training', price: 28, durationMin: 45 },
+    ],
+  },
+  {
+    id: 'cg-4', displayName: 'Kostas Nikolaou', roles: ['nurse'], rating: 4.6, distanceKm: 7, hourlyRate: 28, availableNow: true,
+    specialties: ['Catheter care', 'Post-op care', 'Vitals'], lat: 37.9880, lng: 23.7620, completedVisits: 18, recentCancellations: 0,
+    expiresAtMs: now() + 210 * 24 * hour,
+    bio: 'Home nurse for surgical recovery and long-term catheter care. I document every reading so the treating doctor sees the same picture I do.',
+    city: 'Athens — Ampelokipi',
+    languages: ['Ελληνικά', 'English'],
+    experienceYears: 8,
+    responseMinutes: 18,
+    repeatClients: 11,
+    verified: true,
+    education: 'BSc Nursing, University of Patras',
+    memberSinceMs: now() - 18 * 30 * 24 * hour,
+    services: [
+      { name: 'Catheter care', price: 32, durationMin: 40 },
+      { name: 'Post-operative care', price: 35, durationMin: 60 },
+      { name: 'Vitals & blood pressure check', price: 20, durationMin: 25 },
+    ],
+  },
+  {
+    id: 'cg-5', displayName: 'Sofia Alexiou', roles: ['caregiver'], rating: 4.7, distanceKm: 9, hourlyRate: 17, availableNow: true,
+    specialties: ['Dementia care', 'Meal preparation'], lat: 37.9600, lng: 23.7100, completedVisits: 27, recentCancellations: 1,
+    expiresAtMs: now() + 150 * 24 * hour,
+    bio: 'Dementia-trained companion. I work on routine and reassurance — the same face, the same hour, the same cup of coffee — because familiarity is what carries the day.',
+    city: 'Athens — Koukaki',
+    languages: ['Ελληνικά'],
+    experienceYears: 6,
+    responseMinutes: 30,
+    repeatClients: 19,
+    verified: true,
+    education: 'Dementia care certificate, Alzheimer Hellas',
+    memberSinceMs: now() - 500 * 24 * hour,
+    services: [
+      { name: 'Dementia companionship', price: 17, durationMin: 60 },
+      { name: 'Meal preparation', price: 14, durationMin: 45 },
+    ],
+  },
+  {
+    id: 'cg-6', displayName: 'Dimitris Rallis', roles: ['physio'], rating: 4.4, distanceKm: 15, hourlyRate: 33, availableNow: false,
+    specialties: ['Sports injury', 'Mobility'], lat: 37.9300, lng: 23.6800, completedVisits: 9, recentCancellations: 3,
+    expiresAtMs: now() + 90 * 24 * hour,
+    bio: 'Sports physiotherapist working at home with the equipment you already have. Strengthening first, hands-on therapy second.',
+    city: 'Piraeus',
+    languages: ['Ελληνικά', 'English'],
+    experienceYears: 5,
+    responseMinutes: 60,
+    repeatClients: 4,
+    verified: true,
+    education: 'BSc Physiotherapy, University of West Attica',
+    memberSinceMs: now() - 8 * 30 * 24 * hour,
+    services: [
+      { name: 'Home physiotherapy session', price: 33, durationMin: 50 },
+      { name: 'Sports injury rehabilitation', price: 36, durationMin: 50 },
+    ],
   },
 ];
 
@@ -1929,7 +2328,11 @@ function shiftAvailability() {
 
 /** Demo API router. Returns null when the request is not handled. */
 const handleDemoRequest: HttpInterceptorFn = (req: HttpRequest<unknown>, next: HttpHandlerFn) => {
-  if (!isDemoMode() || !req.url.startsWith('/api/')) {
+  // `urlWithParams`, not `url`: an interceptor that adds query parameters
+  // (the locale interceptor's `?lang=`) sets `req.params`, which never appears
+  // in `req.url` — the query string only exists once it is serialised here.
+  const requestUrl = req.urlWithParams;
+  if (!isDemoMode() || !requestUrl.startsWith('/api/')) {
     return next(req);
   }
 
@@ -1939,9 +2342,12 @@ const handleDemoRequest: HttpInterceptorFn = (req: HttpRequest<unknown>, next: H
   // the client's SessionStore has (login form or pre-seeded storage).
   hydrateDemoSession();
 
-  const [path, query = ''] = req.url.slice('/api/'.length).split('?');
+  const [path, query = ''] = requestUrl.slice('/api/'.length).split('?');
   const parts = path.split('/').filter(Boolean);
   const method = req.method;
+  // Content language for this request (`?lang=`, attached by the locale
+  // interceptor). Only *copy* is localised — never ids, prices or statuses.
+  const lang = parseDemoLang(query);
 
   // ---- Auth ----
   if (method === 'POST' && parts[0] === 'auth' && parts[1] === 'login') {
@@ -1970,6 +2376,22 @@ const handleDemoRequest: HttpInterceptorFn = (req: HttpRequest<unknown>, next: H
   if (method === 'POST' && parts[0] === 'auth' && parts[1] === 'logout') {
     state.session = null;
     return json({ ok: true });
+  }
+
+  // ---- Demo account roster (sign-in shortcuts) ----
+  // The login page lists these as one-click sign-ins. Only reachable in demo
+  // mode (the whole interceptor short-circuits otherwise), so a production
+  // build simply gets a 404 and hides the panel.
+  if (method === 'GET' && parts[0] === 'demo' && parts[1] === 'accounts') {
+    return json(
+      state.users.map((user) => ({
+        userId: user.userId,
+        displayName: user.displayName,
+        email: user.email,
+        roles: user.roles,
+        password: DEMO_PASSWORD,
+      }))
+    );
   }
 
   // ---- Gov.gr OIDC: authorize (step 1) ----
@@ -2014,13 +2436,21 @@ const handleDemoRequest: HttpInterceptorFn = (req: HttpRequest<unknown>, next: H
   // ---- Marketplace ----
   if (method === 'GET' && parts[0] === 'caregivers' && parts[1] === 'search') {
     // Attach the published-review count computed from the review ledger.
-    const cards = caregivers.map((c) => ({
-      ...c,
-      reviewCount: state.reviews.filter(
-        (r) => r.caregiverId === c.id && r.status === 'published'
-      ).length,
-    }));
+    const cards = caregivers.map((card) =>
+      withProfileExtras(localizedCaregiver(card, lang))
+    );
     return json(cards);
+  }
+
+  // GET /caregivers/:id — the public provider profile behind the detail page.
+  // Placed after `search` so the literal path wins, and guarded on length so
+  // it never shadows `/caregivers/:id/reviews`.
+  if (method === 'GET' && parts[0] === 'caregivers' && parts.length === 2) {
+    const caregiver = caregivers.find((c) => c.id === parts[1]);
+    if (!caregiver) {
+      return of(new HttpResponse({ status: 404, body: { message: 'Caregiver not found.' } }));
+    }
+    return json(withProfileExtras(localizedCaregiver(caregiver, lang)));
   }
 
   // ---- Profile ----
@@ -2431,7 +2861,11 @@ const handleDemoRequest: HttpInterceptorFn = (req: HttpRequest<unknown>, next: H
     const list = me?.roles.includes('pharmacy')
       ? [...state.pharmacyOrders]
       : state.pharmacyOrders.filter((o) => o.clientId === (me?.userId ?? 'u-client'));
-    return json(list.sort((a, b) => b.createdAtMs - a.createdAtMs));
+    return json(
+      list
+        .sort((a, b) => b.createdAtMs - a.createdAtMs)
+        .map((order) => localizedPharmacyOrder(order, lang))
+    );
   }
 
   if (method === 'POST' && parts[0] === 'pharmacy-orders' && parts.length === 3 && parts[2] === 'status') {
@@ -2687,7 +3121,7 @@ const handleDemoRequest: HttpInterceptorFn = (req: HttpRequest<unknown>, next: H
           // Note: demo simplification — nurse session maps to card cg-1.
         )
       : state.bookings;
-    return json(mine);
+    return json(mine.map((booking) => localizedBooking(booking, lang)));
   }
   if (method === 'GET' && parts[0] === 'bookings' && parts.length === 3 && parts[2] === 'events') {
     const bookingId = parts[1];
@@ -2982,7 +3416,11 @@ const handleDemoRequest: HttpInterceptorFn = (req: HttpRequest<unknown>, next: H
   if (parts[0] === 'caregivers' && parts[2] === 'reviews') {
     const caregiverId = parts[1];
     if (method === 'GET' && parts.length === 3) {
-      return json(state.reviews.filter((r) => r.caregiverId === caregiverId));
+      return json(
+        state.reviews
+          .filter((r) => r.caregiverId === caregiverId)
+          .map((r) => localizedReview(r, lang))
+      );
     }
     // POST /caregivers/:id/reviews — contract alias for the booking-scoped
     // review endpoint (author, bookingId, rating 1–5, comment, createdAtMs).
@@ -3001,7 +3439,7 @@ const handleDemoRequest: HttpInterceptorFn = (req: HttpRequest<unknown>, next: H
     }
   }
   if (method === 'GET' && parts[0] === 'reviews' && parts.length === 1) {
-    return json(state.reviews);
+    return json(state.reviews.map((review) => localizedReview(review, lang)));
   }
   if (method === 'POST' && parts[0] === 'reviews' && parts.length === 3) {
     const review = state.reviews.find((r) => r.id === parts[1]);
@@ -3010,12 +3448,12 @@ const handleDemoRequest: HttpInterceptorFn = (req: HttpRequest<unknown>, next: H
     }
     if (parts[2] === 'flag') {
       review.status = 'flagged';
-      return json(review);
+      return json(localizedReview(review, lang));
     }
     if (parts[2] === 'moderate') {
       const decision = (req.body as { decision?: 'published' | 'removed' }).decision;
       review.status = decision === 'removed' ? 'removed' : 'published';
-      return json(review);
+      return json(localizedReview(review, lang));
     }
   }
 
@@ -3348,7 +3786,7 @@ const handleDemoRequest: HttpInterceptorFn = (req: HttpRequest<unknown>, next: H
   // ---- Care plan ----
   if (parts[0] === 'care-plans') {
     if (method === 'GET') {
-      return json(state.carePlans);
+      return json(state.carePlans.map((plan) => localizedCarePlan(plan, lang)));
     }
     const plan = state.carePlans.find((p) => p.id === parts[1]);
     if (!plan) {
@@ -3358,7 +3796,7 @@ const handleDemoRequest: HttpInterceptorFn = (req: HttpRequest<unknown>, next: H
     const touch = (): DemoCarePlan => {
       plan.updatedAtMs = now();
       plan.updatedBy = me?.displayName ?? 'Care team';
-      return plan;
+      return localizedCarePlan(plan, lang);
     };
     if (method === 'POST' && parts[2] === 'goals') {
       const body = req.body as { text?: string };

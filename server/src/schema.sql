@@ -636,3 +636,23 @@ CREATE TABLE IF NOT EXISTS audit_events (
   meta          JSONB
 );
 CREATE INDEX IF NOT EXISTS idx_audit_events_actor ON audit_events(actor_id);
+-- --------------------------------------------------------------------------
+-- Localised content (server/src/locale.ts)
+--
+-- Editorial content — provider bios/specialities/service names, seeded review
+-- copy, booking and care-plan notes, seeded chat — is authored in both locales
+-- and served per request language via `?lang=en|el`, so responses stay plain
+-- strings and no existing contract changes shape.
+--
+-- The plain columns above remain the single-language value (what a user typed,
+-- or a legacy row); these bundles carry the translated copy. `pick()` prefers
+-- the requested locale and falls back to the other one, then to the plain
+-- column, so a half-translated row still renders something sensible.
+-- --------------------------------------------------------------------------
+
+ALTER TABLE caregivers ADD COLUMN IF NOT EXISTS profile JSONB NOT NULL DEFAULT '{}';
+ALTER TABLE reviews ADD COLUMN IF NOT EXISTS comment_i18n JSONB NOT NULL DEFAULT '{}';
+ALTER TABLE bookings ADD COLUMN IF NOT EXISTS note_i18n JSONB NOT NULL DEFAULT '{}';
+ALTER TABLE care_plan_goals ADD COLUMN IF NOT EXISTS text_i18n JSONB NOT NULL DEFAULT '{}';
+ALTER TABLE care_plan_notes ADD COLUMN IF NOT EXISTS text_i18n JSONB NOT NULL DEFAULT '{}';
+ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS text_i18n JSONB NOT NULL DEFAULT '{}';

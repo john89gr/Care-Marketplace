@@ -14,6 +14,7 @@ import {
   GREEK_PARTNER_PHARMACIES,
   GREEK_WALLET_DOCUMENTS,
 } from './greek-health-data';
+import { CAREGIVER_PROFILES, REVIEW_I18N } from './marketplace-copy';
 
 const hour = 60 * 60 * 1000;
 const day = 24 * hour;
@@ -149,12 +150,46 @@ async function seedProfiles(): Promise<void> {
   }
 }
 
+/**
+ * The bilingual editorial bundle stored on `caregivers.profile`.
+ *
+ * `GREEK_CAREGIVERS` holds the Greek-authored copy; `CAREGIVER_PROFILES`
+ * supplies the English side plus the detail-page fields. The two Greek
+ * speciality lists are paired here (same order) rather than retyped, so they
+ * cannot drift apart silently. Caregivers without an entry (e.g. the
+ * `u-expired` fixture) get `{}` and fall back to the legacy columns.
+ */
+function caregiverProfileBundle(id: string): Record<string, unknown> {
+  const copy = CAREGIVER_PROFILES[id];
+  if (!copy) {
+    return {};
+  }
+  const greek = GREEK_CAREGIVERS.find((c) => c.id === id);
+  return {
+    bio: copy.bio,
+    city: copy.city,
+    education: copy.education,
+    specialties: { en: copy.specialtiesEn, el: greek?.specialties ?? [] },
+    languages: copy.languages,
+    services: copy.services,
+    experienceYears: copy.experienceYears,
+    responseMinutes: copy.responseMinutes,
+    repeatClients: copy.repeatClients,
+    verified: copy.verified,
+    memberSinceMs: now() - copy.memberSinceMonthsAgo * 30 * day,
+  };
+}
+
 async function seedCaregivers(): Promise<void> {
   for (const c of GREEK_CAREGIVERS) {
     const expiresAt = c.id === 'u-nurse' ? now() + 14 * day : now() + 365 * day;
+    const profile = caregiverProfileBundle(c.id);
+    // Endonyms ("Ελληνικά", "English") read correctly in either locale, so the
+    // bundled list wins over the seed's English words when we have one.
+    const languages = (profile['languages'] as string[] | undefined) ?? c.languages;
     await query(
-      `INSERT INTO caregivers (id, display_name, roles, rating, distance_km, hourly_rate, available_now, specialties, lat, lng, completed_visits, recent_cancellations, expires_at_ms, bio, languages, gender)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+      `INSERT INTO caregivers (id, display_name, roles, rating, distance_km, hourly_rate, available_now, specialties, lat, lng, completed_visits, recent_cancellations, expires_at_ms, bio, languages, gender, profile)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
        ON CONFLICT (id) DO UPDATE SET
          display_name = EXCLUDED.display_name,
          roles = EXCLUDED.roles,
@@ -170,7 +205,8 @@ async function seedCaregivers(): Promise<void> {
          expires_at_ms = EXCLUDED.expires_at_ms,
          bio = EXCLUDED.bio,
          languages = EXCLUDED.languages,
-         gender = EXCLUDED.gender`,
+         gender = EXCLUDED.gender,
+         profile = EXCLUDED.profile`,
       [
         c.id,
         c.displayName,
@@ -186,8 +222,9 @@ async function seedCaregivers(): Promise<void> {
         c.recentCancellations,
         expiresAt,
         c.bio,
-        c.languages,
+        languages,
         c.gender,
+        JSON.stringify(profile),
       ]
     );
   }
@@ -339,6 +376,16 @@ async function seedScreenings(): Promise<void> {
   }
 }
 
+/** Both locales of a seeded review comment (the Greek text + its English rendering). */
+function reviewI18n(reviewId: string, greek: string): string {
+  return JSON.stringify({ en: REVIEW_I18N[reviewId]?.en ?? '', el: greek });
+}
+
+/** Both locales of a seeded booking note / care-plan line. */
+function localized(en: string, el: string): string {
+  return JSON.stringify({ en, el });
+}
+
 async function seedMarketplace(): Promise<void> {
   const nowMs = now();
 
@@ -346,17 +393,35 @@ async function seedMarketplace(): Promise<void> {
   const existingBooking = await queryOne(`SELECT id FROM bookings WHERE id = 'b-1'`);
   if (!existingBooking) {
     await query(
-      `INSERT INTO bookings (id, caregiver_id, client_id, scheduled_at_ms, note, amount_cents, status, created_at_ms)
-       VALUES ($1, $2, $3, $4, $5, $6, 'completed', $7)`,
-      ['b-1', 'u-nurse', 'u-client', nowMs - 9 * day, 'Πρωινή ένεση', 4500, nowMs - 10 * day]
+      `INSERT INTO bookings (id, caregiver_id, client_id, scheduled_at_ms, note, note_i18n, amount_cents, status, created_at_ms)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, 'completed', $8)`,
+      [
+        'b-1',
+        'u-nurse',
+        'u-client',
+        nowMs - 9 * day,
+        'Πρωινή ένεση',
+        localized('Morning insulin injection', 'Πρωινή ένεση'),
+        4500,
+        nowMs - 10 * day,
+      ]
     );
   }
 
   await query(
-    `INSERT INTO reviews (id, caregiver_id, booking_id, author_id, author_name, rating, comment, status, created_at_ms)
-     VALUES ($1, $2, $3, $4, $5, 5, $6, 'published', $7)
-     ON CONFLICT (booking_id) DO NOTHING`,
-    ['rv-1', 'u-nurse', 'b-1', 'u-client', 'Maria Papadopoulou', 'Άψογη φροντίδα, πολύ συνεπής.', nowMs - 8 * day]
+    `INSERT INTO reviews (id, caregiver_id, booking_id, author_id, author_name, rating, comment, comment_i18n, status, created_at_ms)
+     VALUES ($1, $2, $3, $4, $5, 5, $6, $7, 'published', $8)
+     ON CONFLICT (booking_id) DO UPDATE SET comment_i18n = EXCLUDED.comment_i18n`,
+    [
+      'rv-1',
+      'u-nurse',
+      'b-1',
+      'u-client',
+      'Maria Papadopoulou',
+      'Άψογη φροντίδα, πολύ συνεπής.',
+      reviewI18n('rv-1', 'Άψογη φροντίδα, πολύ συνεπής.'),
+      nowMs - 8 * day,
+    ]
   );
 
   // Saved search and favorite for demo client
@@ -383,9 +448,18 @@ async function seedMarketplace(): Promise<void> {
   const existingRequested = await queryOne(`SELECT id FROM bookings WHERE id = 'b-2'`);
   if (!existingRequested) {
     await query(
-      `INSERT INTO bookings (id, caregiver_id, client_id, scheduled_at_ms, note, amount_cents, status, created_at_ms)
-       VALUES ($1, $2, $3, $4, $5, $6, 'requested', $7)`,
-      ['b-2', 'u-nikos', 'u-client', nowMs + 2 * day, 'Απογευματινή επίσκεψη', 3000, nowMs - 1 * day]
+      `INSERT INTO bookings (id, caregiver_id, client_id, scheduled_at_ms, note, note_i18n, amount_cents, status, created_at_ms)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, 'requested', $8)`,
+      [
+        'b-2',
+        'u-nikos',
+        'u-client',
+        nowMs + 2 * day,
+        'Απογευματινή επίσκεψη',
+        localized('Afternoon visit', 'Απογευματινή επίσκεψη'),
+        3000,
+        nowMs - 1 * day,
+      ]
     );
     await query(
       `INSERT INTO booking_events (id, booking_id, kind, at_ms, by_user_id, by_name, detail)
@@ -421,10 +495,18 @@ async function seedMarketplace(): Promise<void> {
     }
     const schedMs = nowMs - rev.agoDays * day;
     await query(
-      `INSERT INTO bookings (id, caregiver_id, client_id, scheduled_at_ms, note, amount_cents, status, created_at_ms)
-       VALUES ($1, $2, $3, $4, $5, 3500, 'completed', $6)
+      `INSERT INTO bookings (id, caregiver_id, client_id, scheduled_at_ms, note, note_i18n, amount_cents, status, created_at_ms)
+       VALUES ($1, $2, $3, $4, $5, $6, 3500, 'completed', $7)
        ON CONFLICT (id) DO NOTHING`,
-      [rev.bookingId, rev.caregiverId, rev.authorId, schedMs, "Επίσκεψη κατ οίκον φροντίδας", schedMs - 2 * day]
+      [
+        rev.bookingId,
+        rev.caregiverId,
+        rev.authorId,
+        schedMs,
+        'Επίσκεψη κατ\' οίκον φροντίδας',
+        localized('Home care visit', 'Επίσκεψη κατ\' οίκον φροντίδας'),
+        schedMs - 2 * day,
+      ]
     );
 
     const hasEv = await queryOne(`SELECT id FROM booking_events WHERE booking_id = $1 LIMIT 1`, [rev.bookingId]);
@@ -445,11 +527,12 @@ async function seedMarketplace(): Promise<void> {
     }
 
     await query(
-      `INSERT INTO reviews (id, caregiver_id, booking_id, author_id, author_name, rating, comment, status, created_at_ms)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+      `INSERT INTO reviews (id, caregiver_id, booking_id, author_id, author_name, rating, comment, comment_i18n, status, created_at_ms)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
        ON CONFLICT (booking_id) DO UPDATE SET
          rating = EXCLUDED.rating,
          comment = EXCLUDED.comment,
+         comment_i18n = EXCLUDED.comment_i18n,
          status = EXCLUDED.status`,
       [
         rev.id,
@@ -459,6 +542,7 @@ async function seedMarketplace(): Promise<void> {
         rev.authorName,
         rev.rating,
         rev.comment,
+        reviewI18n(rev.id, rev.comment),
         rev.status,
         schedMs + 4000000,
       ]
@@ -688,14 +772,24 @@ async function seedCarePlan(): Promise<void> {
       [nowMs - 2 * day]
     );
     await query(
-      `INSERT INTO care_plan_goals (id, plan_id, text, status)
-       VALUES ('g-1', 'cp-1', 'Mobilise shoulder daily', 'in-progress'),
-              ('g-2', 'cp-1', 'Stabilise blood pressure', 'open')`
+      `INSERT INTO care_plan_goals (id, plan_id, text, text_i18n, status)
+       VALUES ('g-1', 'cp-1', 'Mobilise shoulder daily', $1, 'in-progress'),
+              ('g-2', 'cp-1', 'Stabilise blood pressure', $2, 'open')`,
+      [
+        localized('Mobilise shoulder daily', 'Καθημερινή κινητοποίηση ώμου'),
+        localized('Stabilise blood pressure', 'Σταθεροποίηση αρτηριακής πίεσης'),
+      ]
     );
     await query(
-      `INSERT INTO care_plan_notes (id, plan_id, author_id, author_name, author_role, text, at_ms)
-       VALUES ('n-1', 'cp-1', 'u-nurse', 'Elena Papadaki', 'nurse', 'BP stable at 125/80, continue monitoring.', $1)`,
-      [nowMs - 2 * day]
+      `INSERT INTO care_plan_notes (id, plan_id, author_id, author_name, author_role, text, text_i18n, at_ms)
+       VALUES ('n-1', 'cp-1', 'u-nurse', 'Elena Papadaki', 'nurse', 'BP stable at 125/80, continue monitoring.', $1, $2)`,
+      [
+        localized(
+          'BP stable at 125/80, continue monitoring.',
+          'Πίεση σταθερή στις 125/80, συνεχίζουμε την παρακολούθηση.'
+        ),
+        nowMs - 2 * day,
+      ]
     );
   }
 
@@ -708,14 +802,30 @@ async function seedCarePlan(): Promise<void> {
       [nowMs - 5 * day]
     );
     await query(
-      `INSERT INTO care_plan_goals (id, plan_id, text, status)
-       VALUES ('g-3', 'cp-2', 'Έλεγχος INR κάθε 30 ημέρες (στόχος 2.0-3.0)', 'in-progress'),
-              ('g-4', 'cp-2', 'Καθημερινό περπάτημα 30 λεπτά σε επίπεδο έδαφος', 'open')`
+      `INSERT INTO care_plan_goals (id, plan_id, text, text_i18n, status)
+       VALUES ('g-3', 'cp-2', 'Έλεγχος INR κάθε 30 ημέρες (στόχος 2.0-3.0)', $1, 'in-progress'),
+              ('g-4', 'cp-2', 'Καθημερινό περπάτημα 30 λεπτά σε επίπεδο έδαφος', $2, 'open')`,
+      [
+        localized(
+          'INR check every 30 days (target 2.0-3.0)',
+          'Έλεγχος INR κάθε 30 ημέρες (στόχος 2.0-3.0)'
+        ),
+        localized(
+          'A daily 30-minute walk on level ground',
+          'Καθημερινό περπάτημα 30 λεπτά σε επίπεδο έδαφος'
+        ),
+      ]
     );
     await query(
-      `INSERT INTO care_plan_notes (id, plan_id, author_id, author_name, author_role, text, at_ms)
-       VALUES ('n-2', 'cp-2', 'u-nurse', 'Elena Papadaki', 'nurse', 'Τελευταία μέτρηση INR: 2.4. Αγωγή Sintrom σταθερή.', $1)`,
-      [nowMs - 5 * day]
+      `INSERT INTO care_plan_notes (id, plan_id, author_id, author_name, author_role, text, text_i18n, at_ms)
+       VALUES ('n-2', 'cp-2', 'u-nurse', 'Elena Papadaki', 'nurse', 'Τελευταία μέτρηση INR: 2.4. Αγωγή Sintrom σταθερή.', $1, $2)`,
+      [
+        localized(
+          'Latest INR reading: 2.4. Sintrom dose unchanged.',
+          'Τελευταία μέτρηση INR: 2.4. Αγωγή Sintrom σταθερή.'
+        ),
+        nowMs - 5 * day,
+      ]
     );
   }
 

@@ -7,7 +7,7 @@ import {
   inject,
   signal,
 } from '@angular/core';
-import { ActivatedRoute, Router } from '@angular/router';
+import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import { MarketplaceStore, CaregiverCard } from './marketplace.store';
 import { BookingStore } from './booking.store';
 import { ReviewsStore, Review } from './reviews.store';
@@ -24,11 +24,16 @@ import { AnalyticsService } from '../../core/services/analytics.service';
 import { GeolocationService } from '../../core/services/geo/geolocation.service';
 import { SessionStore } from '../../core/auth/session';
 import { I18n } from '../../core/i18n/i18n.service';
+import { reloadOnLanguageChange } from '../../core/i18n/content-locale';
 import { SearchFilters } from './marketplace.store';
 import { ROLES, Role } from '../../core/auth/roles';
 
 /**
  * Marketplace search + caregiver cards (FEATURE_PLAN.md §2, §5).
+ *
+ * Each card links to the provider's detail page (`/caregivers/:id`), which owns
+ * the full review record; the card's own review expansion stays for quick
+ * scanning without leaving the results.
  *
  * Bilingual. Load-bearing for the E2E suite: `.results .card` with an `h3`
  * title, `.reviews` for the expanded reviews, `.favorites`-style heart buttons
@@ -39,7 +44,7 @@ import { ROLES, Role } from '../../core/auth/roles';
 @Component({
   selector: 'app-marketplace',
   standalone: true,
-  imports: [],
+  imports: [RouterLink],
   template: `
     <section class="marketplace">
       <header class="hero market-hero">
@@ -316,6 +321,9 @@ import { ROLES, Role } from '../../core/auth/roles';
               }
 
               <p class="card-actions">
+                <a class="btn secondary" [routerLink]="['/caregivers', card.id]">
+                  {{ i18n.t('market.viewProfile') }}
+                </a>
                 <button type="button" class="btn" (click)="book(card.id)">
                   {{ i18n.t('market.requestBooking') }}
                 </button>
@@ -648,6 +656,9 @@ export class MarketplacePage implements OnInit, OnDestroy {
     effect(() => {
       this.store.setFavoriteIds(new Set(this.saved.favoriteIds()));
     });
+    // Provider bios, specialities and cities are backend content, so a language
+    // switch has to re-run the search rather than leave the old words on screen.
+    reloadOnLanguageChange(() => this.store.search());
   }
 
   ngOnInit(): void {

@@ -2,6 +2,15 @@ import { Router, Request, Response } from 'express';
 import { randomBytes } from 'crypto';
 import { query, queryOne, Row } from './db';
 import { AuthedUser, requireAuth, requireRole } from './auth';
+import {
+  asBundle,
+  DEFAULT_LANG,
+  Lang,
+  pick,
+  pickList,
+  requestLang,
+  searchableText,
+} from './locale';
 
 /**
  * Marketplace trust surfaces (FEATURE_PLAN.md §1–§2): saved searches,
@@ -9,6 +18,12 @@ import { AuthedUser, requireAuth, requireRole } from './auth';
  * session user (`/me/*`); caregiver review lists are public. Validation
  * failures are 422, missing own-resources are 404, a second review for the
  * same booking is 409 — matching the contracts the frontend stores document.
+ *
+ * Content is served per request language (`?lang=en|el`, see ./locale): the
+ * `caregivers.profile` JSONB bundle holds the bilingual editorial copy (bio,
+ * city, education, specialities, services, stats) and `reviews.comment_i18n`
+ * the translated review text. Free-text search deliberately spans *both*
+ * locales, so «Ενέσεις» and "Injections" find the same provider.
  */
 
 export const REVIEW_STATUSES = ['published', 'flagged', 'removed'] as const;
@@ -22,7 +37,13 @@ const num = (value: unknown): number | null =>
 
 const str = (value: unknown): string => (typeof value === 'string' ? value.trim() : '');
 
-function reviewFromRow(row: Row) {
+/**
+ * A review in the requested language. The plain `comment` column is what a
+ * user actually typed; seeded reviews additionally carry `comment_i18n` with
+ * both locales. A user-authored review has an empty bundle, so `pick()` falls
+ * straight through to the stored text.
+ */
+function reviewFromRow(row: Row, lang: Lang = DEFAULT_LANG) {
   return {
     id: String(row.id),
     caregiverId: String(row.caregiver_id),
@@ -30,10 +51,40 @@ function reviewFromRow(row: Row) {
     authorId: String(row.author_id),
     authorName: String(row.author_name ?? ''),
     rating: Number(row.rating),
-    comment: String(row.comment ?? ''),
+    comment: pick(asBundle(row.comment_i18n), lang) || String(row.comment ?? ''),
     createdAtMs: num(row.created_at_ms) ?? 0,
     status: String(row.status),
   };
+}
+
+/** A priced service from the profile bundle, in the requested language. */
+interface PricedService {
+  name: string;
+  price: number;
+  durationMin: number;
+}
+
+function servicesFromProfile(value: unknown, lang: Lang): PricedService[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  const services: PricedService[] = [];
+  for (const entry of value) {
+    if (!entry || typeof entry !== 'object') {
+      continue;
+    }
+    const record = entry as Record<string, unknown>;
+    const name = pick(record['name'], lang);
+    if (!name) {
+      continue;
+    }
+    services.push({
+      name,
+      price: Number(record['price']) || 0,
+      durationMin: Number(record['durationMin']) || 0,
+    });
+  }
+  return services;
 }
 
 function savedSearchFromRow(row: Row) {
@@ -67,9 +118,23 @@ export function haversineKm(
   return 2 * R * Math.asin(Math.min(1, Math.sqrt(s)));
 }
 
-export function caregiverCardFromRow(row: Row, distanceKmOverride?: number) {
+/**
+ * A provider card in one language. Editorial copy comes from the `profile`
+ * JSONB bundle, falling back to the legacy single-language columns, so a row
+ * that predates localisation still renders.
+ */
+export function caregiverCardFromRow(
+  row: Row,
+  lang: Lang = DEFAULT_LANG,
+  distanceKmOverride?: number
+) {
   const dynamicRating = Number(row.dynamic_rating ?? row.rating);
   const rating = Math.round(dynamicRating * 10) / 10;
+  const profile = asBundle(row.profile);
+  const specialties = pickList(profile['specialties'], lang);
+  // Language names stay endonyms ("Ελληνικά", "English") — self-describing in
+  // any locale — so they are stored once rather than per language.
+  const languages = pickList(profile['languages'], lang);
   return {
     id: String(row.id),
     displayName: String(row.display_name),
@@ -79,15 +144,24 @@ export function caregiverCardFromRow(row: Row, distanceKmOverride?: number) {
     distanceKm: distanceKmOverride !== undefined ? distanceKmOverride : Number(row.distance_km),
     hourlyRate: Number(row.hourly_rate),
     availableNow: Boolean(row.available_now),
-    specialties: (row.specialties as string[]) ?? [],
+    specialties: specialties.length > 0 ? specialties : pickList(row.specialties, lang),
     lat: num(row.lat),
     lng: num(row.lng),
     completedVisits: Number(row.completed_visits) || 0,
     recentCancellations: Number(row.recent_cancellations) || 0,
     expiresAtMs: num(row.expires_at_ms),
-    bio: String(row.bio ?? ''),
-    languages: (row.languages as string[]) ?? [],
+    bio: pick(profile['bio'], lang) || String(row.bio ?? ''),
+    languages: languages.length > 0 ? languages : pickList(row.languages, lang),
     gender: String(row.gender ?? ''),
+    // Detail-page fields (the public profile at /caregivers/:id).
+    city: pick(profile['city'], lang),
+    education: pick(profile['education'], lang),
+    experienceYears: Number(profile['experienceYears']) || 0,
+    responseMinutes: Number(profile['responseMinutes']) || 0,
+    repeatClients: Number(profile['repeatClients']) || 0,
+    verified: profile['verified'] === true,
+    memberSinceMs: num(profile['memberSinceMs']),
+    services: servicesFromProfile(profile['services'], lang),
   };
 }
 
@@ -281,6 +355,8 @@ marketplaceRouter.get('/caregivers/search', async (req: Request, res: Response, 
 
     const queryText = typeof req.query.query === 'string' ? req.query.query.trim().toLowerCase() : '';
 
+    const lang = requestLang(req);
+
     const candidates = rows.map((row) => {
       let distanceKm = Number(row.distance_km);
       if (hasUserCoords && row.lat !== null && row.lng !== null) {
@@ -291,10 +367,21 @@ marketplaceRouter.get('/caregivers/search', async (req: Request, res: Response, 
           distanceKm = Math.round(dist * 10) / 10;
         }
       }
-      return caregiverCardFromRow(row, distanceKm);
+      const profile = asBundle(row.profile);
+      // A bilingual marketplace has to match in *both* languages: a Greek
+      // client searching «Ενέσεις» must find the provider listed as
+      // "Injections" in the English catalogue.
+      const haystack = [
+        String(row.display_name ?? '').toLowerCase(),
+        searchableText(profile['bio'] ?? row.bio),
+        searchableText(profile['specialties'] ?? row.specialties),
+        searchableText(profile['city']),
+        searchableText(profile['education']),
+      ].join(' \u0000 ');
+      return { card: caregiverCardFromRow(row, lang, distanceKm), haystack };
     });
 
-    const filtered = candidates.filter((card) => {
+    const filtered = candidates.filter(({ card, haystack }) => {
       // Auto-filter expired caregivers: exclude caregivers where expires_at_ms IS NOT NULL AND expires_at_ms < now()
       if (!includeExpired && card.expiresAtMs !== null && card.expiresAtMs < nowMs) {
         return false;
@@ -328,16 +415,10 @@ marketplaceRouter.get('/caregivers/search', async (req: Request, res: Response, 
         }
       }
 
-      // query: text search matching display_name, specialties, bio (case-insensitive)
-      if (queryText) {
-        const nameMatch = card.displayName.toLowerCase().includes(queryText);
-        const bioMatch = card.bio.toLowerCase().includes(queryText);
-        const specMatch = card.specialties.some(
-          (s) => s.toLowerCase().includes(queryText) || queryText.includes(s.toLowerCase())
-        );
-        if (!nameMatch && !bioMatch && !specMatch) {
-          return false;
-        }
+      // query: text search across name, bio, specialities, city and education
+      // in every locale (case-insensitive).
+      if (queryText && !haystack.includes(queryText)) {
+        return false;
       }
 
       return true;
@@ -347,18 +428,15 @@ marketplaceRouter.get('/caregivers/search', async (req: Request, res: Response, 
     const sort = typeof req.query.sort === 'string' ? req.query.sort : 'rating';
     filtered.sort((a, b) => {
       if (sort === 'distance') {
-        return a.distanceKm - b.distanceKm || a.id.localeCompare(b.id);
+        return a.card.distanceKm - b.card.distanceKm || a.card.id.localeCompare(b.card.id);
       }
       if (sort === 'price') {
-        return a.hourlyRate - b.hourlyRate || a.id.localeCompare(b.id);
+        return a.card.hourlyRate - b.card.hourlyRate || a.card.id.localeCompare(b.card.id);
       }
-      if (sort === 'rating' || sort === 'relevance') {
-        return b.rating - a.rating || a.id.localeCompare(b.id);
-      }
-      return b.rating - a.rating || a.id.localeCompare(b.id);
+      return b.card.rating - a.card.rating || a.card.id.localeCompare(b.card.id);
     });
 
-    res.json(filtered);
+    res.json(filtered.map((entry) => entry.card));
   } catch (error) {
     next(error);
   }
@@ -412,7 +490,8 @@ marketplaceRouter.get('/caregivers/:id', async (req: Request, res: Response, nex
       }
     }
 
-    const baseCard = caregiverCardFromRow(caregiver);
+    const lang = requestLang(req);
+    const baseCard = caregiverCardFromRow(caregiver, lang);
 
     res.json({
       ...baseCard,
@@ -436,7 +515,7 @@ marketplaceRouter.get('/caregivers/:id', async (req: Request, res: Response, nex
         createdAtMs: num(c.created_at_ms) ?? 0,
       })),
       ratingBreakdown,
-      reviews: publishedReviews.map(reviewFromRow),
+      reviews: publishedReviews.map((r) => reviewFromRow(r, lang)),
     });
   } catch (error) {
     next(error);
@@ -539,17 +618,19 @@ marketplaceRouter.get('/caregivers/:id/reviews', async (req: Request, res: Respo
         ORDER BY created_at_ms DESC`,
       [req.params.id]
     );
-    res.json(rows.map(reviewFromRow));
+    const lang = requestLang(req);
+    res.json(rows.map((row) => reviewFromRow(row, lang)));
   } catch (error) {
     next(error);
   }
 });
 
 /** Admin moderation queue: every review including removed ones. */
-marketplaceRouter.get('/reviews', requireAuth, requireRole('admin'), async (_req: Request, res: Response, next) => {
+marketplaceRouter.get('/reviews', requireAuth, requireRole('admin'), async (req: Request, res: Response, next) => {
   try {
     const rows = await query<Row>(`SELECT * FROM reviews ORDER BY created_at_ms DESC`);
-    res.json(rows.map(reviewFromRow));
+    const lang = requestLang(req);
+    res.json(rows.map((row) => reviewFromRow(row, lang)));
   } catch (error) {
     next(error);
   }
@@ -617,16 +698,17 @@ marketplaceRouter.post('/reviews/:id/flag', requireAuth, async (req: Request, re
       `UPDATE reviews SET status = 'flagged' WHERE id = $1 AND status = 'published' RETURNING *`,
       [req.params.id]
     );
+    const lang = requestLang(req);
     if (rows.length === 0) {
       const existing = await queryOne<Row>(`SELECT * FROM reviews WHERE id = $1`, [req.params.id]);
       if (!existing) {
         res.status(404).json({ message: 'Review not found.' });
         return;
       }
-      res.json(reviewFromRow(existing));
+      res.json(reviewFromRow(existing, lang));
       return;
     }
-    res.json(reviewFromRow(rows[0]));
+    res.json(reviewFromRow(rows[0], lang));
   } catch (error) {
     next(error);
   }
@@ -652,7 +734,7 @@ marketplaceRouter.post(
         res.status(404).json({ message: 'Review not found.' });
         return;
       }
-      res.json(reviewFromRow(rows[0]));
+      res.json(reviewFromRow(rows[0], requestLang(req)));
     } catch (error) {
       next(error);
     }

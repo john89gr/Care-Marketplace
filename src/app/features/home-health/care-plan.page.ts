@@ -2,6 +2,7 @@ import { Component, inject, OnInit, signal } from '@angular/core';
 import { FormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
 import { CarePlanStore, CareGoal } from './care-plan.store';
 import { I18n } from '../../core/i18n/i18n.service';
+import { reloadOnLanguageChange } from '../../core/i18n/content-locale';
 
 const NEXT_STATUS: Record<CareGoal['status'], CareGoal['status']> = {
   open: 'in-progress',
@@ -209,6 +210,11 @@ export class CarePlanPage implements OnInit {
   });
 
   protected readonly NEXT_STATUS = NEXT_STATUS;
+
+  constructor() {
+    // Goal and note text is backend content, so a language switch re-fetches it.
+    reloadOnLanguageChange(() => this.store.load());
+  }
 
   ngOnInit(): void {
     this.store.load();

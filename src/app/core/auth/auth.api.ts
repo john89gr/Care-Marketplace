@@ -21,6 +21,16 @@ export interface RegisterPayload {
   role: Role;
 }
 
+/** One sign-in shortcut offered by the demo backend. */
+export interface DemoAccount {
+  userId: string;
+  displayName: string;
+  email: string;
+  roles: Role[];
+  /** Suggested password (demo login accepts any). */
+  password: string;
+}
+
 /**
  * Auth API client. Talks to the backend (contract per PLAN.md §1:
  * OAuth2/OIDC + Taxisnet) and feeds the SessionStore. Until the backend
@@ -63,6 +73,15 @@ export class AuthApi {
         tap((session) => this._applySession(session)),
         catchError((error) => this._fail(error))
       );
+  }
+
+  /**
+   * The demo backend's sign-in roster, used to render one-click sign-ins on the
+   * login page. Only the demo interceptor answers this, so a production build
+   * gets a 404 and the picker stays hidden — the caller swallows the error.
+   */
+  demoAccounts(): Observable<DemoAccount[]> {
+    return this.http.get<DemoAccount[]>('/api/demo/accounts');
   }
 
   loginWithTaxisnet(): void {

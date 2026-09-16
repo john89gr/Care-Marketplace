@@ -22,6 +22,7 @@ import {
   notifyUser,
 } from './push';
 import { vitalsAlert, computeVitalStats } from './vitals';
+import { asBundle, DEFAULT_LANG, Lang, pick, requestLang } from './locale';
 import { detectMissedDoses, dateKey, minutesSinceMidnight, validateInstructions } from './medications';
 import { checkScreeningDue, ScreeningType } from './screenings';
 import { checkCertificationExpiry } from './certifications';
@@ -37,6 +38,7 @@ import { walletRouter } from './wallet';
 import { uploadsRouter } from './uploads';
 import { chatRouter } from './chat';
 import { clinicalRouter } from './clinical';
+import { demoRouter } from './demo';
 import { disputesRouter } from './disputes';
 import { fhirRouter } from './fhir';
 
@@ -49,6 +51,11 @@ export function createApp() {
   app.disable('x-powered-by');
   app.use(cookieParser());
   app.use(express.json({ limit: '2mb', strict: false }));
+
+  // ---- Demo sign-in roster (the login page's one-click accounts) ----
+  // Mounted first and unauthenticated by design: it exists to hand out the
+  // seeded demo logins. Off in production (404) unless explicitly enabled.
+  app.use('/api', demoRouter());
 
   // ---- Auth ----
   app.post('/api/auth/register', async (req: Request, res: Response, next: NextFunction) => {
@@ -404,7 +411,7 @@ export function createApp() {
          ORDER BY b.scheduled_at_ms ASC`,
         [me.userId]
       );
-      res.json(rows.map(bookingFromRow));
+      res.json(rows.map((row) => bookingFromRow(row, requestLang(req))));
     } catch (error) {
       next(error);
     }
@@ -438,7 +445,7 @@ export function createApp() {
       } catch {
         // Ignore push failures.
       }
-      res.json(bookingFromRow(result[0]));
+      res.json(bookingFromRow(result[0], requestLang(req)));
     } catch (error) {
       next(error);
     }
@@ -492,7 +499,7 @@ export function createApp() {
     } catch {
       // Ignore push failures.
     }
-    res.json(bookingFromRow((await bookingWithNames(updated.id as string)) ?? updated));
+    res.json(bookingFromRow((await bookingWithNames(updated.id as string)) ?? updated, requestLang(req)));
   }
 
   app.post('/api/bookings/:id/start', requireAuth, requireRole('nurse', 'caregiver', 'physio'), async (req: Request, res: Response, next: NextFunction) => {
@@ -636,7 +643,7 @@ export function createApp() {
       } catch {
         // Ignore push failures.
       }
-      res.json(bookingFromRow((await bookingWithNames(updated.id as string)) ?? updated));
+      res.json(bookingFromRow((await bookingWithNames(updated.id as string)) ?? updated, requestLang(req)));
     } catch (error) {
       next(error);
     }
@@ -678,7 +685,7 @@ export function createApp() {
         return;
       }
       await appendBookingEvent(updated.id as string, 'rescheduled', me.userId, me.displayName, 'Proposal confirmed.');
-      res.json(bookingFromRow((await bookingWithNames(updated.id as string)) ?? updated));
+      res.json(bookingFromRow((await bookingWithNames(updated.id as string)) ?? updated, requestLang(req)));
     } catch (error) {
       next(error);
     }
@@ -1606,7 +1613,12 @@ function adherenceFromRow(row: Row) {
 }
 
 
-function bookingFromRow(row: Row) {
+/**
+ * A booking in the requesting language. Seeded bookings carry a `note_i18n`
+ * bundle; a note the client typed has none, so `pick()` falls through to the
+ * stored text.
+ */
+function bookingFromRow(row: Row, lang: Lang = DEFAULT_LANG) {
   let pendingReschedule = null;
   const raw = row.pending_reschedule as unknown;
   if (raw && typeof raw === 'object') {
@@ -1627,7 +1639,7 @@ function bookingFromRow(row: Row) {
     clientName: row.client_name ?? '',
     providerUserId: row.caregiver_id,
     scheduledAtMs: num(row.scheduled_at_ms),
-    note: row.note ?? '',
+    note: pick(asBundle(row.note_i18n), lang) || String(row.note ?? ''),
     status: row.status ?? 'requested',
     createdAtMs: num(row.created_at_ms),
     pendingReschedule,

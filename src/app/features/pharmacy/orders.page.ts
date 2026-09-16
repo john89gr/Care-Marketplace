@@ -13,6 +13,7 @@ import {
   type PharmacyOrderStatus,
 } from './pharmacy.models';
 import { I18n, TranslatableMessage } from '../../core/i18n/i18n.service';
+import { reloadOnLanguageChange } from '../../core/i18n/content-locale';
 
 /** Badge tone per fulfilment status (the label carries the meaning, not the colour). */
 const STATUS_TONES: Record<PharmacyOrderStatus, string> = {
@@ -243,6 +244,9 @@ export class OrdersPage {
 
   constructor() {
     this.store.load().subscribe();
+    // Partner pharmacy names are backend content, so a language switch
+    // re-fetches the queue rather than leaving the old names behind.
+    reloadOnLanguageChange(() => this.store.load().subscribe());
   }
 
   refresh(): void {

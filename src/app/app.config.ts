@@ -4,6 +4,7 @@ import { provideHttpClient, withInterceptors } from '@angular/common/http';
 import { provideServiceWorker } from '@angular/service-worker';
 import { routes } from './app.routes';
 import { authInterceptor } from './core/auth/auth.interceptor';
+import { localeInterceptor } from './core/i18n/locale.interceptor';
 import { demoApi } from './core/api/demo.api';
 import { enableDemoFromUrl } from './core/api/demo.mode';
 import { WebSocketClient } from './core/services/ws/websocket.client';
@@ -24,7 +25,11 @@ export const appConfig: ApplicationConfig = {
     // without a token; auth interceptor still attaches tokens to real calls.
     // The offline interceptor is the outermost net: it only reacts to real
     // network failures (never demo/validation responses).
-    provideHttpClient(withInterceptors([offlineInterceptor, demoApi, authInterceptor])),
+    // The locale interceptor rewrites the URL (not the response) and must run
+    // before the demo backend, which reads `?lang=` off the rewritten request.
+    provideHttpClient(
+      withInterceptors([offlineInterceptor, localeInterceptor, demoApi, authInterceptor])
+    ),
     // Offline outbox replay: flush persisted entries on boot + reconnect.
     provideOfflineSync(),
     // PWA shell precache so the app can reload while offline (§20 subtask 2).

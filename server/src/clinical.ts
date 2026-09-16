@@ -2,12 +2,18 @@ import { Router, Request, Response, NextFunction } from 'express';
 import { randomBytes } from 'crypto';
 import { query, queryOne, Row } from './db';
 import { AuthedUser, requireAuth } from './auth';
+import { asBundle, DEFAULT_LANG, Lang, pick, requestLang } from './locale';
 
 /**
  * Clinical Documentation & Shared Care Plans (PLAN.md §4, FEATURE_PLAN.md).
  * - Clinical logs with digital signatures and role-based privacy filters.
  * - Visit detail retrieval with check-in/out GPS data and timestamps.
  * - Multi-disciplinary care plan collaboration (goals and notes with nurse/physio/doctor roles).
+ *
+ * Shared-care-plan goals and notes are shown to the whole care team, so their
+ * copy is served in the requesting language (`?lang=en|el`): the seeded lines
+ * carry a `text_i18n` bundle and anything a user typed falls through to the
+ * plain `text` column.
  */
 
 export const clinicalRouter = Router();
@@ -56,20 +62,28 @@ export function visitFromRow(row: Row) {
   };
 }
 
-export async function carePlanWithChildren(plan: Row) {
+/** The visible text of a care-plan line in one language. */
+function planText(row: Row, lang: Lang): string {
+  return pick(asBundle(row.text_i18n), lang) || String(row.text ?? '');
+}
+
+export async function carePlanWithChildren(
+  plan: Row,
+  lang: Lang = DEFAULT_LANG
+) {
   const goals = await query<Row>(`SELECT * FROM care_plan_goals WHERE plan_id = $1 ORDER BY id ASC`, [plan.id as string]);
   const notes = await query<Row>(`SELECT * FROM care_plan_notes WHERE plan_id = $1 ORDER BY at_ms DESC`, [plan.id as string]);
   return {
     id: plan.id,
     clientId: plan.client_id,
     clientName: plan.client_name,
-    goals: goals.map((g) => ({ id: g.id, text: g.text, status: g.status })),
+    goals: goals.map((g) => ({ id: g.id, text: planText(g, lang), status: g.status })),
     notes: notes.map((n) => ({
       id: n.id,
       authorId: n.author_id,
       authorName: n.author_name,
       authorRole: n.author_role,
-      text: n.text,
+      text: planText(n, lang),
       atMs: num(n.at_ms),
     })),
     updatedAtMs: num(plan.updated_at_ms),
@@ -347,7 +361,7 @@ clinicalRouter.get('/care-plans', requireAuth, async (req: Request, res: Respons
         : `SELECT * FROM care_plans ORDER BY updated_at_ms DESC`,
       isClient ? [me.userId] : []
     );
-    res.json(await Promise.all(rows.map(carePlanWithChildren)));
+    res.json(await Promise.all(rows.map((plan) => carePlanWithChildren(plan, requestLang(req)))));
   } catch (error) {
     next(error);
   }
@@ -375,7 +389,7 @@ clinicalRouter.post('/care-plans', requireAuth, async (req: Request, res: Respon
       [planId, clientId, clientName, now(), me.displayName]
     );
     const plan = await queryOne<Row>(`SELECT * FROM care_plans WHERE id = $1`, [planId]);
-    res.status(201).json(await carePlanWithChildren(plan!));
+    res.status(201).json(await carePlanWithChildren(plan!, requestLang(req)));
   } catch (error) {
     next(error);
   }
@@ -401,7 +415,7 @@ clinicalRouter.get('/care-plans/:id', requireAuth, async (req: Request, res: Res
       res.status(403).json({ message: 'Access denied to this care plan.' });
       return;
     }
-    res.json(await carePlanWithChildren(plan));
+    res.json(await carePlanWithChildren(plan, requestLang(req)));
   } catch (error) {
     next(error);
   }
@@ -427,7 +441,7 @@ clinicalRouter.post('/care-plans/:id/goals', requireAuth, async (req: Request, r
       `INSERT INTO care_plan_goals (id, plan_id, text, status) VALUES ($1, $2, $3, $4)`,
       [id('g'), plan.id, text, status]
     );
-    res.json(await carePlanWithChildren(plan));
+    res.json(await carePlanWithChildren(plan, requestLang(req)));
   } catch (error) {
     next(error);
   }
@@ -465,7 +479,7 @@ clinicalRouter.patch('/care-plans/:id/goals/:goalId', requireAuth, async (req: R
       `UPDATE care_plan_goals SET status = $1, text = $2 WHERE plan_id = $3 AND id = $4`,
       [newStatus, newText, plan.id, req.params.goalId]
     );
-    res.json(await carePlanWithChildren(plan));
+    res.json(await carePlanWithChildren(plan, requestLang(req)));
   } catch (error) {
     next(error);
   }
@@ -486,7 +500,7 @@ clinicalRouter.delete('/care-plans/:id/goals/:goalId', requireAuth, async (req: 
       res.status(404).json({ message: 'Goal not found.' });
       return;
     }
-    res.json(await carePlanWithChildren(plan));
+    res.json(await carePlanWithChildren(plan, requestLang(req)));
   } catch (error) {
     next(error);
   }
@@ -528,7 +542,7 @@ clinicalRouter.post('/care-plans/:id/notes', requireAuth, async (req: Request, r
        VALUES ($1, $2, $3, $4, $5, $6, $7)`,
       [id('n'), plan.id, me.userId, authorName, authorRole, text, now()]
     );
-    res.json(await carePlanWithChildren(plan));
+    res.json(await carePlanWithChildren(plan, requestLang(req)));
   } catch (error) {
     next(error);
   }
